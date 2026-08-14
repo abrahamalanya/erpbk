@@ -2,11 +2,13 @@
 
 namespace App\Policies;
 
-use App\Models\Empresa;
 use App\Models\User;
+use App\Services\UserHierarchyService;
 
-class EmpresaPolicy
+class UserPolicy
 {
+    public function __construct(private readonly UserHierarchyService $hierarchy) {}
+
     /**
      * Perform pre-authorization checks.
      */
@@ -20,15 +22,15 @@ class EmpresaPolicy
      */
     public function viewAny(User $user): bool
     {
-        return false;
+        return $user->can('usuarios.ver');
     }
 
     /**
      * Determine whether the user can view the model.
      */
-    public function view(User $user, Empresa $empresa): bool
+    public function view(User $user, User $target): bool
     {
-        return $user->empresa_id === $empresa->id && $user->can('empresas.ver');
+        return $user->can('usuarios.ver') && $this->hierarchy->canManage($user, $target);
     }
 
     /**
@@ -36,22 +38,24 @@ class EmpresaPolicy
      */
     public function create(User $user): bool
     {
-        return false;
+        return $user->can('usuarios.crear');
     }
 
     /**
      * Determine whether the user can update the model.
      */
-    public function update(User $user, Empresa $empresa): bool
+    public function update(User $user, User $target): bool
     {
-        return $user->empresa_id === $empresa->id && $user->can('empresas.editar');
+        return $user->can('usuarios.editar') && $this->hierarchy->canManage($user, $target);
     }
 
     /**
      * Determine whether the user can delete the model.
      */
-    public function delete(User $user, Empresa $empresa): bool
+    public function delete(User $user, User $target): bool
     {
-        return false;
+        return $user->can('usuarios.eliminar')
+            && $this->hierarchy->canManage($user, $target)
+            && $user->id !== $target->id;
     }
 }

@@ -2,11 +2,12 @@
 
 use App\Models\Empresa;
 use App\Models\User;
+use Database\Seeders\PermissionSeeder;
 use Database\Seeders\RoleSeeder;
 use Laravel\Sanctum\Sanctum;
 
 beforeEach(function () {
-    $this->seed(RoleSeeder::class);
+    $this->seed([RoleSeeder::class, PermissionSeeder::class]);
     $this->empresaA = Empresa::factory()->create();
     $this->empresaB = Empresa::factory()->create();
 });

@@ -20,7 +20,7 @@ class AgenciaPolicy
      */
     public function viewAny(User $user): bool
     {
-        return $user->hasAnyRole(['administrador_general', 'secretaria']);
+        return $user->can('agencias.ver') && $user->hasAnyRole(['administrador_general', 'secretaria']);
     }
 
     /**
@@ -28,6 +28,10 @@ class AgenciaPolicy
      */
     public function view(User $user, Agencia $agencia): bool
     {
+        if (! $user->can('agencias.ver')) {
+            return false;
+        }
+
         if ($user->hasAnyRole(['administrador_general', 'secretaria'])) {
             return $user->empresa_id === $agencia->empresa_id;
         }
@@ -40,7 +44,7 @@ class AgenciaPolicy
      */
     public function create(User $user): bool
     {
-        return $user->hasRole('administrador_general');
+        return $user->can('agencias.crear');
     }
 
     /**
@@ -48,7 +52,7 @@ class AgenciaPolicy
      */
     public function update(User $user, Agencia $agencia): bool
     {
-        return $user->hasRole('administrador_general') && $user->empresa_id === $agencia->empresa_id;
+        return $user->can('agencias.editar') && $user->empresa_id === $agencia->empresa_id;
     }
 
     /**
@@ -56,6 +60,6 @@ class AgenciaPolicy
      */
     public function delete(User $user, Agencia $agencia): bool
     {
-        return $user->hasRole('administrador_general') && $user->empresa_id === $agencia->empresa_id;
+        return $user->can('agencias.eliminar') && $user->empresa_id === $agencia->empresa_id;
     }
 }
