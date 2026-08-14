@@ -2,6 +2,8 @@
 
 namespace Database\Factories;
 
+use App\Models\Agencia;
+use App\Models\Empresa;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Support\Facades\Hash;
@@ -42,6 +44,27 @@ class UserFactory extends Factory
     {
         return $this->state(fn (array $attributes) => [
             'email_verified_at' => null,
+        ]);
+    }
+
+    /**
+     * Indicate that the user belongs to the given empresa (no agencia).
+     */
+    public function forEmpresa(Empresa $empresa): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'empresa_id' => $empresa->id,
+        ]);
+    }
+
+    /**
+     * Indicate that the user belongs to the given agencia (and its empresa).
+     */
+    public function forAgencia(Agencia $agencia): static
+    {
+        return $this->state(fn (array $attributes) => [
+            'empresa_id' => $agencia->empresa_id,
+            'agencia_id' => $agencia->id,
         ]);
     }
 }

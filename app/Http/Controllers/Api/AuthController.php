@@ -29,7 +29,7 @@ class AuthController extends Controller
         $token = $user->createToken('erp-token')->plainTextToken;
 
         return $this->successResponse([
-            'user' => $user,
+            'user' => $user->load('roles'),
             'access_token' => $token,
             'token_type' => 'Bearer',
         ], 'Login exitoso');
