@@ -2,9 +2,9 @@
 
 namespace Database\Factories;
 
-use App\Models\Agencia;
-use App\Models\Empresa;
-use App\Models\User;
+use App\Modules\Empresa\Models\Agencia;
+use App\Modules\Empresa\Models\Empresa;
+use App\Modules\Usuario\Models\User;
 use Illuminate\Database\Eloquent\Factories\Factory;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
@@ -14,6 +14,8 @@ use Illuminate\Support\Str;
  */
 class UserFactory extends Factory
 {
+    protected $model = User::class;
+
     /**
      * The current password being used by the factory.
      */

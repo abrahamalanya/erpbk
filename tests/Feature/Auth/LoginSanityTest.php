@@ -1,7 +1,7 @@
 <?php
 
-use App\Models\Agencia;
-use App\Models\User;
+use App\Modules\Empresa\Models\Agencia;
+use App\Modules\Usuario\Models\User;
 use Database\Seeders\RoleSeeder;
 
 beforeEach(function () {

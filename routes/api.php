@@ -1,11 +1,12 @@
 <?php
 
-use App\Http\Controllers\Api\AgenciaController;
-use App\Http\Controllers\Api\AuthController;
-use App\Http\Controllers\Api\EmpresaController;
-use App\Http\Controllers\Api\PermissionController;
-use App\Http\Controllers\Api\RoleController;
-use App\Http\Controllers\Api\UserController;
+use App\Modules\Cliente\Http\Controllers\ClienteController;
+use App\Modules\Empresa\Http\Controllers\AgenciaController;
+use App\Modules\Empresa\Http\Controllers\EmpresaController;
+use App\Modules\Sistemas\Http\Controllers\AuthController;
+use App\Modules\Sistemas\Http\Controllers\PermissionController;
+use App\Modules\Sistemas\Http\Controllers\RoleController;
+use App\Modules\Usuario\Http\Controllers\UserController;
 use Illuminate\Support\Facades\Route;
 
 // ===== AUTH ROUTES (públicas) =====
@@ -21,6 +22,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('usuarios', UserController::class)->parameters(['usuarios' => 'user']);
     Route::apiResource('roles', RoleController::class)->only(['index', 'show', 'update']);
     Route::apiResource('permisos', PermissionController::class)->only(['index']);
+
+    Route::apiResource('clientes', ClienteController::class);
+    Route::post('clientes/{cliente}/asignar', [ClienteController::class, 'asignar'])->name('clientes.asignar');
 });
 
 // ===== HEALTH CHECK =====

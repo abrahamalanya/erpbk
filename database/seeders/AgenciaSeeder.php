@@ -2,8 +2,8 @@
 
 namespace Database\Seeders;
 
-use App\Models\Agencia;
-use App\Models\Empresa;
+use App\Modules\Empresa\Models\Agencia;
+use App\Modules\Empresa\Models\Empresa;
 use Illuminate\Database\Seeder;
 
 class AgenciaSeeder extends Seeder

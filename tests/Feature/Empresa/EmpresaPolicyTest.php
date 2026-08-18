@@ -1,7 +1,7 @@
 <?php
 
-use App\Models\Empresa;
-use App\Models\User;
+use App\Modules\Empresa\Models\Empresa;
+use App\Modules\Usuario\Models\User;
 use Database\Seeders\PermissionSeeder;
 use Database\Seeders\RoleSeeder;
 use Laravel\Sanctum\Sanctum;

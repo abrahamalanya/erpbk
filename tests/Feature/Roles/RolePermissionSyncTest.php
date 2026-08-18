@@ -1,7 +1,7 @@
 <?php
 
-use App\Models\Role;
-use App\Models\User;
+use App\Modules\Sistemas\Models\Role;
+use App\Modules\Usuario\Models\User;
 use Database\Seeders\PermissionSeeder;
 use Database\Seeders\RoleSeeder;
 use Laravel\Sanctum\Sanctum;
@@ -52,5 +52,5 @@ it('lists permissions for the roles module', function () {
 
     $this->getJson('/api/permisos')
         ->assertSuccessful()
-        ->assertJsonCount(10, 'data');
+        ->assertJsonCount(15, 'data');
 });

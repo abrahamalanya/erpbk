@@ -1,9 +1,9 @@
 <?php
 
-use App\Models\Agencia;
-use App\Models\Empresa;
-use App\Models\Role;
-use App\Models\User;
+use App\Modules\Empresa\Models\Agencia;
+use App\Modules\Empresa\Models\Empresa;
+use App\Modules\Sistemas\Models\Role;
+use App\Modules\Usuario\Models\User;
 use Database\Seeders\PermissionSeeder;
 use Database\Seeders\RoleSeeder;
 use Laravel\Sanctum\Sanctum;
