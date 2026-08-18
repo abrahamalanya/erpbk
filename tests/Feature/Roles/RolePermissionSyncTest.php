@@ -52,5 +52,5 @@ it('lists permissions for the roles module', function () {
 
     $this->getJson('/api/permisos')
         ->assertSuccessful()
-        ->assertJsonCount(15, 'data');
+        ->assertJsonCount(36, 'data');
 });

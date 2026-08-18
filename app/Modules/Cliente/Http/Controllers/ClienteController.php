@@ -8,6 +8,7 @@ use App\Modules\Cliente\Http\Requests\UpdateClienteRequest;
 use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Cliente\Services\ClienteHierarchyService;
 use App\Nucleo\Http\Controllers\Controller;
+use App\Nucleo\Services\ConsultaDniService;
 use App\Nucleo\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Arr;
@@ -18,7 +19,17 @@ class ClienteController extends Controller
 {
     use ApiResponse;
 
-    public function __construct(private readonly ClienteHierarchyService $hierarchy) {}
+    public function __construct(
+        private readonly ClienteHierarchyService $hierarchy,
+        private readonly ConsultaDniService $consultaDni,
+    ) {}
+
+    public function consultarDni(string $dni): JsonResponse
+    {
+        Gate::authorize('create', Cliente::class);
+
+        return $this->successResponse($this->consultaDni->consultar($dni));
+    }
 
     public function index(): JsonResponse
     {
@@ -40,7 +51,7 @@ class ClienteController extends Controller
         $cliente = Cliente::query()->create([
             'empresa_id' => $actor->hasRole('sistemas') ? $data['empresa_id'] : $actor->empresa_id,
             'agencia_id' => $this->hierarchy->resolveAgenciaId($actor, $data['agencia_id'] ?? null),
-            'asesor_id' => null,
+            'asesor_id' => $this->hierarchy->resolveAsesorId($actor),
             'registrado_por' => $actor->id,
             'nombre' => $data['nombre'],
             'apellido' => $data['apellido'],

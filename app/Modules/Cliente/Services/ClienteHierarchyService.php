@@ -18,6 +18,16 @@ final class ClienteHierarchyService
         return $actor->hasAnyRole(self::AGENCIA_LEVEL_ROLES) ? $actor->agencia_id : $requestedAgenciaId;
     }
 
+    /**
+     * When an asesor registers a cliente themselves, it's assigned to them
+     * immediately — no reason to route it through the supervisor-assigns
+     * step meant for clients registered by peinadora/admin roles.
+     */
+    public function resolveAsesorId(User $actor): ?int
+    {
+        return $actor->hasRole('asesor') ? $actor->id : null;
+    }
+
     public function visibleQuery(Builder $query, User $actor): Builder
     {
         if ($actor->hasRole('sistemas') || $actor->hasAnyRole(['administrador_general', 'secretaria'])) {

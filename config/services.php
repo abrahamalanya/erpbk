@@ -35,4 +35,8 @@ return [
         ],
     ],
 
+    'consultasperu' => [
+        'token' => env('CONSULTASPERU_TOKEN'),
+    ],
+
 ];

@@ -50,6 +50,41 @@ it('never sets asesor_id via store, regardless of payload', function () {
     expect($response->json('data.asesor_id'))->toBeNull();
 });
 
+it('auto-assigns asesor_id to the asesor themselves when they register a cliente, ignoring any spoofed asesor_id', function () {
+    $empresa = Empresa::factory()->create();
+    $agencia = Agencia::factory()->for($empresa)->create();
+    $asesor = User::factory()->forAgencia($agencia)->create();
+    $asesor->assignRole('asesor');
+    $otroAsesor = User::factory()->forAgencia($agencia)->create();
+    $otroAsesor->assignRole('asesor');
+
+    Sanctum::actingAs($asesor, ['*']);
+
+    $response = $this->postJson('/api/clientes', [
+        'nombre' => 'Juan', 'apellido' => 'Perez', 'tipo_documento' => 'dni', 'numero_documento' => '33333333',
+        'asesor_id' => $otroAsesor->id,
+    ])->assertCreated();
+
+    expect($response->json('data.asesor_id'))->toBe($asesor->id);
+});
+
+it('lets the asesor immediately view and manage a cliente they just registered themselves', function () {
+    $empresa = Empresa::factory()->create();
+    $agencia = Agencia::factory()->for($empresa)->create();
+    $asesor = User::factory()->forAgencia($agencia)->create();
+    $asesor->assignRole('asesor');
+
+    Sanctum::actingAs($asesor, ['*']);
+
+    $clienteId = $this->postJson('/api/clientes', [
+        'nombre' => 'Juan', 'apellido' => 'Perez', 'tipo_documento' => 'dni', 'numero_documento' => '44444444',
+    ])->assertCreated()->json('data.id');
+
+    $this->getJson('/api/clientes')->assertSuccessful()->assertJsonCount(1, 'data.data');
+    $this->getJson("/api/clientes/{$clienteId}")->assertSuccessful();
+    $this->putJson("/api/clientes/{$clienteId}", ['nombre' => 'Actualizado'])->assertSuccessful();
+});
+
 it('allows the same numero_documento across two different empresas', function () {
     $empresaA = Empresa::factory()->create();
     $empresaB = Empresa::factory()->create();

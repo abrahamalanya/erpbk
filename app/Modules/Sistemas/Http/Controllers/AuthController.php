@@ -29,7 +29,7 @@ class AuthController extends Controller
         $token = $user->createToken('erp-token')->plainTextToken;
 
         return $this->successResponse([
-            'user' => $user->load('roles'),
+            'user' => $this->withPermissions($user),
             'access_token' => $token,
             'token_type' => 'Bearer',
         ], 'Login exitoso');
@@ -44,6 +44,24 @@ class AuthController extends Controller
 
     public function me(Request $request): JsonResponse
     {
-        return $this->successResponse($request->user()->load('roles'));
+        return $this->successResponse($this->withPermissions($request->user()));
+    }
+
+    /**
+     * Attaches the user's effective permission names (via their roles) to
+     * the response, so the frontend can gate UI by permission instead of
+     * hardcoding role names.
+     *
+     * Named "permission_names" (not "permissions") because Spatie's
+     * HasRoles trait already defines a "permissions" relationship (direct,
+     * non-role permissions) on User — reusing that key would silently be
+     * shadowed by the (empty, in this app) relation during serialization.
+     */
+    private function withPermissions(User $user): User
+    {
+        $user->load('roles');
+        $user->setAttribute('permission_names', $user->getAllPermissions()->pluck('name')->values());
+
+        return $user;
     }
 }

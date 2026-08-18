@@ -25,10 +25,20 @@ it('allows peinadora to create a cliente', function () {
     ])->assertCreated();
 });
 
-it('denies asesor from creating a cliente', function () {
+it('allows asesor to create a cliente', function () {
     $asesor = User::factory()->forAgencia($this->agencia)->create();
     $asesor->assignRole('asesor');
     Sanctum::actingAs($asesor, ['*']);
+
+    $this->postJson('/api/clientes', [
+        'nombre' => 'Juan', 'apellido' => 'Perez', 'tipo_documento' => 'dni', 'numero_documento' => '12345678',
+    ])->assertCreated();
+});
+
+it('denies supervisor from creating a cliente (no clientes.crear by default)', function () {
+    $supervisor = User::factory()->forAgencia($this->agencia)->create();
+    $supervisor->assignRole('supervisor');
+    Sanctum::actingAs($supervisor, ['*']);
 
     $this->postJson('/api/clientes', [
         'nombre' => 'Juan', 'apellido' => 'Perez', 'tipo_documento' => 'dni', 'numero_documento' => '12345678',
