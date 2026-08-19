@@ -7,6 +7,7 @@ use App\Modules\Caja\Models\Caja;
 use App\Modules\Usuario\Models\User;
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Collection;
 
 final class CajaBovedaHierarchyService
 {
@@ -70,6 +71,23 @@ final class CajaBovedaHierarchyService
         }
 
         return $this->puedeControlarBoveda($superior, $this->bovedaFinanciadoraDe($caja->user));
+    }
+
+    /**
+     * Every user who currently controls $boveda — i.e. who's authorized to
+     * approve/reject a billetaje against it (mirrors puedeControlarBoveda(),
+     * listing candidates instead of checking one). Used to resolve who
+     * should receive a live update when a billetaje changes.
+     *
+     * @return Collection<int, User>
+     */
+    public function controladoresDe(Boveda $boveda): Collection
+    {
+        if ($boveda->tipo === 'principal') {
+            return User::role('administrador_general')->where('empresa_id', $boveda->empresa_id)->get();
+        }
+
+        return User::role('administrador_agencia')->where('agencia_id', $boveda->agencia_id)->get();
     }
 
     public function cajasVisibles(Builder $query, User $actor): Builder

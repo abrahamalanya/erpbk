@@ -2,6 +2,7 @@
 
 namespace App\Modules\Caja\Services;
 
+use App\Modules\Caja\Events\BilletajeActualizado;
 use App\Modules\Caja\Models\Billetaje;
 use App\Modules\Caja\Models\BovedaMovimiento;
 use App\Modules\Caja\Models\Caja;
@@ -29,7 +30,7 @@ final class BilletajeService
 
         $boveda = $this->hierarchy->bovedaFinanciadoraDe($actor);
 
-        return Billetaje::query()->create([
+        $billetaje = Billetaje::query()->create([
             'caja_ciclo_id' => $ciclo->id,
             'boveda_id' => $boveda->id,
             'empresa_id' => $ciclo->empresa_id,
@@ -37,6 +38,10 @@ final class BilletajeService
             'estado' => 'pendiente',
             'solicitado_por' => $actor->id,
         ]);
+
+        $this->notificar($billetaje);
+
+        return $billetaje;
     }
 
     public function aprobar(Billetaje $billetaje, User $aprobador): Billetaje
@@ -80,7 +85,10 @@ final class BilletajeService
                 'fecha_resolucion' => now(),
             ]);
 
-            return $billetaje->fresh();
+            $billetaje = $billetaje->fresh();
+            $this->notificar($billetaje);
+
+            return $billetaje;
         });
     }
 
@@ -95,7 +103,23 @@ final class BilletajeService
             'fecha_resolucion' => now(),
         ]);
 
-        return $billetaje->fresh();
+        $billetaje = $billetaje->fresh();
+        $this->notificar($billetaje);
+
+        return $billetaje;
+    }
+
+    /**
+     * Broadcasts the billetaje's current state to the solicitante and to
+     * whoever currently controls its bóveda — so both sides see the change
+     * live, without either having to leave and re-enter the module.
+     */
+    private function notificar(Billetaje $billetaje): void
+    {
+        $destinatarios = $this->hierarchy->controladoresDe($billetaje->boveda)
+            ->push($billetaje->solicitadoPor);
+
+        BilletajeActualizado::dispatch($billetaje, $destinatarios);
     }
 
     /**
