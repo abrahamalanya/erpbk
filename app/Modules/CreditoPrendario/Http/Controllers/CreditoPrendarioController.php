@@ -2,7 +2,6 @@
 
 namespace App\Modules\CreditoPrendario\Http\Controllers;
 
-use App\Modules\Cliente\Models\Cliente;
 use App\Modules\CreditoPrendario\Http\Requests\RechazarCreditoRequest;
 use App\Modules\CreditoPrendario\Http\Requests\RefrendarCreditoRequest;
 use App\Modules\CreditoPrendario\Http\Requests\StoreCreditoPrendarioRequest;
@@ -32,7 +31,7 @@ class CreditoPrendarioController extends Controller
     {
         Gate::authorize('viewAny', CreditoPrendario::class);
 
-        $query = CreditoPrendario::query()->with(['bien', 'cliente', 'registradoPor']);
+        $query = CreditoPrendario::query()->with(['bienes', 'cliente', 'registradoPor']);
         $query = $this->hierarchy->visibleQuery($query, request()->user());
 
         return $this->successResponse($query->latest()->paginate(15));
@@ -43,10 +42,9 @@ class CreditoPrendarioController extends Controller
         Gate::authorize('create', CreditoPrendario::class);
 
         $data = $request->validated();
-        $bien = Bien::query()->findOrFail($data['bien_id']);
-        $cliente = Cliente::query()->findOrFail($data['cliente_id']);
+        $bienes = Bien::query()->whereIn('id', $data['bien_ids'])->get();
 
-        $credito = $this->creditoService->registrar($request->user(), $bien, $cliente, $data);
+        $credito = $this->creditoService->registrar($request->user(), $bienes, $data);
 
         return $this->successResponse($credito, 'Crédito registrado', 201);
     }
@@ -55,7 +53,7 @@ class CreditoPrendarioController extends Controller
     {
         Gate::authorize('view', $credito);
 
-        return $this->successResponse($credito->load(['bien.fotos', 'cliente', 'registradoPor', 'aprobadoPor', 'documentos']));
+        return $this->successResponse($credito->load(['bienes.fotos', 'cliente', 'registradoPor', 'aprobadoPor', 'documentos']));
     }
 
     public function aprobar(CreditoPrendario $credito): JsonResponse

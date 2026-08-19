@@ -15,7 +15,6 @@ return new class extends Migration
             $table->id();
             $table->foreignId('empresa_id')->constrained()->restrictOnDelete();
             $table->foreignId('agencia_id')->constrained()->restrictOnDelete();
-            $table->foreignId('bien_id')->constrained('bienes')->restrictOnDelete();
             $table->foreignId('cliente_id')->constrained('clientes')->restrictOnDelete();
             $table->foreignId('registrado_por')->nullable()->constrained('users')->nullOnDelete();
             $table->foreignId('refrendo_de_credito_id')->nullable()->constrained('creditos_prendarios')->nullOnDelete();
@@ -38,7 +37,6 @@ return new class extends Migration
             $table->timestamps();
 
             $table->index(['empresa_id', 'estado']);
-            $table->index('bien_id');
             $table->index('fecha_vencimiento');
         });
     }

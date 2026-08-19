@@ -18,8 +18,8 @@ beforeEach(function () {
 
     $this->asesor = User::factory()->forAgencia($this->agencia)->create();
     $this->asesor->assignRole('asesor');
-    $this->bien = Bien::factory()->forAgencia($this->agencia)->create(['tipo' => 'electro']);
     $this->cliente = Cliente::factory()->forAgencia($this->agencia)->create();
+    $this->bien = Bien::factory()->paraCliente($this->cliente)->create(['tipo' => 'electro']);
 });
 
 it('creates a new chained crédito on refrendo and marks the original as refrendado, generating only an adenda', function () {
@@ -29,14 +29,14 @@ it('creates a new chained crédito on refrendo and marks the original as refrend
 
     $original = CreditoPrendario::factory()->paraBien($this->bien)
         ->activo()
-        ->create(['cliente_id' => $this->cliente->id, 'registrado_por' => $this->asesor->id]);
+        ->create(['registrado_por' => $this->asesor->id]);
 
     Sanctum::actingAs($this->asesor, ['*']);
 
     $response = $this->postJson("/api/creditos-prendarios/{$original->id}/refrendar", ['monto_interes_pagado' => 50])
         ->assertCreated();
 
-    expect($response->json('data.bien_id'))->toBe($this->bien->id)
+    expect($response->json('data.bienes.0.id'))->toBe($this->bien->id)
         ->and($response->json('data.refrendo_de_credito_id'))->toBe($original->id)
         ->and($response->json('data.numero_refrendo'))->toBe(1)
         ->and($response->json('data.estado'))->toBe('activo');
@@ -55,7 +55,7 @@ it('rejects refrendo once max_refrendos is reached', function () {
 
     $original = CreditoPrendario::factory()->paraBien($this->bien)
         ->activo()
-        ->create(['cliente_id' => $this->cliente->id, 'registrado_por' => $this->asesor->id, 'numero_refrendo' => 1]);
+        ->create(['registrado_por' => $this->asesor->id, 'numero_refrendo' => 1]);
 
     Sanctum::actingAs($this->asesor, ['*']);
 
@@ -69,7 +69,7 @@ it('rejects refrendo on a crédito still pendiente', function () {
     ]);
 
     $pendiente = CreditoPrendario::factory()->paraBien($this->bien)
-        ->create(['cliente_id' => $this->cliente->id, 'registrado_por' => $this->asesor->id, 'estado' => 'pendiente']);
+        ->create(['registrado_por' => $this->asesor->id, 'estado' => 'pendiente']);
 
     Sanctum::actingAs($this->asesor, ['*']);
 
@@ -80,7 +80,7 @@ it('rejects refrendo on a crédito still pendiente', function () {
 it('rejects refrendo with a zero or negative monto_interes_pagado', function () {
     $activo = CreditoPrendario::factory()->paraBien($this->bien)
         ->activo()
-        ->create(['cliente_id' => $this->cliente->id, 'registrado_por' => $this->asesor->id]);
+        ->create(['registrado_por' => $this->asesor->id]);
 
     Sanctum::actingAs($this->asesor, ['*']);
 

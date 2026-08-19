@@ -24,8 +24,8 @@ class StoreCreditoPrendarioRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'bien_id' => ['required', 'integer', 'exists:bienes,id'],
-            'cliente_id' => ['required', 'integer', 'exists:clientes,id'],
+            'bien_ids' => ['required', 'array', 'min:1'],
+            'bien_ids.*' => ['integer', 'distinct', 'exists:bienes,id'],
             'monto_prestamo' => ['required', 'numeric', 'min:0.01'],
             'interes' => ['nullable', 'numeric', 'min:0'],
             'tipo_cuota' => ['required', Rule::in(['diario', 'semanal', 'quincenal', 'mensual'])],
@@ -40,10 +40,10 @@ class StoreCreditoPrendarioRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'bien_id.required' => 'El bien es requerido',
-            'bien_id.exists' => 'El bien indicado no existe',
-            'cliente_id.required' => 'El cliente es requerido',
-            'cliente_id.exists' => 'El cliente indicado no existe',
+            'bien_ids.required' => 'Debes seleccionar al menos un bien',
+            'bien_ids.min' => 'Debes seleccionar al menos un bien',
+            'bien_ids.*.exists' => 'Uno de los bienes indicados no existe',
+            'bien_ids.*.distinct' => 'No repitas el mismo bien',
             'monto_prestamo.required' => 'El monto del préstamo es requerido',
             'tipo_cuota.required' => 'El tipo de cuota es requerido',
             'tipo_cuota.in' => 'El tipo de cuota no es válido',

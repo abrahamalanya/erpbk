@@ -21,14 +21,14 @@ beforeEach(function () {
 
     $this->asesor = User::factory()->forAgencia($this->agencia)->create();
     $this->asesor->assignRole('asesor');
-    $this->bien = Bien::factory()->forAgencia($this->agencia)->create(['tipo' => 'electro']);
     $this->cliente = Cliente::factory()->forAgencia($this->agencia)->create();
+    $this->bien = Bien::factory()->paraCliente($this->cliente)->create(['tipo' => 'electro', 'valorizacion' => 1000]);
 });
 
 it('allows the registering asesor to view the crédito via show', function () {
     Sanctum::actingAs($this->asesor, ['*']);
     $creditoId = $this->postJson('/api/creditos-prendarios', [
-        'bien_id' => $this->bien->id, 'cliente_id' => $this->cliente->id,
+        'bien_ids' => [$this->bien->id],
         'monto_prestamo' => 500, 'tipo_cuota' => 'mensual',
     ])->assertCreated()->json('data.id');
 
@@ -41,8 +41,7 @@ it('registers a crédito as pendiente with the config default interest', functio
     Sanctum::actingAs($this->asesor, ['*']);
 
     $response = $this->postJson('/api/creditos-prendarios', [
-        'bien_id' => $this->bien->id,
-        'cliente_id' => $this->cliente->id,
+        'bien_ids' => [$this->bien->id],
         'monto_prestamo' => 500,
         'tipo_cuota' => 'mensual',
     ])->assertCreated();
@@ -54,7 +53,7 @@ it('registers a crédito as pendiente with the config default interest', functio
 it('allows administrador_agencia to approve and generates contrato + declaracion', function () {
     Sanctum::actingAs($this->asesor, ['*']);
     $creditoId = $this->postJson('/api/creditos-prendarios', [
-        'bien_id' => $this->bien->id, 'cliente_id' => $this->cliente->id,
+        'bien_ids' => [$this->bien->id],
         'monto_prestamo' => 500, 'tipo_cuota' => 'mensual',
     ])->assertCreated()->json('data.id');
 
@@ -74,7 +73,7 @@ it('allows administrador_agencia to approve and generates contrato + declaracion
 it('allows administrador_general to reject with a motivo', function () {
     Sanctum::actingAs($this->asesor, ['*']);
     $creditoId = $this->postJson('/api/creditos-prendarios', [
-        'bien_id' => $this->bien->id, 'cliente_id' => $this->cliente->id,
+        'bien_ids' => [$this->bien->id],
         'monto_prestamo' => 500, 'tipo_cuota' => 'mensual',
     ])->assertCreated()->json('data.id');
 
@@ -91,7 +90,7 @@ it('allows administrador_general to reject with a motivo', function () {
 it('denies asesor from approving their own crédito', function () {
     Sanctum::actingAs($this->asesor, ['*']);
     $creditoId = $this->postJson('/api/creditos-prendarios', [
-        'bien_id' => $this->bien->id, 'cliente_id' => $this->cliente->id,
+        'bien_ids' => [$this->bien->id],
         'monto_prestamo' => 500, 'tipo_cuota' => 'mensual',
     ])->assertCreated()->json('data.id');
 
@@ -101,7 +100,7 @@ it('denies asesor from approving their own crédito', function () {
 it('activates the crédito once firmado, setting fecha_desembolso and fecha_vencimiento', function () {
     Sanctum::actingAs($this->asesor, ['*']);
     $creditoId = $this->postJson('/api/creditos-prendarios', [
-        'bien_id' => $this->bien->id, 'cliente_id' => $this->cliente->id,
+        'bien_ids' => [$this->bien->id],
         'monto_prestamo' => 500, 'tipo_cuota' => 'mensual',
     ])->assertCreated()->json('data.id');
 
@@ -125,7 +124,7 @@ it('activates the crédito once firmado, setting fecha_desembolso and fecha_venc
 it('rejects firmar when the crédito is not yet aprobado', function () {
     Sanctum::actingAs($this->asesor, ['*']);
     $creditoId = $this->postJson('/api/creditos-prendarios', [
-        'bien_id' => $this->bien->id, 'cliente_id' => $this->cliente->id,
+        'bien_ids' => [$this->bien->id],
         'monto_prestamo' => 500, 'tipo_cuota' => 'mensual',
     ])->assertCreated()->json('data.id');
 

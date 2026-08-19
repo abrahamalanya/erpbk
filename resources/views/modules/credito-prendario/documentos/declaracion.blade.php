@@ -14,13 +14,13 @@
     </style>
 </head>
 <body>
-    <h1>DECLARACIÓN JURADA DE PROCEDENCIA DEL BIEN</h1>
+    <h1>DECLARACIÓN JURADA DE PROCEDENCIA DE LOS BIENES</h1>
     <p style="text-align: center;">{{ $credito->empresa->nombre }} — {{ $credito->agencia->nombre }}</p>
 
     <table>
         <tr><td class="label">Cliente</td><td>{{ $credito->cliente->nombre }} {{ $credito->cliente->apellido }}</td></tr>
         <tr><td class="label">Documento</td><td>{{ strtoupper($credito->cliente->tipo_documento) }} {{ $credito->cliente->numero_documento }}</td></tr>
-        <tr><td class="label">Bien declarado</td><td>{{ $credito->bien->nombre }} ({{ ucfirst($credito->bien->tipo) }})</td></tr>
+        <tr><td class="label">Bienes declarados</td><td>{{ $credito->bienes->map(fn ($bien) => "{$bien->nombre} (".ucfirst($bien->tipo).')')->implode(', ') }}</td></tr>
         <tr><td class="label">Crédito asociado</td><td>#{{ $credito->id }}</td></tr>
     </table>
 

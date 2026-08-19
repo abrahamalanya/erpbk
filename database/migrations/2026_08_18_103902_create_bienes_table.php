@@ -15,6 +15,7 @@ return new class extends Migration
             $table->id();
             $table->foreignId('empresa_id')->constrained()->restrictOnDelete();
             $table->foreignId('agencia_id')->constrained()->restrictOnDelete();
+            $table->foreignId('cliente_id')->constrained('clientes')->restrictOnDelete();
             $table->foreignId('registrado_por')->nullable()->constrained('users')->nullOnDelete();
 
             $table->string('tipo');

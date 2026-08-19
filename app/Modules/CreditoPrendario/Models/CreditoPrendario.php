@@ -12,6 +12,7 @@ use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class CreditoPrendario extends Model
@@ -34,7 +35,6 @@ class CreditoPrendario extends Model
     protected $fillable = [
         'empresa_id',
         'agencia_id',
-        'bien_id',
         'cliente_id',
         'registrado_por',
         'refrendo_de_credito_id',
@@ -77,9 +77,10 @@ class CreditoPrendario extends Model
         return $this->belongsTo(Agencia::class);
     }
 
-    public function bien(): BelongsTo
+    public function bienes(): BelongsToMany
     {
-        return $this->belongsTo(Bien::class);
+        return $this->belongsToMany(Bien::class, 'bien_credito_prendario', 'credito_prendario_id', 'bien_id')
+            ->withTimestamps();
     }
 
     public function cliente(): BelongsTo

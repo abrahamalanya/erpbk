@@ -2,11 +2,11 @@
 
 namespace App\Modules\CreditoPrendario\Services;
 
-use App\Modules\Cliente\Models\Cliente;
 use App\Modules\CreditoPrendario\Models\Bien;
 use App\Modules\CreditoPrendario\Models\CreditoPrendario;
 use App\Modules\Usuario\Models\User;
 use DomainException;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 final class CreditoPrendarioService
@@ -17,25 +17,60 @@ final class CreditoPrendarioService
     ) {}
 
     /**
+     * @param  Collection<int, Bien>  $bienes
      * @param  array{monto_prestamo: string, interes?: string, tipo_cuota: string}  $datos
      */
-    public function registrar(User $actor, Bien $bien, Cliente $cliente, array $datos): CreditoPrendario
+    public function registrar(User $actor, Collection $bienes, array $datos): CreditoPrendario
     {
-        $configuracion = $this->configuracion->resolverPara($bien->agencia, $bien->tipo);
+        if ($bienes->isEmpty()) {
+            throw new DomainException('Debes seleccionar al menos un bien.');
+        }
 
-        return DB::transaction(fn (): CreditoPrendario => CreditoPrendario::query()->create([
-            'empresa_id' => $bien->empresa_id,
-            'agencia_id' => $bien->agencia_id,
-            'bien_id' => $bien->id,
-            'cliente_id' => $cliente->id,
-            'registrado_por' => $actor->id,
-            'numero_refrendo' => 0,
-            'monto_prestamo' => $datos['monto_prestamo'],
-            'interes' => $datos['interes'] ?? $configuracion->interes_default,
-            'tipo_cuota' => $datos['tipo_cuota'],
-            'plazo_dias' => $configuracion->plazo_dias,
-            'estado' => 'pendiente',
-        ]));
+        if ($bienes->pluck('cliente_id')->unique()->count() > 1) {
+            throw new DomainException('Todos los bienes deben pertenecer al mismo cliente.');
+        }
+
+        if ($bienes->pluck('tipo')->unique()->count() > 1) {
+            throw new DomainException('Todos los bienes de un crédito deben ser del mismo tipo (Electro o Varios).');
+        }
+
+        $bienIds = $bienes->pluck('id');
+
+        if (Bien::disponibles()->whereIn('id', $bienIds)->count() !== $bienIds->count()) {
+            throw new DomainException('Uno o más bienes seleccionados ya están respaldando otro crédito activo.');
+        }
+
+        $sumaValorizaciones = $bienes->reduce(
+            fn (string $carry, Bien $bien): string => bcadd($carry, (string) $bien->valorizacion, 2),
+            '0'
+        );
+
+        if (bccomp($datos['monto_prestamo'], $sumaValorizaciones, 2) > 0) {
+            throw new DomainException('El monto del préstamo no puede superar la suma de las valorizaciones de los bienes seleccionados.');
+        }
+
+        $primerBien = $bienes->first();
+        $configuracion = $this->configuracion->resolverPara($primerBien->agencia, $primerBien->tipo);
+
+        return DB::transaction(function () use ($actor, $bienIds, $primerBien, $datos, $configuracion): CreditoPrendario {
+            $credito = CreditoPrendario::query()->create([
+                'empresa_id' => $primerBien->empresa_id,
+                'agencia_id' => $primerBien->agencia_id,
+                'cliente_id' => $primerBien->cliente_id,
+                'registrado_por' => $actor->id,
+                'numero_refrendo' => 0,
+                'monto_prestamo' => $datos['monto_prestamo'],
+                'interes' => $datos['interes'] ?? $configuracion->interes_default,
+                'tipo_cuota' => $datos['tipo_cuota'],
+                'plazo_dias' => $configuracion->plazo_dias,
+                'estado' => 'pendiente',
+            ]);
+
+            $credito->bienes()->attach($bienIds);
+            Bien::query()->whereIn('id', $bienIds)->update(['estado' => 'en_garantia']);
+
+            return $credito->fresh(['bienes']);
+        });
     }
 
     public function aprobar(CreditoPrendario $credito, User $aprobador): CreditoPrendario
@@ -102,7 +137,8 @@ final class CreditoPrendarioService
             throw new DomainException('El monto de interés pagado debe ser mayor a cero.');
         }
 
-        $configuracion = $this->configuracion->resolverPara($credito->agencia, $credito->bien->tipo);
+        $primerBien = $credito->bienes->first();
+        $configuracion = $this->configuracion->resolverPara($credito->agencia, $primerBien->tipo);
         $siguienteNumero = $credito->numero_refrendo + 1;
 
         if ($configuracion->max_refrendos !== null && $siguienteNumero > $configuracion->max_refrendos) {
@@ -117,7 +153,6 @@ final class CreditoPrendarioService
             $nuevo = CreditoPrendario::query()->create([
                 'empresa_id' => $credito->empresa_id,
                 'agencia_id' => $credito->agencia_id,
-                'bien_id' => $credito->bien_id,
                 'cliente_id' => $credito->cliente_id,
                 'registrado_por' => $actor->id,
                 'refrendo_de_credito_id' => $credito->id,
@@ -131,9 +166,11 @@ final class CreditoPrendarioService
                 'fecha_vencimiento' => $fechaDesembolso->copy()->addDays($configuracion->plazo_dias)->toDateString(),
             ]);
 
+            $nuevo->bienes()->attach($credito->bienes->pluck('id'));
+
             $this->documentos->generarAdenda($nuevo, $actor);
 
-            return $nuevo;
+            return $nuevo->fresh(['bienes']);
         });
     }
 
@@ -145,9 +182,9 @@ final class CreditoPrendarioService
 
         return DB::transaction(function () use ($credito): CreditoPrendario {
             $credito->update(['estado' => 'liquidado']);
-            $credito->bien->update(['estado' => 'recuperado']);
+            Bien::query()->whereIn('id', $credito->bienes->pluck('id'))->update(['estado' => 'recuperado']);
 
-            return $credito->fresh();
+            return $credito->fresh(['bienes']);
         });
     }
 
@@ -166,15 +203,16 @@ final class CreditoPrendarioService
 
         CreditoPrendario::query()
             ->where('estado', 'vencido')
-            ->with(['bien', 'agencia'])
+            ->with(['bienes', 'agencia'])
             ->get()
             ->each(function (CreditoPrendario $credito) use ($hoy): void {
-                $configuracion = $this->configuracion->resolverPara($credito->agencia, $credito->bien->tipo);
+                $primerBien = $credito->bienes->first();
+                $configuracion = $this->configuracion->resolverPara($credito->agencia, $primerBien->tipo);
                 $fechaLimite = $credito->fecha_vencimiento->copy()->addDays($configuracion->dias_espera_mora)->toDateString();
 
                 if ($fechaLimite < $hoy) {
                     $credito->update(['estado' => 'en_venta']);
-                    $credito->bien->update(['estado' => 'disponible_venta']);
+                    Bien::query()->whereIn('id', $credito->bienes->pluck('id'))->update(['estado' => 'disponible_venta']);
                 }
             });
     }
@@ -187,7 +225,8 @@ final class CreditoPrendarioService
             return '0.00';
         }
 
-        $configuracion = $this->configuracion->resolverPara($credito->agencia, $credito->bien->tipo);
+        $primerBien = $credito->bienes->first();
+        $configuracion = $this->configuracion->resolverPara($credito->agencia, $primerBien->tipo);
         $tasaDiaria = bcdiv((string) $configuracion->tasa_mora_diaria, '100', 4);
 
         return bcmul(bcmul((string) $credito->monto_prestamo, $tasaDiaria, 4), (string) $dias, 2);

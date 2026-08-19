@@ -19,12 +19,12 @@
 
     <p>
         Esta adenda modifica y extiende el contrato original del crédito #{{ $credito->refrendo_de_credito_id }},
-        mediante refrendo N.° {{ $credito->numero_refrendo }}, conservando el mismo bien en garantía.
+        mediante refrendo N.° {{ $credito->numero_refrendo }}, conservando los mismos bienes en garantía.
     </p>
 
     <table>
         <tr><td class="label">Cliente</td><td>{{ $credito->cliente->nombre }} {{ $credito->cliente->apellido }}</td></tr>
-        <tr><td class="label">Bien en garantía</td><td>{{ $credito->bien->nombre }} ({{ ucfirst($credito->bien->tipo) }})</td></tr>
+        <tr><td class="label">Bienes en garantía</td><td>{{ $credito->bienes->map(fn ($bien) => "{$bien->nombre} (".ucfirst($bien->tipo).')')->implode(', ') }}</td></tr>
         <tr><td class="label">Nuevo crédito</td><td>#{{ $credito->id }}</td></tr>
         <tr><td class="label">Monto (capital)</td><td>{{ number_format($credito->monto_prestamo, 2) }}</td></tr>
         <tr><td class="label">Interés</td><td>{{ number_format($credito->interes, 2) }}%</td></tr>

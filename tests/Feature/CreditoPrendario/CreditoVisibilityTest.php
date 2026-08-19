@@ -1,6 +1,5 @@
 <?php
 
-use App\Modules\Cliente\Models\Cliente;
 use App\Modules\CreditoPrendario\Models\Bien;
 use App\Modules\CreditoPrendario\Models\CreditoPrendario;
 use App\Modules\Empresa\Models\Agencia;
@@ -24,10 +23,9 @@ it('lets an asesor see only créditos they registered', function () {
     $asesorA2->assignRole('asesor');
 
     $bien = Bien::factory()->forAgencia($this->agenciaA)->create();
-    $cliente = Cliente::factory()->forAgencia($this->agenciaA)->create();
 
-    CreditoPrendario::factory()->paraBien($bien)->create(['cliente_id' => $cliente->id, 'registrado_por' => $asesorA->id]);
-    CreditoPrendario::factory()->paraBien($bien)->create(['cliente_id' => $cliente->id, 'registrado_por' => $asesorA2->id]);
+    CreditoPrendario::factory()->paraBien($bien)->create(['registrado_por' => $asesorA->id]);
+    CreditoPrendario::factory()->paraBien($bien)->create(['registrado_por' => $asesorA2->id]);
 
     Sanctum::actingAs($asesorA, ['*']);
 
@@ -41,8 +39,7 @@ it('lets a supervisor see créditos registered by their subordinate asesores', f
     $asesor->assignRole('asesor');
 
     $bien = Bien::factory()->forAgencia($this->agenciaA)->create();
-    $cliente = Cliente::factory()->forAgencia($this->agenciaA)->create();
-    CreditoPrendario::factory()->paraBien($bien)->create(['cliente_id' => $cliente->id, 'registrado_por' => $asesor->id]);
+    CreditoPrendario::factory()->paraBien($bien)->create(['registrado_por' => $asesor->id]);
 
     Sanctum::actingAs($supervisor, ['*']);
 
@@ -51,12 +48,10 @@ it('lets a supervisor see créditos registered by their subordinate asesores', f
 
 it('lets administrador_agencia see every crédito in their agencia only', function () {
     $bienA = Bien::factory()->forAgencia($this->agenciaA)->create();
-    $clienteA = Cliente::factory()->forAgencia($this->agenciaA)->create();
-    CreditoPrendario::factory()->paraBien($bienA)->create(['cliente_id' => $clienteA->id]);
+    CreditoPrendario::factory()->paraBien($bienA)->create();
 
     $bienB = Bien::factory()->forAgencia($this->agenciaB)->create();
-    $clienteB = Cliente::factory()->forAgencia($this->agenciaB)->create();
-    CreditoPrendario::factory()->paraBien($bienB)->create(['cliente_id' => $clienteB->id]);
+    CreditoPrendario::factory()->paraBien($bienB)->create();
 
     $adminAgenciaA = User::factory()->forAgencia($this->agenciaA)->create();
     $adminAgenciaA->assignRole('administrador_agencia');
@@ -67,12 +62,10 @@ it('lets administrador_agencia see every crédito in their agencia only', functi
 
 it('lets administrador_general see créditos across every agencia of their empresa', function () {
     $bienA = Bien::factory()->forAgencia($this->agenciaA)->create();
-    $clienteA = Cliente::factory()->forAgencia($this->agenciaA)->create();
-    CreditoPrendario::factory()->paraBien($bienA)->create(['cliente_id' => $clienteA->id]);
+    CreditoPrendario::factory()->paraBien($bienA)->create();
 
     $bienB = Bien::factory()->forAgencia($this->agenciaB)->create();
-    $clienteB = Cliente::factory()->forAgencia($this->agenciaB)->create();
-    CreditoPrendario::factory()->paraBien($bienB)->create(['cliente_id' => $clienteB->id]);
+    CreditoPrendario::factory()->paraBien($bienB)->create();
 
     $adminGeneral = User::factory()->forEmpresa($this->empresa)->create();
     $adminGeneral->assignRole('administrador_general');

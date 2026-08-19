@@ -2,6 +2,7 @@
 
 namespace Database\Factories;
 
+use App\Modules\Cliente\Models\Cliente;
 use App\Modules\CreditoPrendario\Models\Bien;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
@@ -25,6 +26,7 @@ class BienFactory extends Factory
         return [
             'empresa_id' => Empresa::factory(),
             'agencia_id' => Agencia::factory(),
+            'cliente_id' => Cliente::factory(),
             'registrado_por' => User::factory(),
             'tipo' => 'electro',
             'nombre' => fake()->words(2, true),
@@ -39,13 +41,28 @@ class BienFactory extends Factory
     }
 
     /**
-     * Attach the bien to the given agencia (and its empresa).
+     * Attach the bien to the given agencia (and its empresa), with a fresh
+     * cliente of that same agencia.
      */
     public function forAgencia(Agencia $agencia): static
     {
         return $this->state(fn (): array => [
             'empresa_id' => $agencia->empresa_id,
             'agencia_id' => $agencia->id,
+            'cliente_id' => Cliente::factory()->forAgencia($agencia),
+        ]);
+    }
+
+    /**
+     * Attach the bien to the given cliente (and their empresa/agencia) —
+     * for tests that need several bienes under the same cliente.
+     */
+    public function paraCliente(Cliente $cliente): static
+    {
+        return $this->state(fn (): array => [
+            'empresa_id' => $cliente->empresa_id,
+            'agencia_id' => $cliente->agencia_id,
+            'cliente_id' => $cliente->id,
         ]);
     }
 

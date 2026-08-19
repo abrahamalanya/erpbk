@@ -42,7 +42,7 @@ final class DocumentoCreditoPrendarioService
 
     private function generar(CreditoPrendario $credito, User $actor, string $tipo, string $vista): DocumentoCreditoPrendario
     {
-        $credito->loadMissing(['bien', 'cliente', 'agencia', 'empresa']);
+        $credito->loadMissing(['bienes', 'cliente', 'agencia', 'empresa']);
 
         $ruta = "documentos-credito-prendario/{$credito->id}/{$tipo}-".now()->timestamp.'.pdf';
 

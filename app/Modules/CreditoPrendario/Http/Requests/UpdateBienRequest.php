@@ -2,13 +2,11 @@
 
 namespace App\Modules\CreditoPrendario\Http\Requests;
 
-use App\Modules\Cliente\Models\Cliente;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
-use Illuminate\Validation\Validator;
 
-class StoreBienRequest extends FormRequest
+class UpdateBienRequest extends FormRequest
 {
     /**
      * Determine if the user is authorized to make this request.
@@ -26,7 +24,6 @@ class StoreBienRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'cliente_id' => ['required', 'integer', 'exists:clientes,id'],
             'tipo' => ['required', Rule::in(['electro', 'varios'])],
             'nombre' => ['required', 'string', 'max:255'],
             'marca' => [Rule::requiredIf(fn (): bool => $this->input('tipo') === 'electro'), 'nullable', 'string', 'max:255'],
@@ -42,38 +39,6 @@ class StoreBienRequest extends FormRequest
     }
 
     /**
-     * Confirms the cliente is within the actor's own tenant scope — mirrors
-     * the same cross-entity ownership check StoreClienteRequest does for
-     * agencia_id/empresa_id.
-     */
-    public function withValidator(Validator $validator): void
-    {
-        $validator->after(function (Validator $validator): void {
-            $cliente = Cliente::find($this->input('cliente_id'));
-
-            if (! $cliente) {
-                return;
-            }
-
-            $actor = $this->user();
-
-            if ($actor->hasRole('sistemas')) {
-                return;
-            }
-
-            if ($actor->empresa_id !== $cliente->empresa_id) {
-                $validator->errors()->add('cliente_id', 'El cliente no pertenece a tu empresa.');
-
-                return;
-            }
-
-            if ($actor->agencia_id !== null && $actor->agencia_id !== $cliente->agencia_id) {
-                $validator->errors()->add('cliente_id', 'El cliente no pertenece a tu agencia.');
-            }
-        });
-    }
-
-    /**
      * Get the custom validation messages.
      *
      * @return array<string, string>
@@ -81,8 +46,6 @@ class StoreBienRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'cliente_id.required' => 'El cliente es requerido',
-            'cliente_id.exists' => 'El cliente indicado no existe',
             'tipo.required' => 'El tipo de bien es requerido',
             'tipo.in' => 'El tipo de bien no es válido',
             'nombre.required' => 'El nombre del bien es requerido',

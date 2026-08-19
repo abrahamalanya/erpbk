@@ -26,14 +26,23 @@
         <tr><td class="label">Teléfono</td><td>{{ $credito->cliente->telefono }}</td></tr>
     </table>
 
-    <h2>Bien en garantía</h2>
+    <h2>Bienes en garantía</h2>
     <table>
-        <tr><td class="label">Tipo</td><td>{{ ucfirst($credito->bien->tipo) }}</td></tr>
-        <tr><td class="label">Nombre</td><td>{{ $credito->bien->nombre }}</td></tr>
-        <tr><td class="label">Marca / Modelo</td><td>{{ $credito->bien->marca }} / {{ $credito->bien->modelo }}</td></tr>
-        <tr><td class="label">Serie</td><td>{{ $credito->bien->serie }}</td></tr>
-        <tr><td class="label">Cantidad</td><td>{{ $credito->bien->cantidad }}</td></tr>
-        <tr><td class="label">Valorización</td><td>{{ number_format($credito->bien->valorizacion, 2) }}</td></tr>
+        <tr>
+            <td class="label">Tipo</td><td class="label">Nombre</td><td class="label">Marca / Modelo</td>
+            <td class="label">Serie</td><td class="label">Cantidad</td><td class="label">Valorización</td>
+        </tr>
+        @foreach ($credito->bienes as $bien)
+        <tr>
+            <td>{{ ucfirst($bien->tipo) }}</td>
+            <td>{{ $bien->nombre }}</td>
+            <td>{{ $bien->marca }} / {{ $bien->modelo }}</td>
+            <td>{{ $bien->serie }}</td>
+            <td>{{ $bien->cantidad }}</td>
+            <td>{{ number_format($bien->valorizacion, 2) }}</td>
+        </tr>
+        @endforeach
+        <tr><td class="label" colspan="5">Total valorización</td><td>{{ number_format($credito->bienes->sum('valorizacion'), 2) }}</td></tr>
     </table>
 
     <h2>Condiciones del préstamo</h2>

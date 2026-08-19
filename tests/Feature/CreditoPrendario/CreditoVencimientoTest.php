@@ -16,13 +16,12 @@ beforeEach(function () {
     ConfiguracionCreditoPrendario::factory()->deEmpresa($this->empresa, 'electro')->create([
         'plazo_dias' => 30, 'dias_espera_mora' => 15, 'tasa_mora_diaria' => 1,
     ]);
-    $this->bien = Bien::factory()->forAgencia($this->agencia)->create(['tipo' => 'electro']);
     $this->cliente = Cliente::factory()->forAgencia($this->agencia)->create();
+    $this->bien = Bien::factory()->paraCliente($this->cliente)->create(['tipo' => 'electro']);
 });
 
 it('transitions an overdue activo crédito to vencido', function () {
     $credito = CreditoPrendario::factory()->paraBien($this->bien)->create([
-        'cliente_id' => $this->cliente->id,
         'estado' => 'activo',
         'fecha_desembolso' => now()->subDays(31)->toDateString(),
         'fecha_vencimiento' => now()->subDay()->toDateString(),
@@ -34,7 +33,7 @@ it('transitions an overdue activo crédito to vencido', function () {
 });
 
 it('leaves an activo crédito untouched while still within its plazo', function () {
-    $credito = CreditoPrendario::factory()->paraBien($this->bien)->activo()->create(['cliente_id' => $this->cliente->id]);
+    $credito = CreditoPrendario::factory()->paraBien($this->bien)->activo()->create();
 
     $this->artisan('creditos-prendarios:actualizar-estados');
 
@@ -43,7 +42,6 @@ it('leaves an activo crédito untouched while still within its plazo', function 
 
 it('moves a vencido crédito to en_venta once dias_espera_mora passes, marking the bien disponible_venta', function () {
     $credito = CreditoPrendario::factory()->paraBien($this->bien)->create([
-        'cliente_id' => $this->cliente->id,
         'estado' => 'vencido',
         'fecha_desembolso' => now()->subDays(46)->toDateString(),
         'fecha_vencimiento' => now()->subDays(16)->toDateString(),
@@ -57,7 +55,6 @@ it('moves a vencido crédito to en_venta once dias_espera_mora passes, marking t
 
 it('keeps a vencido crédito untouched while still inside the dias_espera_mora window', function () {
     $credito = CreditoPrendario::factory()->paraBien($this->bien)->create([
-        'cliente_id' => $this->cliente->id,
         'estado' => 'vencido',
         'fecha_desembolso' => now()->subDays(35)->toDateString(),
         'fecha_vencimiento' => now()->subDays(5)->toDateString(),

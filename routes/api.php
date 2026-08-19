@@ -46,7 +46,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('billetajes/{billetaje}/aprobar', [BilletajeController::class, 'aprobar'])->name('billetajes.aprobar');
     Route::post('billetajes/{billetaje}/rechazar', [BilletajeController::class, 'rechazar'])->name('billetajes.rechazar');
 
-    Route::apiResource('bienes', BienController::class)->only(['index', 'store', 'show'])->parameters(['bienes' => 'bien']);
+    Route::apiResource('bienes', BienController::class)->only(['index', 'store', 'show', 'update'])->parameters(['bienes' => 'bien']);
 
     Route::apiResource('creditos-prendarios', CreditoPrendarioController::class)->only(['index', 'store', 'show'])->parameters(['creditos-prendarios' => 'credito']);
     Route::post('creditos-prendarios/{credito}/aprobar', [CreditoPrendarioController::class, 'aprobar'])->name('creditos-prendarios.aprobar');

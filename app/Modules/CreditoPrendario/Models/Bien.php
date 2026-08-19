@@ -2,15 +2,18 @@
 
 namespace App\Modules\CreditoPrendario\Models;
 
+use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Usuario\Models\User;
 use App\Nucleo\Concerns\BelongsToTenant;
 use Database\Factories\BienFactory;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\Storage;
 
@@ -34,6 +37,7 @@ class Bien extends Model
     protected $fillable = [
         'empresa_id',
         'agencia_id',
+        'cliente_id',
         'registrado_por',
         'tipo',
         'nombre',
@@ -74,6 +78,11 @@ class Bien extends Model
         return $this->belongsTo(Agencia::class);
     }
 
+    public function cliente(): BelongsTo
+    {
+        return $this->belongsTo(Cliente::class);
+    }
+
     public function registradoPor(): BelongsTo
     {
         return $this->belongsTo(User::class, 'registrado_por');
@@ -84,9 +93,22 @@ class Bien extends Model
         return $this->hasMany(BienFoto::class)->orderBy('orden');
     }
 
-    public function creditos(): HasMany
+    public function creditos(): BelongsToMany
     {
-        return $this->hasMany(CreditoPrendario::class);
+        return $this->belongsToMany(CreditoPrendario::class, 'bien_credito_prendario', 'bien_id', 'credito_prendario_id')
+            ->withTimestamps();
+    }
+
+    /**
+     * Bienes not currently backing any crédito that hasn't been resolved
+     * (liquidado) yet — available to attach to a new crédito.
+     */
+    public function scopeDisponibles(Builder $query): Builder
+    {
+        return $query->whereDoesntHave(
+            'creditos',
+            fn (Builder $q) => $q->whereIn('estado', ['pendiente', 'aprobado', 'activo', 'vencido', 'en_venta'])
+        );
     }
 
     protected function fotoClienteProductoUrl(): Attribute

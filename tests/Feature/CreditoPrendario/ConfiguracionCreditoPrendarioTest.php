@@ -83,12 +83,11 @@ it('resolves the agencia override over the empresa default when registering a cr
     $asesor->assignRole('asesor');
     Sanctum::actingAs($asesor, ['*']);
 
-    $bien = Bien::factory()->forAgencia($this->agencia)->create(['tipo' => 'electro']);
     $cliente = Cliente::factory()->forAgencia($this->agencia)->create();
+    $bien = Bien::factory()->paraCliente($cliente)->create(['tipo' => 'electro', 'valorizacion' => 1000]);
 
     $response = $this->postJson('/api/creditos-prendarios', [
-        'bien_id' => $bien->id,
-        'cliente_id' => $cliente->id,
+        'bien_ids' => [$bien->id],
         'monto_prestamo' => 500,
         'tipo_cuota' => 'mensual',
     ])->assertCreated();
@@ -103,12 +102,11 @@ it('falls back to the empresa default when no agencia override exists', function
     $asesor->assignRole('asesor');
     Sanctum::actingAs($asesor, ['*']);
 
-    $bien = Bien::factory()->forAgencia($this->agencia)->create(['tipo' => 'electro']);
     $cliente = Cliente::factory()->forAgencia($this->agencia)->create();
+    $bien = Bien::factory()->paraCliente($cliente)->create(['tipo' => 'electro', 'valorizacion' => 1000]);
 
     $response = $this->postJson('/api/creditos-prendarios', [
-        'bien_id' => $bien->id,
-        'cliente_id' => $cliente->id,
+        'bien_ids' => [$bien->id],
         'monto_prestamo' => 500,
         'tipo_cuota' => 'mensual',
     ])->assertCreated();
@@ -121,12 +119,11 @@ it('rejects registering a crédito when no configuration exists at all', functio
     $asesor->assignRole('asesor');
     Sanctum::actingAs($asesor, ['*']);
 
-    $bien = Bien::factory()->forAgencia($this->agencia)->create(['tipo' => 'electro']);
     $cliente = Cliente::factory()->forAgencia($this->agencia)->create();
+    $bien = Bien::factory()->paraCliente($cliente)->create(['tipo' => 'electro', 'valorizacion' => 1000]);
 
     $this->postJson('/api/creditos-prendarios', [
-        'bien_id' => $bien->id,
-        'cliente_id' => $cliente->id,
+        'bien_ids' => [$bien->id],
         'monto_prestamo' => 500,
         'tipo_cuota' => 'mensual',
     ])->assertUnprocessable();

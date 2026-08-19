@@ -3,10 +3,15 @@
 namespace App\Modules\CreditoPrendario\Policies;
 
 use App\Modules\CreditoPrendario\Models\Bien;
+use App\Modules\CreditoPrendario\Services\BienHierarchyService;
 use App\Modules\Usuario\Models\User;
 
 class BienPolicy
 {
+    public function __construct(
+        private readonly BienHierarchyService $hierarchy,
+    ) {}
+
     /**
      * Perform pre-authorization checks.
      */
@@ -22,23 +27,16 @@ class BienPolicy
 
     public function view(User $user, Bien $bien): bool
     {
-        if (! $user->can('bienes.ver')) {
-            return false;
-        }
-
-        if ($user->hasAnyRole(['administrador_general', 'secretaria'])) {
-            return $user->empresa_id === $bien->empresa_id;
-        }
-
-        if ($user->hasRole('administrador_agencia')) {
-            return $user->agencia_id === $bien->agencia_id;
-        }
-
-        return $bien->registrado_por === $user->id;
+        return $user->can('bienes.ver') && $this->hierarchy->canView($user, $bien);
     }
 
     public function create(User $user): bool
     {
         return $user->can('bienes.crear');
+    }
+
+    public function update(User $user, Bien $bien): bool
+    {
+        return $user->can('bienes.editar') && $this->hierarchy->canManage($user, $bien);
     }
 }

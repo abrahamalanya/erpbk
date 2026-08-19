@@ -5,7 +5,11 @@ namespace Database\Factories;
 use App\Modules\Cliente\Models\Cliente;
 use App\Modules\CreditoPrendario\Models\Bien;
 use App\Modules\CreditoPrendario\Models\CreditoPrendario;
+use App\Modules\Empresa\Models\Agencia;
+use App\Modules\Empresa\Models\Empresa;
+use App\Modules\Usuario\Models\User;
 use Illuminate\Database\Eloquent\Factories\Factory;
+use Illuminate\Support\Collection;
 
 /**
  * @extends Factory<CreditoPrendario>
@@ -21,14 +25,11 @@ class CreditoPrendarioFactory extends Factory
      */
     public function definition(): array
     {
-        $bien = Bien::factory()->create();
-
         return [
-            'empresa_id' => $bien->empresa_id,
-            'agencia_id' => $bien->agencia_id,
-            'bien_id' => $bien->id,
-            'cliente_id' => Cliente::factory()->forAgencia($bien->agencia),
-            'registrado_por' => $bien->registrado_por,
+            'empresa_id' => Empresa::factory(),
+            'agencia_id' => Agencia::factory(),
+            'cliente_id' => Cliente::factory(),
+            'registrado_por' => User::factory(),
             'numero_refrendo' => 0,
             'monto_prestamo' => fake()->randomFloat(2, 100, 2000),
             'interes' => fake()->randomFloat(2, 5, 20),
@@ -39,15 +40,54 @@ class CreditoPrendarioFactory extends Factory
     }
 
     /**
-     * Attach the crédito to the given bien (and its empresa/agencia).
+     * If no test explicitly attached bienes (via paraBien()/paraBienes()),
+     * make sure the crédito still has one matching bien — most tests only
+     * care about the crédito's own state, not the specific bien.
+     */
+    public function configure(): static
+    {
+        return $this->afterCreating(function (CreditoPrendario $credito): void {
+            if ($credito->bienes()->exists()) {
+                return;
+            }
+
+            $bien = Bien::factory()->create([
+                'empresa_id' => $credito->empresa_id,
+                'agencia_id' => $credito->agencia_id,
+                'cliente_id' => $credito->cliente_id,
+            ]);
+
+            $credito->bienes()->attach($bien->id);
+        });
+    }
+
+    /**
+     * Attach the crédito to the given bien (and its empresa/agencia/cliente).
      */
     public function paraBien(Bien $bien): static
     {
         return $this->state(fn (): array => [
             'empresa_id' => $bien->empresa_id,
             'agencia_id' => $bien->agencia_id,
-            'bien_id' => $bien->id,
-        ]);
+            'cliente_id' => $bien->cliente_id,
+        ])->hasAttached($bien, [], 'bienes');
+    }
+
+    /**
+     * Attach the crédito to several bienes at once (all must share the same
+     * cliente — same assumption CreditoPrendarioService::registrar() enforces).
+     *
+     * @param  Collection<int, Bien>  $bienes
+     */
+    public function paraBienes(Collection $bienes): static
+    {
+        $primero = $bienes->first();
+
+        return $this->state(fn (): array => [
+            'empresa_id' => $primero->empresa_id,
+            'agencia_id' => $primero->agencia_id,
+            'cliente_id' => $primero->cliente_id,
+        ])->hasAttached($bienes, [], 'bienes');
     }
 
     /**
