@@ -44,4 +44,29 @@ class BovedaPolicy
     {
         return $user->can('bovedas.cerrar') && $this->hierarchy->puedeControlarBoveda($user, $boveda);
     }
+
+    public function aperturar(User $user, Boveda $boveda): bool
+    {
+        return $user->can('bovedas.aperturar')
+            && $boveda->tipo === 'principal'
+            && $user->hasRole('administrador_general')
+            && $user->empresa_id === $boveda->empresa_id;
+    }
+
+    /**
+     * Works for both the principal bóveda (external capital injection) and
+     * any agencia bóveda in the same empresa (traspaso from the principal)
+     * — always driven by administrador_general, who controls the principal.
+     */
+    public function inyectar(User $user, Boveda $boveda): bool
+    {
+        return $user->can('bovedas.inyectar')
+            && $user->hasRole('administrador_general')
+            && $user->empresa_id === $boveda->empresa_id;
+    }
+
+    public function reabrir(User $user, Boveda $boveda): bool
+    {
+        return $user->can('bovedas.reabrir') && $this->hierarchy->puedeControlarBoveda($user, $boveda);
+    }
 }

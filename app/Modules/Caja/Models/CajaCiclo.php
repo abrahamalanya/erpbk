@@ -31,6 +31,7 @@ class CajaCiclo extends Model
         'diferencia',
         'cerrada_por',
         'cierre_forzado',
+        'cierre_automatico',
         'abierta_at',
         'cerrada_at',
     ];
@@ -49,6 +50,7 @@ class CajaCiclo extends Model
             'saldo_arqueo_cierre' => 'decimal:2',
             'diferencia' => 'decimal:2',
             'cierre_forzado' => 'boolean',
+            'cierre_automatico' => 'boolean',
             'abierta_at' => 'datetime',
             'cerrada_at' => 'datetime',
         ];

@@ -38,9 +38,13 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('caja/cerrar', [CajaController::class, 'cerrar'])->name('caja.cerrar');
     Route::apiResource('cajas', CajaController::class)->only(['index', 'show']);
     Route::post('cajas/{caja}/cerrar-forzado', [CajaController::class, 'cerrarForzado'])->name('cajas.cerrar-forzado');
+    Route::post('cajas/{caja}/reabrir', [CajaController::class, 'reabrir'])->name('cajas.reabrir');
 
     Route::apiResource('bovedas', BovedaController::class)->only(['index', 'show']);
     Route::post('bovedas/{boveda}/cerrar', [BovedaController::class, 'cerrar'])->name('bovedas.cerrar');
+    Route::post('bovedas/{boveda}/aperturar', [BovedaController::class, 'aperturar'])->name('bovedas.aperturar');
+    Route::post('bovedas/{boveda}/inyectar', [BovedaController::class, 'inyectar'])->name('bovedas.inyectar');
+    Route::post('bovedas/{boveda}/reabrir', [BovedaController::class, 'reabrir'])->name('bovedas.reabrir');
 
     Route::apiResource('billetajes', BilletajeController::class)->only(['index', 'store']);
     Route::post('billetajes/{billetaje}/aprobar', [BilletajeController::class, 'aprobar'])->name('billetajes.aprobar');

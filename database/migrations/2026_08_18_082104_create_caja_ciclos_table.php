@@ -26,6 +26,7 @@ return new class extends Migration
 
             $table->foreignId('cerrada_por')->nullable()->constrained('users')->nullOnDelete();
             $table->boolean('cierre_forzado')->default(false);
+            $table->boolean('cierre_automatico')->default(false);
 
             $table->timestamp('abierta_at')->nullable();
             $table->timestamp('cerrada_at')->nullable();

@@ -58,4 +58,9 @@ class CajaPolicy
     {
         return $user->can('cajas.cerrar_forzado') && $this->hierarchy->puedeForzarCierre($user, $caja);
     }
+
+    public function reabrir(User $user, Caja $caja): bool
+    {
+        return $user->can('cajas.reabrir') && $this->hierarchy->puedeForzarCierre($user, $caja);
+    }
 }

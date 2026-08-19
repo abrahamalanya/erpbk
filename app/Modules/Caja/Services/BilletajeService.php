@@ -45,6 +45,11 @@ final class BilletajeService
 
         return DB::transaction(function () use ($billetaje, $aprobador): Billetaje {
             $bovedaCiclo = $this->bovedaService->asegurarAbierta($billetaje->boveda, $aprobador);
+            $saldoActual = $this->bovedaService->calcularSaldo($bovedaCiclo);
+
+            if (bccomp($billetaje->monto, $saldoActual, 2) > 0) {
+                throw new DomainException('La bóveda no tiene saldo suficiente para entregar este billetaje.');
+            }
 
             CajaMovimiento::query()->create([
                 'caja_ciclo_id' => $billetaje->caja_ciclo_id,

@@ -37,6 +37,15 @@ it('allows several pending billetajes at once for the same caja', function () {
 });
 
 it('lets administrador_agencia approve a billetaje and creates matching movimientos on both sides', function () {
+    $administradorGeneral = User::factory()->forEmpresa($this->empresa)->create();
+    $administradorGeneral->assignRole('administrador_general');
+    Sanctum::actingAs($administradorGeneral, ['*']);
+    $this->getJson('/api/bovedas')->assertSuccessful();
+    $bovedaPrincipalId = Boveda::query()->where('empresa_id', $this->empresa->id)->where('tipo', 'principal')->firstOrFail()->id;
+    $bovedaAgenciaId = Boveda::query()->where('agencia_id', $this->agencia->id)->firstOrFail()->id;
+    $this->postJson("/api/bovedas/{$bovedaPrincipalId}/aperturar", ['saldo_inicial' => 1000])->assertCreated();
+    $this->postJson("/api/bovedas/{$bovedaAgenciaId}/inyectar", ['monto' => 1000])->assertCreated();
+
     $asesor = User::factory()->forAgencia($this->agencia)->create();
     $asesor->assignRole('asesor');
     Sanctum::actingAs($asesor, ['*']);
@@ -95,23 +104,86 @@ it('denies an administrador_agencia from another agencia from approving', functi
     $this->postJson("/api/billetajes/{$billetajeId}/aprobar")->assertForbidden();
 });
 
-it('routes an administrador_agencia billetaje request to the empresa principal boveda, approved by administrador_general', function () {
+it('denies approving a billetaje when the funding boveda does not have enough saldo', function () {
+    $asesor = User::factory()->forAgencia($this->agencia)->create();
+    $asesor->assignRole('asesor');
+    Sanctum::actingAs($asesor, ['*']);
+    $this->postJson('/api/caja/aperturar')->assertCreated();
+    $billetajeId = $this->postJson('/api/billetajes', ['monto' => 150])->json('data.id');
+
+    $administradorAgencia = User::factory()->forAgencia($this->agencia)->create();
+    $administradorAgencia->assignRole('administrador_agencia');
+    Sanctum::actingAs($administradorAgencia, ['*']);
+
+    // Opened implicitly via the caja aperturar cascade above, at saldo 0.
+    $this->postJson("/api/billetajes/{$billetajeId}/aprobar")
+        ->assertUnprocessable()
+        ->assertJsonPath('message', 'La bóveda no tiene saldo suficiente para entregar este billetaje.');
+});
+
+it('allows approving an asesor billetaje once the agencia boveda has been funded via a traspaso from the principal', function () {
+    $administradorGeneral = User::factory()->forEmpresa($this->empresa)->create();
+    $administradorGeneral->assignRole('administrador_general');
+    Sanctum::actingAs($administradorGeneral, ['*']);
+    $this->getJson('/api/bovedas')->assertSuccessful();
+    $bovedaPrincipalId = Boveda::query()->where('empresa_id', $this->empresa->id)->where('tipo', 'principal')->firstOrFail()->id;
+    $bovedaAgenciaId = Boveda::query()->where('agencia_id', $this->agencia->id)->firstOrFail()->id;
+    $this->postJson("/api/bovedas/{$bovedaPrincipalId}/aperturar", ['saldo_inicial' => 1000])->assertCreated();
+    $this->postJson("/api/bovedas/{$bovedaAgenciaId}/inyectar", ['monto' => 300])
+        ->assertCreated()
+        ->assertJsonPath('data.concepto', 'Traspaso desde bóveda principal');
+
+    $asesor = User::factory()->forAgencia($this->agencia)->create();
+    $asesor->assignRole('asesor');
+    Sanctum::actingAs($asesor, ['*']);
+    $this->postJson('/api/caja/aperturar')->assertCreated();
+    $billetajeAsesorId = $this->postJson('/api/billetajes', ['monto' => 200])->json('data.id');
+
+    $administradorAgencia = User::factory()->forAgencia($this->agencia)->create();
+    $administradorAgencia->assignRole('administrador_agencia');
+    Sanctum::actingAs($administradorAgencia, ['*']);
+    $this->postJson("/api/billetajes/{$billetajeAsesorId}/aprobar")
+        ->assertSuccessful()
+        ->assertJsonPath('data.estado', 'aprobado');
+});
+
+it('denies a traspaso to an agencia boveda when the principal does not have enough saldo', function () {
+    $administradorGeneral = User::factory()->forEmpresa($this->empresa)->create();
+    $administradorGeneral->assignRole('administrador_general');
+    Sanctum::actingAs($administradorGeneral, ['*']);
+    $this->getJson('/api/bovedas')->assertSuccessful();
+    $bovedaPrincipalId = Boveda::query()->where('empresa_id', $this->empresa->id)->where('tipo', 'principal')->firstOrFail()->id;
+    $bovedaAgenciaId = Boveda::query()->where('agencia_id', $this->agencia->id)->firstOrFail()->id;
+    $this->postJson("/api/bovedas/{$bovedaPrincipalId}/aperturar", ['saldo_inicial' => 100])->assertCreated();
+
+    $this->postJson("/api/bovedas/{$bovedaAgenciaId}/inyectar", ['monto' => 300])
+        ->assertUnprocessable()
+        ->assertJsonPath('message', 'La bóveda principal no tiene saldo suficiente para este traspaso.');
+});
+
+it('routes an administrador_agencia billetaje request to their own agencia boveda, self-approved', function () {
+    $administradorGeneral = User::factory()->forEmpresa($this->empresa)->create();
+    $administradorGeneral->assignRole('administrador_general');
+    Sanctum::actingAs($administradorGeneral, ['*']);
+    $this->getJson('/api/bovedas')->assertSuccessful();
+    $bovedaPrincipalId = Boveda::query()->where('empresa_id', $this->empresa->id)->where('tipo', 'principal')->firstOrFail()->id;
+    $bovedaAgenciaId = Boveda::query()->where('agencia_id', $this->agencia->id)->firstOrFail()->id;
+    $this->postJson("/api/bovedas/{$bovedaPrincipalId}/aperturar", ['saldo_inicial' => 1000])->assertCreated();
+    $this->postJson("/api/bovedas/{$bovedaAgenciaId}/inyectar", ['monto' => 300])->assertCreated();
+
     $adminAgencia = User::factory()->forAgencia($this->agencia)->create();
     $adminAgencia->assignRole('administrador_agencia');
     Sanctum::actingAs($adminAgencia, ['*']);
     $this->postJson('/api/caja/aperturar')->assertCreated();
     $billetajeId = $this->postJson('/api/billetajes', ['monto' => 300])->json('data.id');
 
-    $administradorGeneral = User::factory()->forEmpresa($this->empresa)->create();
-    $administradorGeneral->assignRole('administrador_general');
-    Sanctum::actingAs($administradorGeneral, ['*']);
-
     $this->postJson("/api/billetajes/{$billetajeId}/aprobar")
         ->assertSuccessful()
-        ->assertJsonPath('data.estado', 'aprobado');
+        ->assertJsonPath('data.estado', 'aprobado')
+        ->assertJsonPath('data.aprobado_por', $adminAgencia->id);
 
-    $bovedaPrincipal = Boveda::query()->where('empresa_id', $this->empresa->id)->where('tipo', 'principal')->firstOrFail();
-    $bovedaCiclo = $bovedaPrincipal->cicloAbierto()->firstOrFail();
+    $bovedaAgencia = Boveda::query()->where('agencia_id', $this->agencia->id)->firstOrFail();
+    $bovedaCiclo = $bovedaAgencia->cicloAbierto()->firstOrFail();
 
     expect($bovedaCiclo->movimientos()->where('tipo', 'egreso')->sum('monto'))->toEqual(300);
 });

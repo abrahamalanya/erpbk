@@ -9,3 +9,4 @@ Artisan::command('inspire', function () {
 })->purpose('Display an inspiring quote');
 
 Schedule::command('creditos-prendarios:actualizar-estados')->daily();
+Schedule::command('cajas:cerrar-automatico')->daily();

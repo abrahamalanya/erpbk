@@ -70,4 +70,13 @@ class CajaController extends Controller
 
         return $this->successResponse($ciclo, 'Caja cerrada (forzado)');
     }
+
+    public function reabrir(Caja $caja): JsonResponse
+    {
+        Gate::authorize('reabrir', $caja);
+
+        $ciclo = $this->cajaService->reabrir($caja, request()->user());
+
+        return $this->successResponse($ciclo, 'Caja reabierta');
+    }
 }

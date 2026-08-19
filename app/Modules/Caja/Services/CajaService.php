@@ -38,6 +38,12 @@ final class CajaService
         }
 
         $boveda = $this->hierarchy->bovedaFinanciadoraDe($actor);
+        $cicloBoveda = $boveda->cicloAbierto()->first();
+
+        if ($cicloBoveda && $cicloBoveda->fecha->toDateString() < now()->startOfDay()->toDateString()) {
+            throw new DomainException('No puedes aperturar tu caja: la bóveda que te financia sigue con un ciclo abierto de un día anterior.');
+        }
+
         $this->bovedaService->asegurarAbierta($boveda, $actor);
 
         return DB::transaction(fn (): CajaCiclo => CajaCiclo::query()->create([
@@ -83,9 +89,57 @@ final class CajaService
         return $this->cerrarCiclo($ciclo, $superior, $montoContado, forzado: true);
     }
 
-    private function cerrarCiclo(CajaCiclo $ciclo, User $actor, string $montoContado, bool $forzado): CajaCiclo
+    /**
+     * Closes any ciclo still abierta past its own calendar day — run by the
+     * scheduled cajas:cerrar-automatico command, never by a person. Since
+     * nobody physically counted the cash, the arqueo is just the calculated
+     * balance (no diferencia). The bóveda that funds this caja is guaranteed
+     * to still be open (its own cierre is blocked while this caja is open),
+     * so asegurarAbierta() below is a defensive no-op in practice.
+     */
+    public function cerrarAutomatico(CajaCiclo $ciclo): CajaCiclo
     {
-        return DB::transaction(function () use ($ciclo, $actor, $montoContado, $forzado): CajaCiclo {
+        $this->billetajeService->rechazarPendientesDe(
+            $ciclo,
+            $ciclo->caja->user,
+            'Rechazado automáticamente por cierre automático de fin de día.'
+        );
+
+        return $this->cerrarCiclo($ciclo, null, $this->calcularSaldo($ciclo), forzado: false, automatico: true);
+    }
+
+    /**
+     * Reverts this caja's most recently closed ciclo back to abierta — as
+     * opposed to aperturar() (which always creates a new ciclo). Used by the
+     * admin who controls the funding bóveda to let a late movement (e.g. a
+     * forgotten billetaje) regularize against its original accounting date.
+     * The owner keeps aperturar-ing their own caja normally day to day —
+     * this is only for amending an already-closed ciclo.
+     */
+    public function reabrir(Caja $caja, User $actor): CajaCiclo
+    {
+        if ($caja->cicloAbierto()->exists()) {
+            throw new DomainException('Esta caja ya tiene un ciclo abierto.');
+        }
+
+        $ultimoCerrado = $caja->ciclos()->where('estado', 'cerrada')->latest('cerrada_at')->first();
+
+        if (! $ultimoCerrado) {
+            throw new DomainException('Esta caja no tiene ningún ciclo cerrado para reabrir.');
+        }
+
+        $ultimoCerrado->update([
+            'estado' => 'abierta',
+            'cerrada_at' => null,
+            'cerrada_por' => null,
+        ]);
+
+        return $ultimoCerrado->fresh();
+    }
+
+    private function cerrarCiclo(CajaCiclo $ciclo, ?User $actor, string $montoContado, bool $forzado, bool $automatico = false): CajaCiclo
+    {
+        return DB::transaction(function () use ($ciclo, $actor, $montoContado, $forzado, $automatico): CajaCiclo {
             $saldoCalculado = $this->calcularSaldo($ciclo);
 
             $ciclo->update([
@@ -93,15 +147,31 @@ final class CajaService
                 'saldo_calculado_cierre' => $saldoCalculado,
                 'saldo_arqueo_cierre' => $montoContado,
                 'diferencia' => bcsub($montoContado, $saldoCalculado, 2),
-                'cerrada_por' => $actor->id,
+                'cerrada_por' => $actor?->id,
                 'cerrada_at' => now(),
                 'cierre_forzado' => $forzado,
+                'cierre_automatico' => $automatico,
             ]);
 
-            if (bccomp($montoContado, '0', 2) > 0) {
-                $boveda = $this->hierarchy->bovedaFinanciadoraDe($ciclo->caja->user);
-                $bovedaCiclo = $this->bovedaService->asegurarAbierta($boveda, $actor);
+            $boveda = $this->hierarchy->bovedaFinanciadoraDe($ciclo->caja->user);
+            $bovedaCiclo = $this->bovedaService->asegurarAbierta($boveda, $actor ?? $ciclo->caja->user);
 
+            // Reabrir()+cerrar() re-closes an already-handed-off ciclo — update
+            // the existing hand-off movimiento instead of crediting the bóveda
+            // twice for the same physical cash.
+            $movimientoExistente = BovedaMovimiento::query()
+                ->where('caja_ciclo_id', $ciclo->id)
+                ->where('concepto', 'Entrega por cierre de caja')
+                ->first();
+
+            if ($movimientoExistente) {
+                $movimientoExistente->update([
+                    'boveda_ciclo_id' => $bovedaCiclo->id,
+                    'monto' => $montoContado,
+                    'registrado_por' => $actor?->id,
+                    'fecha_boveda' => $bovedaCiclo->fecha,
+                ]);
+            } elseif (bccomp($montoContado, '0', 2) > 0) {
                 BovedaMovimiento::query()->create([
                     'boveda_ciclo_id' => $bovedaCiclo->id,
                     'empresa_id' => $bovedaCiclo->empresa_id,
@@ -109,7 +179,7 @@ final class CajaService
                     'monto' => $montoContado,
                     'concepto' => 'Entrega por cierre de caja',
                     'caja_ciclo_id' => $ciclo->id,
-                    'registrado_por' => $actor->id,
+                    'registrado_por' => $actor?->id,
                     'fecha_boveda' => $bovedaCiclo->fecha,
                 ]);
             }

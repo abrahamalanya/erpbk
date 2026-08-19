@@ -49,6 +49,37 @@ it('allows closing the agencia boveda once every caja underneath is closed', fun
         ->assertJsonPath('data.estado', 'cerrada');
 });
 
+it('blocks closing the principal boveda while an agencia boveda underneath is still open', function () {
+    $administradorGeneral = User::factory()->forEmpresa($this->empresa)->create();
+    $administradorGeneral->assignRole('administrador_general');
+    Sanctum::actingAs($administradorGeneral, ['*']);
+    $this->getJson('/api/bovedas')->assertSuccessful();
+    $bovedaPrincipalId = Boveda::query()->where('empresa_id', $this->empresa->id)->where('tipo', 'principal')->firstOrFail()->id;
+    $this->postJson("/api/bovedas/{$bovedaPrincipalId}/aperturar", ['saldo_inicial' => 1000])->assertCreated();
+
+    $asesor = User::factory()->forAgencia($this->agencia)->create();
+    $asesor->assignRole('asesor');
+    Sanctum::actingAs($asesor, ['*']);
+    $this->postJson('/api/caja/aperturar')->assertCreated();
+    $this->postJson('/api/caja/cerrar', ['monto_contado' => 0])->assertSuccessful();
+
+    Sanctum::actingAs($administradorGeneral, ['*']);
+    $this->postJson("/api/bovedas/{$bovedaPrincipalId}/cerrar", ['monto_contado' => 1000])
+        ->assertUnprocessable()
+        ->assertJsonPath('message', 'No se puede cerrar la bóveda principal: hay bóvedas de agencia abiertas que dependen de ella.');
+
+    $bovedaAgenciaId = Boveda::query()->where('agencia_id', $this->agencia->id)->firstOrFail()->id;
+    $administradorAgencia = User::factory()->forAgencia($this->agencia)->create();
+    $administradorAgencia->assignRole('administrador_agencia');
+    Sanctum::actingAs($administradorAgencia, ['*']);
+    $this->postJson("/api/bovedas/{$bovedaAgenciaId}/cerrar", ['monto_contado' => 0])->assertSuccessful();
+
+    Sanctum::actingAs($administradorGeneral, ['*']);
+    $this->postJson("/api/bovedas/{$bovedaPrincipalId}/cerrar", ['monto_contado' => 1000])
+        ->assertSuccessful()
+        ->assertJsonPath('data.estado', 'cerrada');
+});
+
 it('denies an administrador_agencia from closing a boveda of a different agencia', function () {
     $otraAgencia = Agencia::factory()->for($this->empresa)->create();
     $bovedaOtraAgencia = Boveda::factory()->deAgencia($otraAgencia)->create();

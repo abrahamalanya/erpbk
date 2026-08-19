@@ -24,9 +24,11 @@ final class CajaBovedaHierarchyService
     /**
      * Resolves (creating if needed) the bóveda that funds this user's own
      * caja/billetaje: the empresa's principal bóveda for empresa-level
-     * roles (which includes administrador_agencia — they CONTROL their
-     * agencia bóveda for others, but their OWN caja is funded one level up,
-     * same as secretaria), or the agencia bóveda for agencia-level roles.
+     * roles, or the agencia bóveda for agencia-level roles — which includes
+     * administrador_agencia, whose own caja is funded by (and returns cash
+     * to) the SAME agencia bóveda they control for asesor/supervisor. They
+     * approve their own billetaje request, same as administrador_general
+     * already does for the principal.
      */
     public function bovedaFinanciadoraDe(User $propietario): Boveda
     {
@@ -54,8 +56,19 @@ final class CajaBovedaHierarchyService
         return $superior->hasRole('administrador_agencia') && $superior->agencia_id === $boveda->agencia_id;
     }
 
+    /**
+     * Safety-valve special case: administrador_general can always force-close
+     * (or reabrir) an administrador_agencia's OWN caja — even though it's now
+     * funded by the agencia bóveda that administrador_agencia themselves
+     * controls — as an escalation path if that person is unavailable.
+     * asesor/supervisor cajas stay administrador_agencia's job only.
+     */
     public function puedeForzarCierre(User $superior, Caja $caja): bool
     {
+        if ($caja->user->hasRole('administrador_agencia') && $superior->hasRole('administrador_general')) {
+            return $superior->empresa_id === $caja->empresa_id;
+        }
+
         return $this->puedeControlarBoveda($superior, $this->bovedaFinanciadoraDe($caja->user));
     }
 
