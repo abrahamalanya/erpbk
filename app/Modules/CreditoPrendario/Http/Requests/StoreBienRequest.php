@@ -34,10 +34,11 @@ class StoreBienRequest extends FormRequest
             'serie' => ['nullable', 'string', 'max:255'],
             'observacion' => ['nullable', 'string', 'max:2000'],
             'valorizacion' => ['required', 'numeric', 'min:0'],
-            'cantidad' => ['nullable', 'integer', 'min:1'],
+            'puntaje' => ['required', 'integer', 'min:1', 'max:10'],
             'foto_cliente_producto' => ['nullable', 'image', 'max:4096', 'mimes:jpg,jpeg,png'],
             'fotos' => ['nullable', 'array'],
             'fotos.*' => ['image', 'max:4096', 'mimes:jpg,jpeg,png'],
+            'video' => ['nullable', 'file', 'mimetypes:video/mp4,video/quicktime,video/x-msvideo,video/webm', 'max:51200'],
         ];
     }
 
@@ -90,6 +91,11 @@ class StoreBienRequest extends FormRequest
             'modelo.required' => 'El modelo es requerido para bienes tipo Electro',
             'valorizacion.required' => 'La valorización es requerida',
             'valorizacion.numeric' => 'La valorización debe ser un número',
+            'puntaje.required' => 'El puntaje es requerido',
+            'puntaje.min' => 'El puntaje debe estar entre 1 y 10',
+            'puntaje.max' => 'El puntaje debe estar entre 1 y 10',
+            'video.mimetypes' => 'El video debe ser un archivo de video válido (mp4, mov, avi o webm)',
+            'video.max' => 'El video no puede superar los 50MB',
         ];
     }
 }

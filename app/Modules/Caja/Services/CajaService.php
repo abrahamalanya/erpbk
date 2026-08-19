@@ -2,6 +2,8 @@
 
 namespace App\Modules\Caja\Services;
 
+use App\Modules\Caja\Events\BovedaActualizada;
+use App\Modules\Caja\Events\CajaActualizada;
 use App\Modules\Caja\Models\BovedaMovimiento;
 use App\Modules\Caja\Models\Caja;
 use App\Modules\Caja\Models\CajaCiclo;
@@ -46,14 +48,20 @@ final class CajaService
 
         $this->bovedaService->asegurarAbierta($boveda, $actor);
 
-        return DB::transaction(fn (): CajaCiclo => CajaCiclo::query()->create([
-            'caja_id' => $caja->id,
-            'empresa_id' => $caja->empresa_id,
-            'fecha' => now()->toDateString(),
-            'estado' => 'abierta',
-            'saldo_apertura' => 0,
-            'abierta_at' => now(),
-        ]));
+        return DB::transaction(function () use ($caja): CajaCiclo {
+            $ciclo = CajaCiclo::query()->create([
+                'caja_id' => $caja->id,
+                'empresa_id' => $caja->empresa_id,
+                'fecha' => now()->toDateString(),
+                'estado' => 'abierta',
+                'saldo_apertura' => 0,
+                'abierta_at' => now(),
+            ]);
+
+            $this->notificar($caja->fresh(['cicloAbierto']));
+
+            return $ciclo;
+        });
     }
 
     public function cerrar(User $actor, string $montoContado): CajaCiclo
@@ -105,7 +113,7 @@ final class CajaService
             'Rechazado automáticamente por cierre automático de fin de día.'
         );
 
-        return $this->cerrarCiclo($ciclo, null, $this->calcularSaldo($ciclo), forzado: false, automatico: true);
+        return $this->cerrarCiclo($ciclo, null, $ciclo->saldoActual(), forzado: false, automatico: true);
     }
 
     /**
@@ -134,13 +142,15 @@ final class CajaService
             'cerrada_por' => null,
         ]);
 
+        $this->notificar($caja->fresh(['cicloAbierto']));
+
         return $ultimoCerrado->fresh();
     }
 
     private function cerrarCiclo(CajaCiclo $ciclo, ?User $actor, string $montoContado, bool $forzado, bool $automatico = false): CajaCiclo
     {
         return DB::transaction(function () use ($ciclo, $actor, $montoContado, $forzado, $automatico): CajaCiclo {
-            $saldoCalculado = $this->calcularSaldo($ciclo);
+            $saldoCalculado = $ciclo->saldoActual();
 
             $ciclo->update([
                 'estado' => 'cerrada',
@@ -184,15 +194,25 @@ final class CajaService
                 ]);
             }
 
+            $this->notificar($ciclo->caja->fresh(['cicloAbierto']));
+
+            BovedaActualizada::dispatch(
+                $boveda,
+                $bovedaCiclo->fresh()->saldoActual(),
+                $this->hierarchy->controladoresDe($boveda),
+            );
+
             return $ciclo->fresh();
         });
     }
 
-    private function calcularSaldo(CajaCiclo $ciclo): string
+    /**
+     * Broadcasts this caja's current apertura/saldo state to its own owner
+     * only — powers the header badge (no need to leave the module to see a
+     * live saldo).
+     */
+    private function notificar(Caja $caja): void
     {
-        $ingresos = (string) $ciclo->movimientos()->whereIn('tipo', ['ingreso', 'billetaje'])->sum('monto');
-        $egresos = (string) $ciclo->movimientos()->where('tipo', 'egreso')->sum('monto');
-
-        return bcadd($ciclo->saldo_apertura, bcsub($ingresos, $egresos, 2), 2);
+        CajaActualizada::dispatch($caja, $caja->cicloAbierto?->saldoActual());
     }
 }

@@ -26,7 +26,6 @@ class DocumentoCreditoPrendarioFactory extends Factory
             'credito_id' => $credito->id,
             'empresa_id' => $credito->empresa_id,
             'tipo' => 'contrato',
-            'pdf_path' => 'documentos-credito-prendario/'.fake()->uuid().'.pdf',
             'generado_por' => $credito->registrado_por,
             'generado_at' => now(),
         ];

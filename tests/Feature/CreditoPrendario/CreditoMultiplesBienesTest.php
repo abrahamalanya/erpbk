@@ -1,5 +1,7 @@
 <?php
 
+use App\Modules\Caja\Models\Caja;
+use App\Modules\Caja\Models\CajaCiclo;
 use App\Modules\Cliente\Models\Cliente;
 use App\Modules\CreditoPrendario\Models\Bien;
 use App\Modules\CreditoPrendario\Models\ConfiguracionCreditoPrendario;
@@ -9,18 +11,25 @@ use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Usuario\Models\User;
 use Database\Seeders\PermissionSeeder;
 use Database\Seeders\RoleSeeder;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
 
 beforeEach(function () {
     $this->seed([RoleSeeder::class, PermissionSeeder::class]);
     $this->empresa = Empresa::factory()->create();
     $this->agencia = Agencia::factory()->for($this->empresa)->create();
-    ConfiguracionCreditoPrendario::factory()->deEmpresa($this->empresa, 'electro')->create([
+    ConfiguracionCreditoPrendario::factory()->deEmpresa($this->empresa)->create([
         'interes_default' => 10, 'plazo_dias' => 30, 'dias_espera_mora' => 15, 'tasa_mora_diaria' => 1,
     ]);
 
     $this->asesor = User::factory()->forAgencia($this->agencia)->create();
     $this->asesor->assignRole('asesor');
+    $caja = Caja::factory()->create(['user_id' => $this->asesor->id, 'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id]);
+    CajaCiclo::query()->create([
+        'caja_id' => $caja->id, 'empresa_id' => $caja->empresa_id, 'fecha' => now()->toDateString(),
+        'estado' => 'abierta', 'saldo_apertura' => 0, 'abierta_at' => now(),
+    ]);
     $this->cliente = Cliente::factory()->forAgencia($this->agencia)->create();
     Sanctum::actingAs($this->asesor, ['*']);
 });
@@ -62,19 +71,17 @@ it('rejects bienes belonging to two different clientes in the same solicitud', f
     ])->assertUnprocessable();
 });
 
-it('rejects bienes of different tipo in the same solicitud', function () {
-    ConfiguracionCreditoPrendario::factory()->deEmpresa($this->empresa, 'varios')->create([
-        'interes_default' => 10, 'plazo_dias' => 30, 'dias_espera_mora' => 15, 'tasa_mora_diaria' => 1,
-    ]);
-
+it('allows bienes of different tipo (electro + varios) in the same solicitud', function () {
     $bien1 = Bien::factory()->paraCliente($this->cliente)->create(['tipo' => 'electro', 'valorizacion' => 200]);
     $bien2 = Bien::factory()->paraCliente($this->cliente)->varios()->create(['valorizacion' => 300]);
 
-    $this->postJson('/api/creditos-prendarios', [
+    $response = $this->postJson('/api/creditos-prendarios', [
         'bien_ids' => [$bien1->id, $bien2->id],
         'monto_prestamo' => 500,
         'tipo_cuota' => 'mensual',
-    ])->assertUnprocessable();
+    ])->assertCreated();
+
+    expect($response->json('data.bienes'))->toHaveCount(2);
 });
 
 it('rejects a bien already backing another active crédito, but allows it again once that crédito is liquidado', function () {
@@ -98,6 +105,8 @@ it('rejects a bien already backing another active crédito, but allows it again 
 });
 
 it('carries the same set of bienes over to the new crédito on refrendo', function () {
+    Storage::fake('public');
+
     $bien1 = Bien::factory()->paraCliente($this->cliente)->create(['tipo' => 'electro', 'valorizacion' => 200]);
     $bien2 = Bien::factory()->paraCliente($this->cliente)->create(['tipo' => 'electro', 'valorizacion' => 300]);
 
@@ -113,7 +122,15 @@ it('carries the same set of bienes over to the new crédito on refrendo', functi
     $this->postJson("/api/creditos-prendarios/{$creditoId}/aprobar")->assertSuccessful();
 
     Sanctum::actingAs($this->asesor, ['*']);
-    $this->postJson("/api/creditos-prendarios/{$creditoId}/firmar")->assertSuccessful();
+
+    foreach (CreditoPrendario::find($creditoId)->documentos as $documento) {
+        $this->postJson("/api/creditos-prendarios/{$creditoId}/documentos/{$documento->id}/subir-firmado", [
+            'archivo' => UploadedFile::fake()->create('firmado.pdf', 100, 'application/pdf'),
+        ])->assertSuccessful();
+    }
+
+    Caja::query()->where('user_id', $this->asesor->id)->first()->cicloAbierto->update(['saldo_apertura' => 10000]);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar")->assertSuccessful();
 
     $response = $this->postJson("/api/creditos-prendarios/{$creditoId}/refrendar", ['monto_interes_pagado' => 50])
         ->assertCreated();
@@ -129,7 +146,7 @@ it('marks every bien of a crédito as recuperado when liquidated', function () {
         ->activo()
         ->create(['registrado_por' => $this->asesor->id]);
 
-    $this->postJson("/api/creditos-prendarios/{$credito->id}/liquidar")->assertSuccessful();
+    $this->postJson("/api/creditos-prendarios/{$credito->id}/liquidar", ['monto_pagado' => 100000])->assertSuccessful();
 
     expect($bien1->fresh()->estado)->toBe('recuperado')
         ->and($bien2->fresh()->estado)->toBe('recuperado');

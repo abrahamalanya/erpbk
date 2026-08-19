@@ -32,9 +32,12 @@ class CajaController extends Controller
 
     public function miCaja(): JsonResponse
     {
-        $caja = $this->cajaService->cajaDe(request()->user());
+        $caja = $this->cajaService->cajaDe(request()->user())->load(['cicloAbierto']);
 
-        return $this->successResponse($caja->load(['cicloAbierto']));
+        return $this->successResponse([
+            ...$caja->toArray(),
+            'saldo_actual' => $caja->cicloAbierto?->saldoActual(),
+        ]);
     }
 
     public function show(Caja $caja): JsonResponse

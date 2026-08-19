@@ -13,7 +13,7 @@ beforeEach(function () {
     $this->seed([RoleSeeder::class, PermissionSeeder::class]);
     $this->empresa = Empresa::factory()->create();
     $this->agencia = Agencia::factory()->for($this->empresa)->create();
-    ConfiguracionCreditoPrendario::factory()->deEmpresa($this->empresa, 'electro')->create([
+    ConfiguracionCreditoPrendario::factory()->deEmpresa($this->empresa)->create([
         'plazo_dias' => 30, 'dias_espera_mora' => 15, 'tasa_mora_diaria' => 1,
     ]);
     $this->cliente = Cliente::factory()->forAgencia($this->agencia)->create();

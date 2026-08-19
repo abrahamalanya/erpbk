@@ -3,11 +3,16 @@
 namespace App\Modules\Caja\Services;
 
 use App\Modules\Caja\Events\BilletajeActualizado;
+use App\Modules\Caja\Events\BovedaActualizada;
+use App\Modules\Caja\Events\CajaActualizada;
 use App\Modules\Caja\Models\Billetaje;
 use App\Modules\Caja\Models\BovedaMovimiento;
 use App\Modules\Caja\Models\Caja;
 use App\Modules\Caja\Models\CajaCiclo;
 use App\Modules\Caja\Models\CajaMovimiento;
+use App\Modules\Caja\Notifications\BilletajeAprobadoNotification;
+use App\Modules\Caja\Notifications\BilletajeSolicitadoNotification;
+use App\Modules\Sistemas\Services\NotificacionService;
 use App\Modules\Usuario\Models\User;
 use DomainException;
 use Illuminate\Support\Facades\DB;
@@ -17,6 +22,7 @@ final class BilletajeService
     public function __construct(
         private readonly CajaBovedaHierarchyService $hierarchy,
         private readonly BovedaService $bovedaService,
+        private readonly NotificacionService $notificaciones,
     ) {}
 
     public function solicitar(User $actor, string $monto): Billetaje
@@ -40,6 +46,7 @@ final class BilletajeService
         ]);
 
         $this->notificar($billetaje);
+        $this->notificaciones->enviar($this->hierarchy->controladoresDe($boveda), new BilletajeSolicitadoNotification($billetaje));
 
         return $billetaje;
     }
@@ -67,6 +74,9 @@ final class BilletajeService
                 'fecha_caja' => $billetaje->cajaCiclo->fecha,
             ]);
 
+            $ciclo = $billetaje->cajaCiclo;
+            CajaActualizada::dispatch($ciclo->caja, $ciclo->saldoActual());
+
             BovedaMovimiento::query()->create([
                 'boveda_ciclo_id' => $bovedaCiclo->id,
                 'empresa_id' => $bovedaCiclo->empresa_id,
@@ -79,6 +89,12 @@ final class BilletajeService
                 'fecha_boveda' => $bovedaCiclo->fecha,
             ]);
 
+            BovedaActualizada::dispatch(
+                $billetaje->boveda,
+                $bovedaCiclo->fresh()->saldoActual(),
+                $this->hierarchy->controladoresDe($billetaje->boveda),
+            );
+
             $billetaje->update([
                 'estado' => 'aprobado',
                 'aprobado_por' => $aprobador->id,
@@ -87,6 +103,7 @@ final class BilletajeService
 
             $billetaje = $billetaje->fresh();
             $this->notificar($billetaje);
+            $this->notificaciones->enviar(collect([$billetaje->solicitadoPor]), new BilletajeAprobadoNotification($billetaje));
 
             return $billetaje;
         });

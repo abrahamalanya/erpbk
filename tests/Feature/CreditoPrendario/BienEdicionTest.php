@@ -27,6 +27,7 @@ it('lets an asesor edit a bien of their own cliente', function () {
         'tipo' => 'varios',
         'nombre' => 'Anillo actualizado',
         'valorizacion' => 650,
+        'puntaje' => 6,
     ])->assertSuccessful()
         ->assertJsonPath('data.nombre', 'Anillo actualizado')
         ->assertJsonPath('data.valorizacion', '650.00');
@@ -45,6 +46,7 @@ it('denies an asesor from editing a bien of another asesor\'s cliente', function
         'tipo' => 'varios',
         'nombre' => 'Intento ajeno',
         'valorizacion' => 100,
+        'puntaje' => 5,
     ])->assertForbidden();
 });
 
@@ -59,6 +61,7 @@ it('denies editing without the bienes.editar permission', function () {
         'tipo' => 'varios',
         'nombre' => 'Sin permiso',
         'valorizacion' => 100,
+        'puntaje' => 5,
     ])->assertForbidden();
 });
 
@@ -74,6 +77,7 @@ it('denies editing a bien that is backing an active crédito', function () {
         'tipo' => 'varios',
         'nombre' => 'No debería poder',
         'valorizacion' => 999,
+        'puntaje' => 5,
     ])->assertUnprocessable();
 });
 
@@ -89,5 +93,6 @@ it('allows editing a bien again once its crédito is liquidado', function () {
         'tipo' => 'varios',
         'nombre' => 'Ahora sí',
         'valorizacion' => 600,
+        'puntaje' => 6,
     ])->assertSuccessful();
 });

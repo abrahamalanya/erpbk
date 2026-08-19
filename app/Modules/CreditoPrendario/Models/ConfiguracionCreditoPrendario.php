@@ -30,10 +30,10 @@ class ConfiguracionCreditoPrendario extends Model
     protected $fillable = [
         'empresa_id',
         'agencia_id',
-        'tipo',
         'interes_default',
         'plazo_dias',
         'dias_espera_mora',
+        'dias_minimo_interes',
         'tasa_mora_diaria',
         'max_refrendos',
     ];

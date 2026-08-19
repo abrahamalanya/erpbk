@@ -10,15 +10,14 @@ use DomainException;
 final class ConfiguracionCreditoPrendarioService
 {
     /**
-     * Resolves the effective configuration for an agencia + tipo: an
+     * Resolves the effective configuration for an agencia: an
      * agencia-specific override if one exists, otherwise the empresa-wide
-     * default for that tipo.
+     * default.
      */
-    public function resolverPara(Agencia $agencia, string $tipo): ConfiguracionCreditoPrendario
+    public function resolverPara(Agencia $agencia): ConfiguracionCreditoPrendario
     {
         $override = ConfiguracionCreditoPrendario::query()
             ->where('agencia_id', $agencia->id)
-            ->where('tipo', $tipo)
             ->first();
 
         if ($override) {
@@ -28,23 +27,22 @@ final class ConfiguracionCreditoPrendarioService
         $default = ConfiguracionCreditoPrendario::query()
             ->where('empresa_id', $agencia->empresa_id)
             ->whereNull('agencia_id')
-            ->where('tipo', $tipo)
             ->first();
 
         if ($default) {
             return $default;
         }
 
-        throw new DomainException("No hay configuración de créditos prendarios para el tipo '{$tipo}' en esta empresa. Debe configurarse antes de registrar créditos.");
+        throw new DomainException('No hay configuración de créditos prendarios en esta empresa. Debe configurarse antes de registrar créditos.');
     }
 
     /**
      * @param  array<string, mixed>  $datos
      */
-    public function actualizar(Empresa $empresa, ?Agencia $agencia, string $tipo, array $datos): ConfiguracionCreditoPrendario
+    public function actualizar(Empresa $empresa, ?Agencia $agencia, array $datos): ConfiguracionCreditoPrendario
     {
         return ConfiguracionCreditoPrendario::query()->updateOrCreate(
-            ['empresa_id' => $empresa->id, 'agencia_id' => $agencia?->id, 'tipo' => $tipo],
+            ['empresa_id' => $empresa->id, 'agencia_id' => $agencia?->id],
             $datos
         );
     }

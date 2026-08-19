@@ -1,5 +1,7 @@
 <?php
 
+use App\Modules\Caja\Models\Caja;
+use App\Modules\Caja\Models\CajaCiclo;
 use App\Modules\Cliente\Models\Cliente;
 use App\Modules\CreditoPrendario\Models\Bien;
 use App\Modules\CreditoPrendario\Models\ConfiguracionCreditoPrendario;
@@ -9,18 +11,25 @@ use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Usuario\Models\User;
 use Database\Seeders\PermissionSeeder;
 use Database\Seeders\RoleSeeder;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
 
 beforeEach(function () {
     $this->seed([RoleSeeder::class, PermissionSeeder::class]);
     $this->empresa = Empresa::factory()->create();
     $this->agencia = Agencia::factory()->for($this->empresa)->create();
-    ConfiguracionCreditoPrendario::factory()->deEmpresa($this->empresa, 'electro')->create([
+    ConfiguracionCreditoPrendario::factory()->deEmpresa($this->empresa)->create([
         'interes_default' => 10, 'plazo_dias' => 30, 'dias_espera_mora' => 15, 'tasa_mora_diaria' => 1,
     ]);
 
     $this->asesor = User::factory()->forAgencia($this->agencia)->create();
     $this->asesor->assignRole('asesor');
+    $caja = Caja::factory()->create(['user_id' => $this->asesor->id, 'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id]);
+    CajaCiclo::query()->create([
+        'caja_id' => $caja->id, 'empresa_id' => $caja->empresa_id, 'fecha' => now()->toDateString(),
+        'estado' => 'abierta', 'saldo_apertura' => 0, 'abierta_at' => now(),
+    ]);
     $this->cliente = Cliente::factory()->forAgencia($this->agencia)->create();
     $this->bien = Bien::factory()->paraCliente($this->cliente)->create(['tipo' => 'electro', 'valorizacion' => 1000]);
 });
@@ -97,7 +106,9 @@ it('denies asesor from approving their own crédito', function () {
     $this->postJson("/api/creditos-prendarios/{$creditoId}/aprobar")->assertForbidden();
 });
 
-it('activates the crédito once firmado, setting fecha_desembolso and fecha_vencimiento', function () {
+it('activates the crédito once desembolsado, setting fecha_desembolso, fecha_vencimiento and the cronograma', function () {
+    Storage::fake('public');
+
     Sanctum::actingAs($this->asesor, ['*']);
     $creditoId = $this->postJson('/api/creditos-prendarios', [
         'bien_ids' => [$this->bien->id],
@@ -110,7 +121,16 @@ it('activates the crédito once firmado, setting fecha_desembolso and fecha_venc
     $this->postJson("/api/creditos-prendarios/{$creditoId}/aprobar")->assertSuccessful();
 
     Sanctum::actingAs($this->asesor, ['*']);
-    $response = $this->postJson("/api/creditos-prendarios/{$creditoId}/firmar")->assertSuccessful();
+
+    foreach (CreditoPrendario::find($creditoId)->documentos as $documento) {
+        $this->postJson("/api/creditos-prendarios/{$creditoId}/documentos/{$documento->id}/subir-firmado", [
+            'archivo' => UploadedFile::fake()->create('firmado.pdf', 100, 'application/pdf'),
+        ])->assertSuccessful();
+    }
+
+    Caja::query()->where('user_id', $this->asesor->id)->first()->cicloAbierto->update(['saldo_apertura' => 10000]);
+
+    $response = $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar")->assertSuccessful();
 
     expect($response->json('data.estado'))->toBe('activo')
         ->and($response->json('data.fecha_desembolso'))->not->toBeNull()
@@ -119,14 +139,65 @@ it('activates the crédito once firmado, setting fecha_desembolso and fecha_venc
     $pendientesDeFirma = CreditoPrendario::find($creditoId)
         ->documentos()->whereNull('firmado_at')->count();
     expect($pendientesDeFirma)->toBe(0);
+
+    // mensual -> 1 cuota (tabla fija); interés-only, capital completo hasta liquidar
+    $cuotas = CreditoPrendario::find($creditoId)->cuotas;
+    expect($cuotas)->toHaveCount(1)
+        ->and((string) $cuotas->first()->monto_capital)->toBe('0.00')
+        ->and((string) $cuotas->first()->monto_total)->toBe('50.00');
 });
 
-it('rejects firmar when the crédito is not yet aprobado', function () {
+it('rejects desembolsar when the crédito is not yet aprobado', function () {
     Sanctum::actingAs($this->asesor, ['*']);
     $creditoId = $this->postJson('/api/creditos-prendarios', [
         'bien_ids' => [$this->bien->id],
         'monto_prestamo' => 500, 'tipo_cuota' => 'mensual',
     ])->assertCreated()->json('data.id');
 
-    $this->postJson("/api/creditos-prendarios/{$creditoId}/firmar")->assertUnprocessable();
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar")->assertUnprocessable();
+});
+
+it('rejects desembolsar when a documento is not yet firmado', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+    $creditoId = $this->postJson('/api/creditos-prendarios', [
+        'bien_ids' => [$this->bien->id],
+        'monto_prestamo' => 500, 'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+
+    $adminAgencia = User::factory()->forAgencia($this->agencia)->create();
+    $adminAgencia->assignRole('administrador_agencia');
+    Sanctum::actingAs($adminAgencia, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/aprobar")->assertSuccessful();
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    Caja::query()->where('user_id', $this->asesor->id)->first()->cicloAbierto->update(['saldo_apertura' => 10000]);
+
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar")->assertUnprocessable();
+});
+
+it('rejects desembolsar when the actor caja does not have enough saldo', function () {
+    Storage::fake('public');
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $creditoId = $this->postJson('/api/creditos-prendarios', [
+        'bien_ids' => [$this->bien->id],
+        'monto_prestamo' => 500, 'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+
+    $adminAgencia = User::factory()->forAgencia($this->agencia)->create();
+    $adminAgencia->assignRole('administrador_agencia');
+    Sanctum::actingAs($adminAgencia, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/aprobar")->assertSuccessful();
+
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    foreach (CreditoPrendario::find($creditoId)->documentos as $documento) {
+        $this->postJson("/api/creditos-prendarios/{$creditoId}/documentos/{$documento->id}/subir-firmado", [
+            'archivo' => UploadedFile::fake()->create('firmado.pdf', 100, 'application/pdf'),
+        ])->assertSuccessful();
+    }
+
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar")
+        ->assertUnprocessable()
+        ->assertJsonPath('message', 'No tienes saldo suficiente en tu caja para desembolsar este crédito.');
 });

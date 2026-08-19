@@ -5,6 +5,7 @@ namespace App\Modules\CreditoPrendario\Services;
 use App\Modules\CreditoPrendario\Models\CreditoPrendario;
 use App\Modules\Usuario\Models\User;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Collection;
 
 final class CreditoPrendarioHierarchyService
 {
@@ -48,5 +49,19 @@ final class CreditoPrendarioHierarchyService
         }
 
         return false;
+    }
+
+    /**
+     * Every user who currently has the authority to aprobar/rechazar this
+     * crédito — the "list candidates" version of puedeAprobar(), which only
+     * checks one given user. Used to resolve who should receive a live
+     * update when the crédito's estado changes.
+     *
+     * @return Collection<int, User>
+     */
+    public function controladoresDe(CreditoPrendario $credito): Collection
+    {
+        return User::role('administrador_general')->where('empresa_id', $credito->empresa_id)->get()
+            ->merge(User::role('administrador_agencia')->where('agencia_id', $credito->agencia_id)->get());
     }
 }

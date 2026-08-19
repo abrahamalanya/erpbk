@@ -35,7 +35,7 @@ class BienFactory extends Factory
             'serie' => fake()->bothify('SN-########'),
             'observacion' => fake()->sentence(),
             'valorizacion' => fake()->randomFloat(2, 100, 3000),
-            'cantidad' => 1,
+            'puntaje' => fake()->numberBetween(1, 10),
             'estado' => 'en_garantia',
         ];
     }

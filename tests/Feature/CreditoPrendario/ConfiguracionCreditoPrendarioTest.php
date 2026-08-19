@@ -1,5 +1,7 @@
 <?php
 
+use App\Modules\Caja\Models\Caja;
+use App\Modules\Caja\Models\CajaCiclo;
 use App\Modules\Cliente\Models\Cliente;
 use App\Modules\CreditoPrendario\Models\Bien;
 use App\Modules\CreditoPrendario\Models\ConfiguracionCreditoPrendario;
@@ -22,10 +24,10 @@ it('allows administrador_general to set the empresa-wide default configuration',
     Sanctum::actingAs($admin, ['*']);
 
     $this->putJson('/api/configuraciones-credito-prendario', [
-        'tipo' => 'electro',
         'interes_default' => 10,
         'plazo_dias' => 30,
         'dias_espera_mora' => 15,
+        'dias_minimo_interes' => 15,
         'tasa_mora_diaria' => 1,
     ])->assertSuccessful()->assertJsonPath('data.agencia_id', null);
 });
@@ -36,10 +38,10 @@ it('denies administrador_agencia from setting the empresa-wide default (no agenc
     Sanctum::actingAs($adminAgencia, ['*']);
 
     $this->putJson('/api/configuraciones-credito-prendario', [
-        'tipo' => 'electro',
         'interes_default' => 10,
         'plazo_dias' => 30,
         'dias_espera_mora' => 15,
+        'dias_minimo_interes' => 15,
         'tasa_mora_diaria' => 1,
     ])->assertForbidden();
 });
@@ -51,10 +53,10 @@ it('allows administrador_agencia to set an override for their own agencia', func
 
     $this->putJson('/api/configuraciones-credito-prendario', [
         'agencia_id' => $this->agencia->id,
-        'tipo' => 'electro',
         'interes_default' => 12,
         'plazo_dias' => 20,
         'dias_espera_mora' => 10,
+        'dias_minimo_interes' => 10,
         'tasa_mora_diaria' => 1.5,
     ])->assertSuccessful()->assertJsonPath('data.agencia_id', $this->agencia->id);
 });
@@ -67,20 +69,25 @@ it('denies administrador_agencia from setting an override for another agencia', 
 
     $this->putJson('/api/configuraciones-credito-prendario', [
         'agencia_id' => $otraAgencia->id,
-        'tipo' => 'electro',
         'interes_default' => 12,
         'plazo_dias' => 20,
         'dias_espera_mora' => 10,
+        'dias_minimo_interes' => 10,
         'tasa_mora_diaria' => 1.5,
     ])->assertForbidden();
 });
 
 it('resolves the agencia override over the empresa default when registering a crédito', function () {
-    ConfiguracionCreditoPrendario::factory()->deEmpresa($this->empresa, 'electro')->create(['plazo_dias' => 30]);
-    ConfiguracionCreditoPrendario::factory()->deAgencia($this->agencia, 'electro')->create(['plazo_dias' => 15]);
+    ConfiguracionCreditoPrendario::factory()->deEmpresa($this->empresa)->create(['plazo_dias' => 30]);
+    ConfiguracionCreditoPrendario::factory()->deAgencia($this->agencia)->create(['plazo_dias' => 15]);
 
     $asesor = User::factory()->forAgencia($this->agencia)->create();
     $asesor->assignRole('asesor');
+    $caja = Caja::factory()->create(['user_id' => $asesor->id, 'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id]);
+    CajaCiclo::query()->create([
+        'caja_id' => $caja->id, 'empresa_id' => $caja->empresa_id, 'fecha' => now()->toDateString(),
+        'estado' => 'abierta', 'saldo_apertura' => 0, 'abierta_at' => now(),
+    ]);
     Sanctum::actingAs($asesor, ['*']);
 
     $cliente = Cliente::factory()->forAgencia($this->agencia)->create();
@@ -96,10 +103,15 @@ it('resolves the agencia override over the empresa default when registering a cr
 });
 
 it('falls back to the empresa default when no agencia override exists', function () {
-    ConfiguracionCreditoPrendario::factory()->deEmpresa($this->empresa, 'electro')->create(['plazo_dias' => 30]);
+    ConfiguracionCreditoPrendario::factory()->deEmpresa($this->empresa)->create(['plazo_dias' => 30]);
 
     $asesor = User::factory()->forAgencia($this->agencia)->create();
     $asesor->assignRole('asesor');
+    $caja = Caja::factory()->create(['user_id' => $asesor->id, 'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id]);
+    CajaCiclo::query()->create([
+        'caja_id' => $caja->id, 'empresa_id' => $caja->empresa_id, 'fecha' => now()->toDateString(),
+        'estado' => 'abierta', 'saldo_apertura' => 0, 'abierta_at' => now(),
+    ]);
     Sanctum::actingAs($asesor, ['*']);
 
     $cliente = Cliente::factory()->forAgencia($this->agencia)->create();
@@ -117,6 +129,11 @@ it('falls back to the empresa default when no agencia override exists', function
 it('rejects registering a crédito when no configuration exists at all', function () {
     $asesor = User::factory()->forAgencia($this->agencia)->create();
     $asesor->assignRole('asesor');
+    $caja = Caja::factory()->create(['user_id' => $asesor->id, 'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id]);
+    CajaCiclo::query()->create([
+        'caja_id' => $caja->id, 'empresa_id' => $caja->empresa_id, 'fecha' => now()->toDateString(),
+        'estado' => 'abierta', 'saldo_apertura' => 0, 'abierta_at' => now(),
+    ]);
     Sanctum::actingAs($asesor, ['*']);
 
     $cliente = Cliente::factory()->forAgencia($this->agencia)->create();

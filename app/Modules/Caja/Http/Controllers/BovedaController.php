@@ -25,6 +25,26 @@ class BovedaController extends Controller
         private readonly CajaBovedaHierarchyService $hierarchy,
     ) {}
 
+    /**
+     * The single bóveda this admin controls — administrador_general gets the
+     * empresa's principal bóveda, administrador_agencia gets their own
+     * agencia bóveda (bovedaFinanciadoraDe() happens to resolve exactly this
+     * for admin roles, since their own caja is funded by the same bóveda
+     * they control). Powers a header badge, same shape as GET /caja.
+     */
+    public function mia(): JsonResponse
+    {
+        Gate::authorize('viewAny', Boveda::class);
+
+        $actor = request()->user();
+        abort_unless($actor->hasAnyRole(['administrador_general', 'administrador_agencia']), 403);
+
+        $boveda = $this->hierarchy->bovedaFinanciadoraDe($actor)->load('cicloAbierto');
+        $this->adjuntarSaldoActual(new Collection([$boveda]));
+
+        return $this->successResponse($boveda);
+    }
+
     public function index(): JsonResponse
     {
         Gate::authorize('viewAny', Boveda::class);

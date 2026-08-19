@@ -76,6 +76,19 @@ class CajaCiclo extends Model
         return $this->hasMany(Billetaje::class);
     }
 
+    /**
+     * Live balance: saldo_apertura plus every ingreso/billetaje minus every
+     * egreso movimiento so far — never stored, always recomputed from the
+     * movimientos so it can't drift out of sync with them.
+     */
+    public function saldoActual(): string
+    {
+        $ingresos = (string) $this->movimientos()->whereIn('tipo', ['ingreso', 'billetaje'])->sum('monto');
+        $egresos = (string) $this->movimientos()->where('tipo', 'egreso')->sum('monto');
+
+        return bcadd($this->saldo_apertura, bcsub($ingresos, $egresos, 2), 2);
+    }
+
     protected static function newFactory(): CajaCicloFactory
     {
         return CajaCicloFactory::new();

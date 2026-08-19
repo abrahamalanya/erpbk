@@ -43,9 +43,21 @@ class CreditoPrendarioPolicy
         return $user->can('creditos_prendarios.rechazar') && $this->hierarchy->puedeAprobar($user, $credito);
     }
 
-    public function firmar(User $user, CreditoPrendario $credito): bool
+    /**
+     * Only the asesor who registered the crédito can subsanar it — NOT the
+     * admin who rejected it (confirmed explicitly: they're the ones who
+     * asked for the fix, they don't perform it). Deliberately stricter than
+     * puedeVer()'s broader visibility scope (which would also let a
+     * supervisor or admin trigger this on someone else's behalf).
+     */
+    public function subsanar(User $user, CreditoPrendario $credito): bool
     {
-        return $user->can('creditos_prendarios.firmar') && $this->hierarchy->puedeVer($user, $credito);
+        return $user->can('creditos_prendarios.subsanar') && $credito->registrado_por === $user->id;
+    }
+
+    public function desembolsar(User $user, CreditoPrendario $credito): bool
+    {
+        return $user->can('creditos_prendarios.desembolsar') && $this->hierarchy->puedeVer($user, $credito);
     }
 
     public function refrendar(User $user, CreditoPrendario $credito): bool
@@ -56,5 +68,26 @@ class CreditoPrendarioPolicy
     public function liquidar(User $user, CreditoPrendario $credito): bool
     {
         return $user->can('creditos_prendarios.liquidar') && $this->hierarchy->puedeVer($user, $credito);
+    }
+
+    /**
+     * Same authority as aprobar/rechazar — editing terms (e.g. a custom
+     * interest rate for an exclusive client) is an admin decision, not tied
+     * to a specific actor the way subsanar() is.
+     */
+    public function editar(User $user, CreditoPrendario $credito): bool
+    {
+        return $user->can('creditos_prendarios.editar') && $this->hierarchy->puedeAprobar($user, $credito);
+    }
+
+    /**
+     * Undoes an accidental aprobar(). Deliberately the same broad authority
+     * as aprobar/rechazar (any admin who could approve this crédito can also
+     * fix a mistaken approval), not restricted to whoever specifically
+     * approved it — confirmed explicitly, unlike subsanar()'s ownership check.
+     */
+    public function revertirAprobacion(User $user, CreditoPrendario $credito): bool
+    {
+        return $user->can('creditos_prendarios.revertir_aprobacion') && $this->hierarchy->puedeAprobar($user, $credito);
     }
 }

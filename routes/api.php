@@ -10,6 +10,7 @@ use App\Modules\CreditoPrendario\Http\Controllers\CreditoPrendarioController;
 use App\Modules\Empresa\Http\Controllers\AgenciaController;
 use App\Modules\Empresa\Http\Controllers\EmpresaController;
 use App\Modules\Sistemas\Http\Controllers\AuthController;
+use App\Modules\Sistemas\Http\Controllers\NotificacionController;
 use App\Modules\Sistemas\Http\Controllers\PermissionController;
 use App\Modules\Sistemas\Http\Controllers\RoleController;
 use App\Modules\Usuario\Http\Controllers\UserController;
@@ -29,6 +30,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('roles', RoleController::class)->only(['index', 'show', 'update']);
     Route::apiResource('permisos', PermissionController::class)->only(['index']);
 
+    Route::get('notificaciones', [NotificacionController::class, 'index'])->name('notificaciones.index');
+    Route::post('notificaciones/{notificacion}/marcar-leido', [NotificacionController::class, 'marcarLeido'])->name('notificaciones.marcar-leido');
+    Route::post('notificaciones/marcar-todas-leidas', [NotificacionController::class, 'marcarTodasLeidas'])->name('notificaciones.marcar-todas-leidas');
+
     Route::apiResource('clientes', ClienteController::class);
     Route::post('clientes/{cliente}/asignar', [ClienteController::class, 'asignar'])->name('clientes.asignar');
     Route::get('clientes/consultar-dni/{dni}', [ClienteController::class, 'consultarDni'])->name('clientes.consultar-dni');
@@ -40,6 +45,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('cajas/{caja}/cerrar-forzado', [CajaController::class, 'cerrarForzado'])->name('cajas.cerrar-forzado');
     Route::post('cajas/{caja}/reabrir', [CajaController::class, 'reabrir'])->name('cajas.reabrir');
 
+    Route::get('bovedas/mia', [BovedaController::class, 'mia'])->name('bovedas.mia');
     Route::apiResource('bovedas', BovedaController::class)->only(['index', 'show']);
     Route::post('bovedas/{boveda}/cerrar', [BovedaController::class, 'cerrar'])->name('bovedas.cerrar');
     Route::post('bovedas/{boveda}/aperturar', [BovedaController::class, 'aperturar'])->name('bovedas.aperturar');
@@ -55,12 +61,15 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('creditos-prendarios', CreditoPrendarioController::class)->only(['index', 'store', 'show'])->parameters(['creditos-prendarios' => 'credito']);
     Route::post('creditos-prendarios/{credito}/aprobar', [CreditoPrendarioController::class, 'aprobar'])->name('creditos-prendarios.aprobar');
     Route::post('creditos-prendarios/{credito}/rechazar', [CreditoPrendarioController::class, 'rechazar'])->name('creditos-prendarios.rechazar');
-    Route::post('creditos-prendarios/{credito}/firmar', [CreditoPrendarioController::class, 'firmar'])->name('creditos-prendarios.firmar');
+    Route::post('creditos-prendarios/{credito}/subsanar', [CreditoPrendarioController::class, 'subsanar'])->name('creditos-prendarios.subsanar');
+    Route::post('creditos-prendarios/{credito}/desembolsar', [CreditoPrendarioController::class, 'desembolsar'])->name('creditos-prendarios.desembolsar');
     Route::post('creditos-prendarios/{credito}/refrendar', [CreditoPrendarioController::class, 'refrendar'])->name('creditos-prendarios.refrendar');
     Route::post('creditos-prendarios/{credito}/liquidar', [CreditoPrendarioController::class, 'liquidar'])->name('creditos-prendarios.liquidar');
-    Route::get('creditos-prendarios/{credito}/documentos/{documento}/descargar', [CreditoPrendarioController::class, 'descargarDocumento'])->name('creditos-prendarios.documentos.descargar');
+    Route::post('creditos-prendarios/{credito}/actualizar-interes', [CreditoPrendarioController::class, 'actualizarInteres'])->name('creditos-prendarios.actualizar-interes');
+    Route::post('creditos-prendarios/{credito}/revertir-aprobacion', [CreditoPrendarioController::class, 'revertirAprobacion'])->name('creditos-prendarios.revertir-aprobacion');
+    Route::get('creditos-prendarios/{credito}/documentos/{documento}/ver', [CreditoPrendarioController::class, 'verDocumento'])->name('creditos-prendarios.documentos.ver');
     Route::post('creditos-prendarios/{credito}/documentos/{documento}/marcar-impreso', [CreditoPrendarioController::class, 'marcarImpreso'])->name('creditos-prendarios.documentos.marcar-impreso');
-    Route::post('creditos-prendarios/{credito}/documentos/{documento}/marcar-firmado', [CreditoPrendarioController::class, 'marcarFirmadoDocumento'])->name('creditos-prendarios.documentos.marcar-firmado');
+    Route::post('creditos-prendarios/{credito}/documentos/{documento}/subir-firmado', [CreditoPrendarioController::class, 'subirDocumentoFirmado'])->name('creditos-prendarios.documentos.subir-firmado');
 
     Route::get('configuraciones-credito-prendario', [ConfiguracionCreditoPrendarioController::class, 'index'])->name('configuraciones-credito-prendario.index');
     Route::put('configuraciones-credito-prendario', [ConfiguracionCreditoPrendarioController::class, 'update'])->name('configuraciones-credito-prendario.update');

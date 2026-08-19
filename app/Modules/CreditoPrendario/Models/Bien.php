@@ -46,15 +46,16 @@ class Bien extends Model
         'serie',
         'observacion',
         'valorizacion',
-        'cantidad',
+        'puntaje',
         'foto_cliente_producto_path',
+        'video_path',
         'estado',
     ];
 
     /**
      * @var list<string>
      */
-    protected $appends = ['foto_cliente_producto_url'];
+    protected $appends = ['foto_cliente_producto_url', 'video_url'];
 
     /**
      * Get the attributes that should be cast.
@@ -115,6 +116,13 @@ class Bien extends Model
     {
         return Attribute::get(fn (): ?string => $this->foto_cliente_producto_path
             ? Storage::disk('public')->url($this->foto_cliente_producto_path)
+            : null);
+    }
+
+    protected function videoUrl(): Attribute
+    {
+        return Attribute::get(fn (): ?string => $this->video_path
+            ? Storage::disk('public')->url($this->video_path)
             : null);
     }
 

@@ -73,6 +73,19 @@ class BovedaCiclo extends Model
         return $this->hasMany(BovedaMovimiento::class);
     }
 
+    /**
+     * Live balance: saldo_apertura plus every ingreso minus every egreso
+     * movimiento so far — never stored, always recomputed from the
+     * movimientos so it can't drift out of sync with them.
+     */
+    public function saldoActual(): string
+    {
+        $ingresos = (string) $this->movimientos()->where('tipo', 'ingreso')->sum('monto');
+        $egresos = (string) $this->movimientos()->where('tipo', 'egreso')->sum('monto');
+
+        return bcadd($this->saldo_apertura, bcsub($ingresos, $egresos, 2), 2);
+    }
+
     protected static function newFactory(): BovedaCicloFactory
     {
         return BovedaCicloFactory::new();

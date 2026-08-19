@@ -49,10 +49,11 @@ class ConfiguracionCreditoPrendarioController extends Controller
 
         Gate::authorize('update', [ConfiguracionCreditoPrendario::class, $agencia]);
 
-        $configuracion = $this->configuracionService->actualizar($empresa, $agencia, $data['tipo'], [
+        $configuracion = $this->configuracionService->actualizar($empresa, $agencia, [
             'interes_default' => $data['interes_default'],
             'plazo_dias' => $data['plazo_dias'],
             'dias_espera_mora' => $data['dias_espera_mora'],
+            'dias_minimo_interes' => $data['dias_minimo_interes'],
             'tasa_mora_diaria' => $data['tasa_mora_diaria'],
             'max_refrendos' => $data['max_refrendos'] ?? null,
         ]);

@@ -23,7 +23,7 @@ beforeEach(function () {
 });
 
 it('creates a new chained crédito on refrendo and marks the original as refrendado, generating only an adenda', function () {
-    ConfiguracionCreditoPrendario::factory()->deEmpresa($this->empresa, 'electro')->create([
+    ConfiguracionCreditoPrendario::factory()->deEmpresa($this->empresa)->create([
         'plazo_dias' => 30, 'dias_espera_mora' => 15, 'tasa_mora_diaria' => 1, 'max_refrendos' => null,
     ]);
 
@@ -49,7 +49,7 @@ it('creates a new chained crédito on refrendo and marks the original as refrend
 });
 
 it('rejects refrendo once max_refrendos is reached', function () {
-    ConfiguracionCreditoPrendario::factory()->deEmpresa($this->empresa, 'electro')->create([
+    ConfiguracionCreditoPrendario::factory()->deEmpresa($this->empresa)->create([
         'plazo_dias' => 30, 'dias_espera_mora' => 15, 'tasa_mora_diaria' => 1, 'max_refrendos' => 1,
     ]);
 
@@ -64,7 +64,7 @@ it('rejects refrendo once max_refrendos is reached', function () {
 });
 
 it('rejects refrendo on a crédito still pendiente', function () {
-    ConfiguracionCreditoPrendario::factory()->deEmpresa($this->empresa, 'electro')->create([
+    ConfiguracionCreditoPrendario::factory()->deEmpresa($this->empresa)->create([
         'plazo_dias' => 30, 'dias_espera_mora' => 15, 'tasa_mora_diaria' => 1,
     ]);
 

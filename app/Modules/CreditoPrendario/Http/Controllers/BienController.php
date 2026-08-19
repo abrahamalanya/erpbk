@@ -61,13 +61,19 @@ class BienController extends Controller
             'serie' => $data['serie'] ?? null,
             'observacion' => $data['observacion'] ?? null,
             'valorizacion' => $data['valorizacion'],
-            'cantidad' => $data['cantidad'] ?? 1,
+            'puntaje' => $data['puntaje'],
             'estado' => 'en_garantia',
         ]);
 
         if ($request->hasFile('foto_cliente_producto')) {
             $bien->update([
                 'foto_cliente_producto_path' => $request->file('foto_cliente_producto')->store("bienes/{$bien->id}", 'public'),
+            ]);
+        }
+
+        if ($request->hasFile('video')) {
+            $bien->update([
+                'video_path' => $request->file('video')->store("bienes/{$bien->id}", 'public'),
             ]);
         }
 
@@ -106,7 +112,7 @@ class BienController extends Controller
             'serie' => $data['serie'] ?? null,
             'observacion' => $data['observacion'] ?? null,
             'valorizacion' => $data['valorizacion'],
-            'cantidad' => $data['cantidad'] ?? 1,
+            'puntaje' => $data['puntaje'],
         ]);
 
         if ($request->hasFile('foto_cliente_producto')) {
@@ -116,6 +122,16 @@ class BienController extends Controller
 
             $bien->update([
                 'foto_cliente_producto_path' => $request->file('foto_cliente_producto')->store("bienes/{$bien->id}", 'public'),
+            ]);
+        }
+
+        if ($request->hasFile('video')) {
+            if ($bien->video_path) {
+                Storage::disk('public')->delete($bien->video_path);
+            }
+
+            $bien->update([
+                'video_path' => $request->file('video')->store("bienes/{$bien->id}", 'public'),
             ]);
         }
 

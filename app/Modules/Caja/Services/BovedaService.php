@@ -2,6 +2,7 @@
 
 namespace App\Modules\Caja\Services;
 
+use App\Modules\Caja\Events\BovedaActualizada;
 use App\Modules\Caja\Models\Boveda;
 use App\Modules\Caja\Models\BovedaCiclo;
 use App\Modules\Caja\Models\BovedaMovimiento;
@@ -10,6 +11,7 @@ use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Usuario\Models\User;
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 final class BovedaService
@@ -148,7 +150,7 @@ final class BovedaService
 
     private function crearMovimiento(BovedaCiclo $ciclo, User $actor, string $tipo, string $monto, string $concepto): BovedaMovimiento
     {
-        return BovedaMovimiento::query()->create([
+        $movimiento = BovedaMovimiento::query()->create([
             'boveda_ciclo_id' => $ciclo->id,
             'empresa_id' => $ciclo->empresa_id,
             'tipo' => $tipo,
@@ -157,19 +159,47 @@ final class BovedaService
             'registrado_por' => $actor->id,
             'fecha_boveda' => $ciclo->fecha,
         ]);
+
+        $this->notificar($ciclo->boveda);
+
+        return $movimiento;
+    }
+
+    /**
+     * Broadcasts this bóveda's current apertura/saldo state to every admin
+     * who controls it — powers a live header badge, same shape as
+     * CajaService's own notificar() but fanned out to a Collection instead
+     * of a single owner (a bóveda can have more than one controlling admin).
+     * Duplicates CajaBovedaHierarchyService::controladoresDe() instead of
+     * injecting it — that service already depends on BovedaService, so the
+     * reverse dependency would be circular.
+     */
+    private function notificar(Boveda $boveda): void
+    {
+        $destinatarios = $boveda->tipo === 'principal'
+            ? User::role('administrador_general')->where('empresa_id', $boveda->empresa_id)->get()
+            : User::role('administrador_agencia')->where('agencia_id', $boveda->agencia_id)->get();
+
+        BovedaActualizada::dispatch($boveda, $boveda->cicloAbierto?->saldoActual(), $destinatarios);
     }
 
     private function crearCiclo(Boveda $boveda, User $actor, string $saldoApertura): BovedaCiclo
     {
-        return DB::transaction(fn (): BovedaCiclo => BovedaCiclo::query()->create([
-            'boveda_id' => $boveda->id,
-            'empresa_id' => $boveda->empresa_id,
-            'fecha' => now()->toDateString(),
-            'estado' => 'abierta',
-            'saldo_apertura' => $saldoApertura,
-            'abierta_por' => $actor->id,
-            'abierta_at' => now(),
-        ]));
+        return DB::transaction(function () use ($boveda, $actor, $saldoApertura): BovedaCiclo {
+            $ciclo = BovedaCiclo::query()->create([
+                'boveda_id' => $boveda->id,
+                'empresa_id' => $boveda->empresa_id,
+                'fecha' => now()->toDateString(),
+                'estado' => 'abierta',
+                'saldo_apertura' => $saldoApertura,
+                'abierta_por' => $actor->id,
+                'abierta_at' => now(),
+            ]);
+
+            $this->notificar($boveda->fresh(['cicloAbierto']));
+
+            return $ciclo;
+        });
     }
 
     public function cerrar(Boveda $boveda, User $actor, string $montoContado): BovedaCiclo
@@ -199,6 +229,8 @@ final class BovedaService
                 'cerrada_por' => $actor->id,
                 'cerrada_at' => now(),
             ]);
+
+            $this->notificar($ciclo->boveda->fresh(['cicloAbierto']));
 
             return $ciclo->fresh();
         });
@@ -230,6 +262,8 @@ final class BovedaService
             'cerrada_at' => null,
             'cerrada_por' => null,
         ]);
+
+        $this->notificar($boveda->fresh(['cicloAbierto']));
 
         return $ultimoCerrado->fresh();
     }

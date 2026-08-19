@@ -30,7 +30,7 @@
     <table>
         <tr>
             <td class="label">Tipo</td><td class="label">Nombre</td><td class="label">Marca / Modelo</td>
-            <td class="label">Serie</td><td class="label">Cantidad</td><td class="label">Valorización</td>
+            <td class="label">Serie</td><td class="label">Puntaje</td><td class="label">Valorización</td>
         </tr>
         @foreach ($credito->bienes as $bien)
         <tr>
@@ -38,7 +38,7 @@
             <td>{{ $bien->nombre }}</td>
             <td>{{ $bien->marca }} / {{ $bien->modelo }}</td>
             <td>{{ $bien->serie }}</td>
-            <td>{{ $bien->cantidad }}</td>
+            <td>{{ $bien->puntaje }}/10</td>
             <td>{{ number_format($bien->valorizacion, 2) }}</td>
         </tr>
         @endforeach

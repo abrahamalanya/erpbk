@@ -29,10 +29,10 @@ class UpdateConfiguracionCreditoPrendarioRequest extends FormRequest
                 'nullable', 'integer', 'exists:empresas,id',
             ],
             'agencia_id' => ['nullable', 'integer', 'exists:agencias,id'],
-            'tipo' => ['required', Rule::in(['electro', 'varios'])],
             'interes_default' => ['required', 'numeric', 'min:0'],
             'plazo_dias' => ['required', 'integer', 'min:1'],
             'dias_espera_mora' => ['required', 'integer', 'min:0'],
+            'dias_minimo_interes' => ['required', 'integer', 'min:0'],
             'tasa_mora_diaria' => ['required', 'numeric', 'min:0'],
             'max_refrendos' => ['nullable', 'integer', 'min:0'],
         ];

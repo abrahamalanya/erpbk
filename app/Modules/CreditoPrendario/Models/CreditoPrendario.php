@@ -113,6 +113,11 @@ class CreditoPrendario extends Model
         return $this->hasMany(DocumentoCreditoPrendario::class, 'credito_id');
     }
 
+    public function cuotas(): HasMany
+    {
+        return $this->hasMany(CuotaCreditoPrendario::class, 'credito_id')->orderBy('numero_cuota');
+    }
+
     protected function diasEnMora(): Attribute
     {
         return Attribute::get(function (): int {

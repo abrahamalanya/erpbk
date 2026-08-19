@@ -2,9 +2,13 @@
 
 namespace App\Modules\CreditoPrendario\Http\Controllers;
 
+use App\Modules\CreditoPrendario\Http\Requests\ActualizarInteresCreditoRequest;
+use App\Modules\CreditoPrendario\Http\Requests\DesembolsarCreditoRequest;
+use App\Modules\CreditoPrendario\Http\Requests\LiquidarCreditoRequest;
 use App\Modules\CreditoPrendario\Http\Requests\RechazarCreditoRequest;
 use App\Modules\CreditoPrendario\Http\Requests\RefrendarCreditoRequest;
 use App\Modules\CreditoPrendario\Http\Requests\StoreCreditoPrendarioRequest;
+use App\Modules\CreditoPrendario\Http\Requests\SubirDocumentoFirmadoRequest;
 use App\Modules\CreditoPrendario\Models\Bien;
 use App\Modules\CreditoPrendario\Models\CreditoPrendario;
 use App\Modules\CreditoPrendario\Models\DocumentoCreditoPrendario;
@@ -15,7 +19,7 @@ use App\Nucleo\Http\Controllers\Controller;
 use App\Nucleo\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Gate;
-use Illuminate\Support\Facades\Storage;
+use Symfony\Component\HttpFoundation\Response;
 
 class CreditoPrendarioController extends Controller
 {
@@ -42,6 +46,11 @@ class CreditoPrendarioController extends Controller
         Gate::authorize('create', CreditoPrendario::class);
 
         $data = $request->validated();
+
+        if (($data['interes'] ?? null) !== null) {
+            Gate::authorize('creditos_prendarios.editar');
+        }
+
         $bienes = Bien::query()->whereIn('id', $data['bien_ids'])->get();
 
         $credito = $this->creditoService->registrar($request->user(), $bienes, $data);
@@ -53,7 +62,13 @@ class CreditoPrendarioController extends Controller
     {
         Gate::authorize('view', $credito);
 
-        return $this->successResponse($credito->load(['bienes.fotos', 'cliente', 'registradoPor', 'aprobadoPor', 'documentos']));
+        $credito->load(['bienes.fotos', 'cliente', 'registradoPor', 'aprobadoPor', 'documentos', 'cuotas']);
+
+        if (in_array($credito->estado, ['activo', 'vencido'], true)) {
+            $credito->setAttribute('monto_liquidacion_sugerido', $this->creditoService->calcularMontoLiquidacion($credito));
+        }
+
+        return $this->successResponse($credito);
     }
 
     public function aprobar(CreditoPrendario $credito): JsonResponse
@@ -74,13 +89,33 @@ class CreditoPrendarioController extends Controller
         return $this->successResponse($credito, 'Crédito rechazado');
     }
 
-    public function firmar(CreditoPrendario $credito): JsonResponse
+    public function subsanar(CreditoPrendario $credito): JsonResponse
     {
-        Gate::authorize('firmar', $credito);
+        Gate::authorize('subsanar', $credito);
 
-        $credito = $this->creditoService->firmar($credito, request()->user());
+        $credito = $this->creditoService->subsanar($credito, request()->user());
 
-        return $this->successResponse($credito, 'Crédito firmado y activado');
+        return $this->successResponse($credito, 'Crédito reenviado a revisión');
+    }
+
+    public function desembolsar(DesembolsarCreditoRequest $request, CreditoPrendario $credito): JsonResponse
+    {
+        Gate::authorize('desembolsar', $credito);
+
+        $data = $request->validated();
+
+        if (($data['numero_cuotas'] ?? null) !== null || ($data['interes'] ?? null) !== null) {
+            Gate::authorize('editar', $credito);
+        }
+
+        $credito = $this->creditoService->desembolsar(
+            $credito,
+            $request->user(),
+            $data['numero_cuotas'] ?? null,
+            isset($data['interes']) ? (string) $data['interes'] : null,
+        );
+
+        return $this->successResponse($credito, 'Crédito desembolsado y cronograma generado');
     }
 
     public function refrendar(RefrendarCreditoRequest $request, CreditoPrendario $credito): JsonResponse
@@ -92,22 +127,40 @@ class CreditoPrendarioController extends Controller
         return $this->successResponse($nuevo, 'Crédito refrendado', 201);
     }
 
-    public function liquidar(CreditoPrendario $credito): JsonResponse
+    public function liquidar(LiquidarCreditoRequest $request, CreditoPrendario $credito): JsonResponse
     {
         Gate::authorize('liquidar', $credito);
 
-        $credito = $this->creditoService->liquidar($credito, request()->user());
+        $credito = $this->creditoService->liquidar($credito, $request->user(), (string) $request->validated('monto_pagado'));
 
         return $this->successResponse($credito, 'Crédito liquidado');
     }
 
-    public function descargarDocumento(CreditoPrendario $credito, DocumentoCreditoPrendario $documento): JsonResponse
+    public function actualizarInteres(ActualizarInteresCreditoRequest $request, CreditoPrendario $credito): JsonResponse
+    {
+        Gate::authorize('editar', $credito);
+
+        $credito = $this->creditoService->actualizarInteres($credito, $request->user(), (string) $request->validated('interes'));
+
+        return $this->successResponse($credito, 'Tasa de interés actualizada');
+    }
+
+    public function revertirAprobacion(CreditoPrendario $credito): JsonResponse
+    {
+        Gate::authorize('revertirAprobacion', $credito);
+
+        $credito = $this->creditoService->revertirAprobacion($credito, request()->user());
+
+        return $this->successResponse($credito, 'Aprobación revertida, el crédito vuelve a pendiente');
+    }
+
+    public function verDocumento(CreditoPrendario $credito, DocumentoCreditoPrendario $documento): Response
     {
         Gate::authorize('view', $credito);
 
         abort_unless($documento->credito_id === $credito->id, 404);
 
-        return $this->successResponse(['url' => Storage::disk('public')->url($documento->pdf_path)]);
+        return $this->documentoService->renderizar($documento);
     }
 
     public function marcarImpreso(CreditoPrendario $credito, DocumentoCreditoPrendario $documento): JsonResponse
@@ -119,12 +172,14 @@ class CreditoPrendarioController extends Controller
         return $this->successResponse($this->documentoService->marcarImpreso($documento), 'Documento marcado como impreso');
     }
 
-    public function marcarFirmadoDocumento(CreditoPrendario $credito, DocumentoCreditoPrendario $documento): JsonResponse
+    public function subirDocumentoFirmado(SubirDocumentoFirmadoRequest $request, CreditoPrendario $credito, DocumentoCreditoPrendario $documento): JsonResponse
     {
         Gate::authorize('view', $credito);
 
         abort_unless($documento->credito_id === $credito->id, 404);
 
-        return $this->successResponse($this->documentoService->marcarFirmado($documento), 'Documento marcado como firmado');
+        $documento = $this->documentoService->subirFirmado($documento, $request->file('archivo'));
+
+        return $this->successResponse($documento, 'Documento firmado subido');
     }
 }
