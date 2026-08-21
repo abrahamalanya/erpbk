@@ -69,12 +69,33 @@ it('defaults numero_cuotas from the fixed table per tipo_cuota (semanal -> 4)', 
     $cuotas = CreditoPrendario::find($creditoId)->cuotas;
     expect($cuotas)->toHaveCount(4);
 
-    // Cuota interés-only: cada una es monto × interés% × 7 días (periodo
-    // semanal fijo) / 30, capital completo hasta liquidar.
+    // Capital amortizado en 4 partes iguales (100 c/u); interés fijo en
+    // cada cuota, calculado sobre el monto_prestamo original completo (400)
+    // × 10% × 7 días / 30 -> 9.33 por cuota, 4 cuotas -> 37.32.
     $sumaCapital = number_format((float) $cuotas->sum('monto_capital'), 2, '.', '');
     $sumaInteres = number_format((float) $cuotas->sum('monto_interes'), 2, '.', '');
-    expect($sumaCapital)->toBe('0.00')
+    expect($sumaCapital)->toBe('400.00')
         ->and($sumaInteres)->toBe('37.32');
+});
+
+it('streams a freshly rendered cronograma PDF for a desembolsado crédito', function () {
+    Storage::fake('public');
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $creditoId = $this->postJson('/api/creditos-prendarios', [
+        'bien_ids' => [$this->bien->id],
+        'monto_prestamo' => 400, 'tipo_cuota' => 'semanal',
+    ])->assertCreated()->json('data.id');
+
+    aprobarYFirmarDocumentos($this, $creditoId);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar")->assertSuccessful();
+
+    $response = $this->get("/api/creditos-prendarios/{$creditoId}/cronograma/ver");
+
+    $response->assertSuccessful();
+    expect($response->headers->get('content-type'))->toContain('application/pdf');
 });
 
 it('allows an admin to override numero_cuotas and interes at desembolso time', function () {

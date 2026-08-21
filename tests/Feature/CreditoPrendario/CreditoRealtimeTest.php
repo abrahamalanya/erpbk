@@ -7,6 +7,7 @@ use App\Modules\CreditoPrendario\Events\CreditoPrendarioActualizado;
 use App\Modules\CreditoPrendario\Models\Bien;
 use App\Modules\CreditoPrendario\Models\ConfiguracionCreditoPrendario;
 use App\Modules\CreditoPrendario\Models\CreditoPrendario;
+use App\Modules\CreditoPrendario\Services\CreditoPrendarioService;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Usuario\Models\User;
@@ -105,7 +106,8 @@ it('broadcasts the new chained crédito to the asesor and controlling administra
     Event::fake([CreditoPrendarioActualizado::class]);
 
     Sanctum::actingAs($this->asesor, ['*']);
-    $response = $this->postJson("/api/creditos-prendarios/{$activo->id}/refrendar", ['monto_interes_pagado' => 50])
+    $sugerido = $this->getJson("/api/creditos-prendarios/{$activo->id}")->json('data.monto_refrendo_sugerido.total');
+    $response = $this->postJson("/api/creditos-prendarios/{$activo->id}/refrendar", ['monto_pagado' => $sugerido])
         ->assertCreated();
 
     $nuevoId = $response->json('data.id');
@@ -150,4 +152,39 @@ it('broadcasts to the asesor when a crédito aprobado is reverted back to pendie
     Event::assertDispatched(CreditoPrendarioActualizado::class, fn (CreditoPrendarioActualizado $event): bool => $event->credito->id === $creditoId
         && $event->credito->estado === 'pendiente'
         && $event->destinatarios->pluck('id')->contains($this->asesor->id));
+});
+
+it('broadcasts to the asesor and controlling administrador_agencia when actualizarEstadosVencidos transiciona activo a vencido', function () {
+    $activo = CreditoPrendario::factory()->paraBien($this->bien)
+        ->activo()
+        ->create([
+            'registrado_por' => $this->asesor->id, 'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id,
+            'fecha_vencimiento' => now()->subDay()->toDateString(),
+        ]);
+
+    Event::fake([CreditoPrendarioActualizado::class]);
+
+    app(CreditoPrendarioService::class)->actualizarEstadosVencidos();
+
+    Event::assertDispatched(CreditoPrendarioActualizado::class, fn (CreditoPrendarioActualizado $event): bool => $event->credito->id === $activo->id
+        && $event->credito->estado === 'vencido'
+        && $event->destinatarios->pluck('id')->contains($this->asesor->id)
+        && $event->destinatarios->pluck('id')->contains($this->adminAgencia->id));
+});
+
+it('broadcasts to the asesor and controlling administrador_agencia when actualizarEstadosVencidos transiciona vencido a en_venta', function () {
+    $vencido = CreditoPrendario::factory()->paraBien($this->bien)
+        ->vencido(diasVencido: 20)
+        ->create(['registrado_por' => $this->asesor->id, 'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id]);
+
+    Event::fake([CreditoPrendarioActualizado::class]);
+
+    app(CreditoPrendarioService::class)->actualizarEstadosVencidos();
+
+    Event::assertDispatched(CreditoPrendarioActualizado::class, fn (CreditoPrendarioActualizado $event): bool => $event->credito->id === $vencido->id
+        && $event->credito->estado === 'en_venta'
+        && $event->destinatarios->pluck('id')->contains($this->asesor->id)
+        && $event->destinatarios->pluck('id')->contains($this->adminAgencia->id));
+
+    expect($this->bien->fresh()->estado)->toBe('disponible_venta');
 });

@@ -23,7 +23,7 @@ class RefrendarCreditoRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'monto_interes_pagado' => ['required', 'numeric', 'min:0.01'],
+            'monto_pagado' => ['required', 'numeric', 'min:0.01'],
         ];
     }
 
@@ -35,8 +35,8 @@ class RefrendarCreditoRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'monto_interes_pagado.required' => 'El monto de interés pagado es requerido',
-            'monto_interes_pagado.min' => 'El monto de interés pagado debe ser mayor a cero',
+            'monto_pagado.required' => 'El monto pagado es requerido',
+            'monto_pagado.min' => 'El monto pagado debe ser mayor a cero',
         ];
     }
 }

@@ -13,11 +13,19 @@ use App\Modules\Sistemas\Http\Controllers\AuthController;
 use App\Modules\Sistemas\Http\Controllers\NotificacionController;
 use App\Modules\Sistemas\Http\Controllers\PermissionController;
 use App\Modules\Sistemas\Http\Controllers\RoleController;
+use App\Modules\Tienda\Http\Controllers\TiendaController;
 use App\Modules\Usuario\Http\Controllers\UserController;
 use Illuminate\Support\Facades\Route;
 
 // ===== AUTH ROUTES (públicas) =====
 Route::post('/auth/login', [AuthController::class, 'login']);
+
+// ===== TIENDA VIRTUAL (públicas, sin auth) =====
+Route::prefix('tienda')->group(function () {
+    Route::get('bienes', [TiendaController::class, 'index'])->name('tienda.bienes.index');
+    Route::get('bienes/{bien}', [TiendaController::class, 'show'])->name('tienda.bienes.show');
+    Route::post('bienes/{bien}/interes', [TiendaController::class, 'interes'])->name('tienda.bienes.interes');
+});
 
 // ===== PROTECTED ROUTES (requieren autenticación) =====
 Route::middleware('auth:sanctum')->group(function () {
@@ -67,6 +75,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('creditos-prendarios/{credito}/liquidar', [CreditoPrendarioController::class, 'liquidar'])->name('creditos-prendarios.liquidar');
     Route::post('creditos-prendarios/{credito}/actualizar-interes', [CreditoPrendarioController::class, 'actualizarInteres'])->name('creditos-prendarios.actualizar-interes');
     Route::post('creditos-prendarios/{credito}/revertir-aprobacion', [CreditoPrendarioController::class, 'revertirAprobacion'])->name('creditos-prendarios.revertir-aprobacion');
+    Route::post('creditos-prendarios/{credito}/enviar-tienda', [CreditoPrendarioController::class, 'enviarATienda'])->name('creditos-prendarios.enviar-tienda');
+    Route::get('creditos-prendarios/{credito}/cronograma/ver', [CreditoPrendarioController::class, 'verCronograma'])->name('creditos-prendarios.cronograma.ver');
     Route::get('creditos-prendarios/{credito}/documentos/{documento}/ver', [CreditoPrendarioController::class, 'verDocumento'])->name('creditos-prendarios.documentos.ver');
     Route::post('creditos-prendarios/{credito}/documentos/{documento}/marcar-impreso', [CreditoPrendarioController::class, 'marcarImpreso'])->name('creditos-prendarios.documentos.marcar-impreso');
     Route::post('creditos-prendarios/{credito}/documentos/{documento}/subir-firmado', [CreditoPrendarioController::class, 'subirDocumentoFirmado'])->name('creditos-prendarios.documentos.subir-firmado');

@@ -35,10 +35,17 @@ class CreditoPrendarioController extends Controller
     {
         Gate::authorize('viewAny', CreditoPrendario::class);
 
-        $query = CreditoPrendario::query()->with(['bienes', 'cliente', 'registradoPor']);
+        $query = CreditoPrendario::query()->with(['bienes', 'cliente', 'registradoPor', 'agencia']);
         $query = $this->hierarchy->visibleQuery($query, request()->user());
 
-        return $this->successResponse($query->latest()->paginate(15));
+        $creditos = $query->latest()->paginate(15);
+        $creditos->getCollection()->each(function (CreditoPrendario $credito): void {
+            if ($credito->estado === 'vencido') {
+                $credito->setAttribute('puede_enviar_tienda', $this->creditoService->superaEsperaMora($credito));
+            }
+        });
+
+        return $this->successResponse($creditos);
     }
 
     public function store(StoreCreditoPrendarioRequest $request): JsonResponse
@@ -66,6 +73,11 @@ class CreditoPrendarioController extends Controller
 
         if (in_array($credito->estado, ['activo', 'vencido'], true)) {
             $credito->setAttribute('monto_liquidacion_sugerido', $this->creditoService->calcularMontoLiquidacion($credito));
+            $credito->setAttribute('monto_refrendo_sugerido', $this->creditoService->calcularMontoRefrendo($credito));
+        }
+
+        if ($credito->estado === 'vencido') {
+            $credito->setAttribute('puede_enviar_tienda', $this->creditoService->superaEsperaMora($credito));
         }
 
         return $this->successResponse($credito);
@@ -122,7 +134,7 @@ class CreditoPrendarioController extends Controller
     {
         Gate::authorize('refrendar', $credito);
 
-        $nuevo = $this->creditoService->refrendar($credito, $request->user(), (string) $request->validated('monto_interes_pagado'));
+        $nuevo = $this->creditoService->refrendar($credito, $request->user(), (string) $request->validated('monto_pagado'));
 
         return $this->successResponse($nuevo, 'Crédito refrendado', 201);
     }
@@ -154,6 +166,15 @@ class CreditoPrendarioController extends Controller
         return $this->successResponse($credito, 'Aprobación revertida, el crédito vuelve a pendiente');
     }
 
+    public function enviarATienda(CreditoPrendario $credito): JsonResponse
+    {
+        Gate::authorize('enviarATienda', $credito);
+
+        $credito = $this->creditoService->enviarATienda($credito, request()->user());
+
+        return $this->successResponse($credito, 'Crédito enviado a la tienda');
+    }
+
     public function verDocumento(CreditoPrendario $credito, DocumentoCreditoPrendario $documento): Response
     {
         Gate::authorize('view', $credito);
@@ -161,6 +182,13 @@ class CreditoPrendarioController extends Controller
         abort_unless($documento->credito_id === $credito->id, 404);
 
         return $this->documentoService->renderizar($documento);
+    }
+
+    public function verCronograma(CreditoPrendario $credito): Response
+    {
+        Gate::authorize('view', $credito);
+
+        return $this->documentoService->renderizarCronograma($credito);
     }
 
     public function marcarImpreso(CreditoPrendario $credito, DocumentoCreditoPrendario $documento): JsonResponse

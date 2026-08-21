@@ -140,11 +140,11 @@ it('activates the crédito once desembolsado, setting fecha_desembolso, fecha_ve
         ->documentos()->whereNull('firmado_at')->count();
     expect($pendientesDeFirma)->toBe(0);
 
-    // mensual -> 1 cuota (tabla fija); interés-only, capital completo hasta liquidar
+    // mensual -> 1 cuota (tabla fija); capital amortizado + interés sobre saldo insoluto
     $cuotas = CreditoPrendario::find($creditoId)->cuotas;
     expect($cuotas)->toHaveCount(1)
-        ->and((string) $cuotas->first()->monto_capital)->toBe('0.00')
-        ->and((string) $cuotas->first()->monto_total)->toBe('50.00');
+        ->and((string) $cuotas->first()->monto_capital)->toBe('500.00')
+        ->and((string) $cuotas->first()->monto_total)->toBe('550.00');
 });
 
 it('rejects desembolsar when the crédito is not yet aprobado', function () {

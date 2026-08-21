@@ -12,9 +12,14 @@ use App\Modules\CreditoPrendario\Models\CuotaCreditoPrendario;
 use App\Modules\CreditoPrendario\Notifications\CreditoAprobacionRevertidaNotification;
 use App\Modules\CreditoPrendario\Notifications\CreditoAprobadoNotification;
 use App\Modules\CreditoPrendario\Notifications\CreditoDesembolsadoNotification;
+use App\Modules\CreditoPrendario\Notifications\CreditoEnVentaNotification;
+use App\Modules\CreditoPrendario\Notifications\CreditoInteresActualizadoNotification;
+use App\Modules\CreditoPrendario\Notifications\CreditoLiquidadoNotification;
 use App\Modules\CreditoPrendario\Notifications\CreditoRechazadoNotification;
+use App\Modules\CreditoPrendario\Notifications\CreditoRefrendadoNotification;
 use App\Modules\CreditoPrendario\Notifications\CreditoSolicitadoNotification;
 use App\Modules\CreditoPrendario\Notifications\CreditoSubsanadoNotification;
+use App\Modules\CreditoPrendario\Notifications\CreditoVencidoNotification;
 use App\Modules\Sistemas\Services\NotificacionService;
 use App\Modules\Usuario\Models\User;
 use DomainException;
@@ -234,6 +239,7 @@ final class CreditoPrendarioService
 
         $credito = $credito->fresh();
         $this->notificar($credito);
+        $this->notificaciones->enviar(collect([$credito->registradoPor]), new CreditoInteresActualizadoNotification($credito));
 
         return $credito;
     }
@@ -311,42 +317,70 @@ final class CreditoPrendarioService
     }
 
     /**
-     * Each cuota is an independent interest-only charge for one full
-     * period of the crédito's tipo_cuota — capital stays whole until the
-     * crédito is liquidado (same shape as refrendar(): pay interest, keep
-     * the pledge). The formula mirrors calcularMontoLiquidacion() exactly,
-     * evaluated at a fixed period length instead of días transcurridos, so
-     * `interes` stays a single monthly-basis rate with no config changes
-     * needed — a semanal/diario/quincenal cuota is just that same rate
-     * prorated to a shorter period.
+     * Amortiza el capital en partes iguales entre las n cuotas (la última
+     * absorbe el residuo de redondeo, para que la suma cuadre exacto con
+     * monto_prestamo). El interés de cada cuota se calcula sobre el
+     * monto_prestamo ORIGINAL completo, no sobre saldo insoluto — mismo
+     * monto de interés en cada cuota independientemente de cuánto capital
+     * ya amortizaron las cuotas anteriores (confirmado explícitamente con
+     * el usuario). Mismo formato de tasa mensual prorateada que
+     * calcularMontoLiquidacion(), evaluado a un período fijo en vez de días
+     * transcurridos.
      */
     private function generarCronograma(CreditoPrendario $credito, int $n, int $diasPorCuota): void
     {
+        $capitalPorCuota = bcdiv((string) $credito->monto_prestamo, (string) $n, 2);
+        $saldoCapital = (string) $credito->monto_prestamo;
+
         $factor = bcmul((string) $credito->monto_prestamo, (string) $credito->interes, 10);
-        $interesPorCuota = bcdiv(bcmul($factor, (string) $diasPorCuota, 10), '3000', 2);
+        $interesCuota = bcdiv(bcmul($factor, (string) $diasPorCuota, 10), '3000', 2);
 
         for ($i = 1; $i <= $n; $i++) {
+            $capitalCuota = $i === $n ? $saldoCapital : $capitalPorCuota;
+
             CuotaCreditoPrendario::query()->create([
                 'credito_id' => $credito->id,
                 'empresa_id' => $credito->empresa_id,
                 'numero_cuota' => $i,
                 'fecha_vencimiento' => $credito->fecha_desembolso->copy()->addDays($diasPorCuota * $i),
-                'monto_capital' => '0.00',
-                'monto_interes' => $interesPorCuota,
-                'monto_total' => $interesPorCuota,
+                'monto_capital' => $capitalCuota,
+                'monto_interes' => $interesCuota,
+                'monto_total' => bcadd($capitalCuota, $interesCuota, 2),
             ]);
+
+            $saldoCapital = bcsub($saldoCapital, $capitalCuota, 2);
         }
     }
 
-    public function refrendar(CreditoPrendario $credito, User $actor, string $montoInteresPagado): CreditoPrendario
+    /**
+     * Cierra el crédito actual y genera un sucesor encadenado — cubre tanto
+     * el "Refrendar" puro (paga exactamente el interés, el capital pasa
+     * intacto) como un abono a capital (paga interés + una parte del
+     * capital, confirmado con el usuario vía un ejemplo: crédito 1000 +
+     * interés 200, paga 300 -> sucesor con capital 900). Ambos son la misma
+     * operación: el excedente sobre el interés siempre abona a capital, que
+     * es cero en el caso de un refrendo puro. Pagar el total completo no
+     * está permitido aquí — eso es Liquidar.
+     */
+    public function refrendar(CreditoPrendario $credito, User $actor, string $montoPagado): CreditoPrendario
     {
         if (! in_array($credito->estado, ['activo', 'vencido'], true)) {
             throw new DomainException('Solo se puede refrendar un crédito activo o vencido.');
         }
 
-        if (bccomp($montoInteresPagado, '0', 2) <= 0) {
-            throw new DomainException('El monto de interés pagado debe ser mayor a cero.');
+        $interes = $this->calcularMontoRefrendo($credito)['interes'];
+        $total = bcadd((string) $credito->monto_prestamo, $interes, 2);
+
+        if (bccomp($montoPagado, $interes, 2) < 0) {
+            throw new DomainException("El monto pagado ({$montoPagado}) es menor al interés a refrendar calculado ({$interes}).");
         }
+
+        if (bccomp($montoPagado, $total, 2) >= 0) {
+            throw new DomainException("El monto pagado ({$montoPagado}) cubre el total del crédito ({$total}); selecciona Liquidar para cancelarlo.");
+        }
+
+        $abonoCapital = bcsub($montoPagado, $interes, 2);
+        $nuevoCapital = bcsub((string) $credito->monto_prestamo, $abonoCapital, 2);
 
         $configuracion = $this->configuracion->resolverPara($credito->agencia);
         $siguienteNumero = $credito->numero_refrendo + 1;
@@ -355,8 +389,12 @@ final class CreditoPrendarioService
             throw new DomainException("Este crédito ya alcanzó el máximo de {$configuracion->max_refrendos} refrendos permitidos; debe liquidarse el capital.");
         }
 
-        return DB::transaction(function () use ($credito, $actor, $siguienteNumero, $configuracion): CreditoPrendario {
+        return DB::transaction(function () use ($credito, $actor, $siguienteNumero, $nuevoCapital): CreditoPrendario {
             $credito->update(['estado' => 'refrendado']);
+
+            $n = self::CUOTAS_POR_TIPO[$credito->tipo_cuota];
+            $diasPorCuota = self::DIAS_POR_PERIODO[$credito->tipo_cuota];
+            $plazoTotal = $diasPorCuota * $n;
 
             $fechaDesembolso = now()->startOfDay();
 
@@ -367,13 +405,13 @@ final class CreditoPrendarioService
                 'registrado_por' => $actor->id,
                 'refrendo_de_credito_id' => $credito->id,
                 'numero_refrendo' => $siguienteNumero,
-                'monto_prestamo' => $credito->monto_prestamo,
+                'monto_prestamo' => $nuevoCapital,
                 'interes' => $credito->interes,
                 'tipo_cuota' => $credito->tipo_cuota,
-                'plazo_dias' => $configuracion->plazo_dias,
+                'plazo_dias' => $plazoTotal,
                 'estado' => 'activo',
                 'fecha_desembolso' => $fechaDesembolso->toDateString(),
-                'fecha_vencimiento' => $fechaDesembolso->copy()->addDays($configuracion->plazo_dias)->toDateString(),
+                'fecha_vencimiento' => $fechaDesembolso->copy()->addDays($plazoTotal)->toDateString(),
             ]);
 
             $nuevo->bienes()->attach($credito->bienes->pluck('id'));
@@ -381,7 +419,9 @@ final class CreditoPrendarioService
             $this->documentos->generarAdenda($nuevo, $actor);
 
             $nuevo = $nuevo->fresh(['bienes']);
+            $this->generarCronograma($nuevo, $n, $diasPorCuota);
             $this->notificar($nuevo);
+            $this->notificaciones->enviar(collect([$nuevo->registradoPor]), new CreditoRefrendadoNotification($nuevo));
 
             return $nuevo;
         });
@@ -405,22 +445,25 @@ final class CreditoPrendarioService
 
             $credito = $credito->fresh(['bienes']);
             $this->notificar($credito);
+            $this->notificaciones->enviar(collect([$credito->registradoPor]), new CreditoLiquidadoNotification($credito));
 
             return $credito;
         });
     }
 
     /**
-     * Interest owed to liquidar today: prorated by days elapsed since
-     * fecha_desembolso, with a configurable minimum floor (so paying off
-     * early still charges at least N days of interest) — confirmed with the
-     * user via a worked example: monto_prestamo=1000, interés=20% mensual,
-     * mínimo=15 días; canceling at day 5 still charges as if 15 days passed,
-     * canceling at day 17 charges for the actual 17.
+     * Interest owed today: prorated by days elapsed since fecha_desembolso,
+     * with a configurable minimum floor (so closing out early still charges
+     * at least N days of interest) — confirmed with the user via a worked
+     * example: monto_prestamo=1000, interés=20% mensual, mínimo=15 días;
+     * canceling at day 5 still charges as if 15 days passed, canceling at
+     * day 17 charges for the actual 17. Shared by calcularMontoLiquidacion()
+     * (capital + this interest) and calcularMontoRefrendo() (this interest
+     * alone — refrendar keeps the capital outstanding).
      *
-     * @return array{capital: string, interes: string, total: string, dias_transcurridos: int, dias_minimo: int, dias_cobrados: int, tasa_interes: string}
+     * @return array{interes: string, dias_transcurridos: int, dias_minimo: int, dias_cobrados: int, tasa_interes: string}
      */
-    public function calcularMontoLiquidacion(CreditoPrendario $credito): array
+    private function calcularInteresProrateado(CreditoPrendario $credito): array
     {
         $configuracion = $this->configuracion->resolverPara($credito->agencia);
 
@@ -434,9 +477,7 @@ final class CreditoPrendarioService
         $interes = bcdiv($factor, '3000', 2); // /100 (%) /30 (días del mes)
 
         return [
-            'capital' => (string) $credito->monto_prestamo,
             'interes' => $interes,
-            'total' => bcadd((string) $credito->monto_prestamo, $interes, 2),
             'dias_transcurridos' => $diasTranscurridos,
             'dias_minimo' => $configuracion->dias_minimo_interes,
             'dias_cobrados' => $diasCobrables,
@@ -445,8 +486,50 @@ final class CreditoPrendarioService
     }
 
     /**
+     * @return array{capital: string, interes: string, total: string, dias_transcurridos: int, dias_minimo: int, dias_cobrados: int, tasa_interes: string}
+     */
+    public function calcularMontoLiquidacion(CreditoPrendario $credito): array
+    {
+        $prorateo = $this->calcularInteresProrateado($credito);
+
+        return [
+            'capital' => (string) $credito->monto_prestamo,
+            'interes' => $prorateo['interes'],
+            'total' => bcadd((string) $credito->monto_prestamo, $prorateo['interes'], 2),
+            'dias_transcurridos' => $prorateo['dias_transcurridos'],
+            'dias_minimo' => $prorateo['dias_minimo'],
+            'dias_cobrados' => $prorateo['dias_cobrados'],
+            'tasa_interes' => $prorateo['tasa_interes'],
+        ];
+    }
+
+    /**
+     * Total a pagar al refrendar: solo el interés prorateado (el capital
+     * sigue de pie, a diferencia de liquidar) — mismo cálculo, sin el
+     * capital sumado.
+     *
+     * @return array{interes: string, total: string, dias_transcurridos: int, dias_minimo: int, dias_cobrados: int, tasa_interes: string}
+     */
+    public function calcularMontoRefrendo(CreditoPrendario $credito): array
+    {
+        $prorateo = $this->calcularInteresProrateado($credito);
+
+        return [
+            'interes' => $prorateo['interes'],
+            'total' => $prorateo['interes'],
+            'dias_transcurridos' => $prorateo['dias_transcurridos'],
+            'dias_minimo' => $prorateo['dias_minimo'],
+            'dias_cobrados' => $prorateo['dias_cobrados'],
+            'tasa_interes' => $prorateo['tasa_interes'],
+        ];
+    }
+
+    /**
      * Daily state transitions: activo -> vencido once fecha_vencimiento passes,
-     * vencido -> en_venta once the configured días de espera also pass.
+     * vencido -> en_venta once the configured días de espera also pass. Each
+     * transitioned crédito is broadcast/notificado individually (same as
+     * every user-triggered transition) so an open module reflects it live
+     * instead of only on next reload.
      */
     public function actualizarEstadosVencidos(): void
     {
@@ -455,21 +538,79 @@ final class CreditoPrendarioService
         CreditoPrendario::query()
             ->where('estado', 'activo')
             ->whereDate('fecha_vencimiento', '<', $hoy)
-            ->update(['estado' => 'vencido']);
+            ->get()
+            ->each(function (CreditoPrendario $credito): void {
+                $credito->update(['estado' => 'vencido']);
+
+                $credito = $credito->fresh();
+                $this->notificar($credito);
+                $this->notificaciones->enviar($this->hierarchy->controladoresDe($credito)->push($credito->registradoPor), new CreditoVencidoNotification($credito));
+            });
 
         CreditoPrendario::query()
             ->where('estado', 'vencido')
             ->with(['bienes', 'agencia'])
             ->get()
             ->each(function (CreditoPrendario $credito) use ($hoy): void {
-                $configuracion = $this->configuracion->resolverPara($credito->agencia);
-                $fechaLimite = $credito->fecha_vencimiento->copy()->addDays($configuracion->dias_espera_mora)->toDateString();
-
-                if ($fechaLimite < $hoy) {
-                    $credito->update(['estado' => 'en_venta']);
-                    Bien::query()->whereIn('id', $credito->bienes->pluck('id'))->update(['estado' => 'disponible_venta']);
+                if ($this->fechaLimiteEspera($credito) < $hoy) {
+                    $this->transicionarAEnVenta($credito);
                 }
             });
+    }
+
+    /**
+     * Manual counterpart to the daily vencido -> en_venta transition
+     * actualizarEstadosVencidos() does in batch — lets an admin send a
+     * specific crédito to the tienda as soon as it's past the período de
+     * espera, without waiting for the next scheduled run.
+     */
+    public function enviarATienda(CreditoPrendario $credito, User $actor): CreditoPrendario
+    {
+        $this->asegurarEstado($credito, 'vencido');
+
+        $configuracion = $this->configuracion->resolverPara($credito->agencia);
+
+        if ($this->fechaLimiteEspera($credito) >= now()->startOfDay()->toDateString()) {
+            throw new DomainException("Este crédito aún no supera los {$configuracion->dias_espera_mora} días de espera configurados.");
+        }
+
+        return DB::transaction(fn (): CreditoPrendario => $this->transicionarAEnVenta($credito));
+    }
+
+    /**
+     * Whether a vencido crédito is eligible for enviarATienda() right now —
+     * exposed on index()/show() as `puede_enviar_tienda` so the frontend
+     * doesn't have to re-derive the días de espera business rule itself
+     * (which would need it to separately resolve the right
+     * ConfiguracionCreditoPrendario row, agencia override vs empresa
+     * default).
+     */
+    public function superaEsperaMora(CreditoPrendario $credito): bool
+    {
+        if ($credito->estado !== 'vencido') {
+            return false;
+        }
+
+        return $this->fechaLimiteEspera($credito) < now()->startOfDay()->toDateString();
+    }
+
+    private function fechaLimiteEspera(CreditoPrendario $credito): string
+    {
+        $configuracion = $this->configuracion->resolverPara($credito->agencia);
+
+        return $credito->fecha_vencimiento->copy()->addDays($configuracion->dias_espera_mora)->toDateString();
+    }
+
+    private function transicionarAEnVenta(CreditoPrendario $credito): CreditoPrendario
+    {
+        $credito->update(['estado' => 'en_venta']);
+        Bien::query()->whereIn('id', $credito->bienes->pluck('id'))->update(['estado' => 'disponible_venta']);
+
+        $credito = $credito->fresh();
+        $this->notificar($credito);
+        $this->notificaciones->enviar($this->hierarchy->controladoresDe($credito)->push($credito->registradoPor), new CreditoEnVentaNotification($credito));
+
+        return $credito;
     }
 
     public function calcularMora(CreditoPrendario $credito): string

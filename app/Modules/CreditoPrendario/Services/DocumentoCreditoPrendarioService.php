@@ -52,6 +52,18 @@ final class DocumentoCreditoPrendarioService
         return $this->pdfGenerator->renderizarDesdeVista($vista, ['credito' => $credito]);
     }
 
+    /**
+     * The cronograma isn't a DocumentoCreditoPrendario (no print/sign
+     * lifecycle to track) — rendered straight from the crédito's cuotas,
+     * same never-persisted pattern as renderizar().
+     */
+    public function renderizarCronograma(CreditoPrendario $credito): Response
+    {
+        $credito->load(['cuotas', 'cliente', 'agencia', 'empresa']);
+
+        return $this->pdfGenerator->renderizarDesdeVista('modules.credito-prendario.documentos.cronograma', ['credito' => $credito]);
+    }
+
     public function marcarImpreso(DocumentoCreditoPrendario $documento): DocumentoCreditoPrendario
     {
         $documento->update(['impreso_at' => now()]);

@@ -166,6 +166,59 @@ it('notifies the registering asesor when an admin desembolsa their crédito', fu
         && str_contains($event->notificacion->data['mensaje'], 'desembolsado'));
 });
 
+it('notifies the registering asesor when an admin edits the interest rate', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+    $creditoId = $this->postJson('/api/creditos-prendarios', [
+        'bien_ids' => [$this->bien->id],
+        'monto_prestamo' => 500, 'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+
+    Event::fake([NotificacionCreada::class]);
+
+    Sanctum::actingAs($this->adminAgencia, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/actualizar-interes", ['interes' => 5])
+        ->assertSuccessful();
+
+    Event::assertDispatched(NotificacionCreada::class, fn (NotificacionCreada $event): bool => $event->destinatario->id === $this->asesor->id
+        && $event->notificacion->data['url'] === '/creditos-prendarios'
+        && str_contains($event->notificacion->data['mensaje'], 'actualizada'));
+});
+
+it('notifies the registering asesor when their crédito is refrendado', function () {
+    $activo = CreditoPrendario::factory()->paraBien($this->bien)
+        ->activo()
+        ->create(['registrado_por' => $this->asesor->id, 'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id]);
+
+    Event::fake([NotificacionCreada::class]);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $sugerido = $this->getJson("/api/creditos-prendarios/{$activo->id}")->json('data.monto_refrendo_sugerido.total');
+    $response = $this->postJson("/api/creditos-prendarios/{$activo->id}/refrendar", ['monto_pagado' => $sugerido])
+        ->assertCreated();
+
+    $nuevoId = $response->json('data.id');
+
+    Event::assertDispatched(NotificacionCreada::class, fn (NotificacionCreada $event): bool => $event->destinatario->id === $this->asesor->id
+        && $event->notificacion->data['credito_id'] === $nuevoId
+        && str_contains($event->notificacion->data['mensaje'], 'refrendado'));
+});
+
+it('notifies the registering asesor when their crédito is liquidado', function () {
+    $activo = CreditoPrendario::factory()->paraBien($this->bien)
+        ->activo()
+        ->create(['registrado_por' => $this->asesor->id, 'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id]);
+
+    Event::fake([NotificacionCreada::class]);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$activo->id}/liquidar", ['monto_pagado' => 1000000])
+        ->assertSuccessful();
+
+    Event::assertDispatched(NotificacionCreada::class, fn (NotificacionCreada $event): bool => $event->destinatario->id === $this->asesor->id
+        && $event->notificacion->data['credito_id'] === $activo->id
+        && str_contains($event->notificacion->data['mensaje'], 'liquidado'));
+});
+
 it('broadcasts CajaActualizada for the actor desembolsando (not just the CreditoPrendarioActualizado event)', function () {
     Storage::fake('public');
 

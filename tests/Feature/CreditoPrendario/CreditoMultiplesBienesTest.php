@@ -132,7 +132,7 @@ it('carries the same set of bienes over to the new crédito on refrendo', functi
     Caja::query()->where('user_id', $this->asesor->id)->first()->cicloAbierto->update(['saldo_apertura' => 10000]);
     $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar")->assertSuccessful();
 
-    $response = $this->postJson("/api/creditos-prendarios/{$creditoId}/refrendar", ['monto_interes_pagado' => 50])
+    $response = $this->postJson("/api/creditos-prendarios/{$creditoId}/refrendar", ['monto_pagado' => 50])
         ->assertCreated();
 
     $bienesIds = collect($response->json('data.bienes'))->pluck('id')->sort()->values()->all();

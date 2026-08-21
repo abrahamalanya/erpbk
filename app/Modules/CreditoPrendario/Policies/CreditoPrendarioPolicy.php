@@ -90,4 +90,15 @@ class CreditoPrendarioPolicy
     {
         return $user->can('creditos_prendarios.revertir_aprobacion') && $this->hierarchy->puedeAprobar($user, $credito);
     }
+
+    /**
+     * Same admin-level authority as aprobar/rechazar/editar — deciding to
+     * escalate a vencido crédito to the public tienda early (once it's past
+     * the configured período de espera) is an admin call, not something the
+     * asesor who registered it triggers.
+     */
+    public function enviarATienda(User $user, CreditoPrendario $credito): bool
+    {
+        return $user->can('creditos_prendarios.enviar_tienda') && $this->hierarchy->puedeAprobar($user, $credito);
+    }
 }
