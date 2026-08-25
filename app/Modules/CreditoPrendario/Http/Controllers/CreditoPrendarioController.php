@@ -177,7 +177,7 @@ class CreditoPrendarioController extends Controller
 
     public function verDocumento(CreditoPrendario $credito, DocumentoCreditoPrendario $documento): Response
     {
-        Gate::authorize('view', $credito);
+        Gate::authorize('verDocumento', $credito);
 
         abort_unless($documento->credito_id === $credito->id, 404);
 

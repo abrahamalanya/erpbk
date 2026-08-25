@@ -23,10 +23,10 @@ class UserSeeder extends Seeder
 
         $sistema->assignRole('sistemas');
 
-        $principal = Empresa::where('nombre', 'Empresa Principal')->firstOrFail();
+        $principal = Empresa::where('nombre', 'CREDIMAS')->firstOrFail();
         $secundaria = Empresa::where('nombre', 'Empresa Secundaria')->firstOrFail();
 
-        // ===== Empresa Principal: nivel empresa =====
+        // ===== CREDIMAS: nivel empresa =====
         $this->createUser([
             'nombre' => 'Admin',
             'apellido' => 'Sistema',
@@ -41,19 +41,19 @@ class UserSeeder extends Seeder
             'empresa_id' => $principal->id,
         ], 'secretaria');
 
-        // ===== Empresa Principal: agencias =====
-        $agenciaLima = Agencia::where('nombre', 'Agencia Lima')->firstOrFail();
-        $this->seedAgencia($agenciaLima, 'Lima', [
+        // ===== CREDIMAS: agencias =====
+        $agenciaPucallpa = Agencia::where('nombre', 'Agencia Pucallpa')->firstOrFail();
+        $this->seedAgencia($agenciaPucallpa, 'Pucallpa', [
             'nombre' => 'Ejecutivo',
             'apellido' => 'Ventas',
             'email' => 'ejecutivo.abrahamalanya@laravel.com',
         ]);
 
-        $agenciaArequipa = Agencia::where('nombre', 'Agencia Arequipa')->firstOrFail();
-        $this->seedAgencia($agenciaArequipa, 'Arequipa');
+        $agenciaJuanjui = Agencia::where('nombre', 'Agencia Juanjui')->firstOrFail();
+        $this->seedAgencia($agenciaJuanjui, 'Juanjui');
 
-        $agenciaTrujillo = Agencia::where('nombre', 'Agencia Trujillo')->firstOrFail();
-        $this->seedAgencia($agenciaTrujillo, 'Trujillo');
+        $agenciaTocache = Agencia::where('nombre', 'Agencia Tocache')->firstOrFail();
+        $this->seedAgencia($agenciaTocache, 'Tocache');
 
         // ===== Empresa Secundaria =====
         $this->createUser([

@@ -79,7 +79,7 @@ class ClienteController extends Controller
     {
         Gate::authorize('update', $cliente);
 
-        $data = Arr::except($request->validated(), ['foto_cliente', 'foto_dni', 'foto_casa', 'foto_negocio']);
+        $data = Arr::except($request->validated(), ['foto_cliente', 'foto_dni', 'foto_dni_reverso', 'foto_casa', 'foto_negocio']);
         $cliente->update($data);
         $this->storePhotos($request, $cliente);
 
@@ -107,7 +107,7 @@ class ClienteController extends Controller
 
     private function storePhotos(StoreClienteRequest|UpdateClienteRequest $request, Cliente $cliente): void
     {
-        foreach (['foto_cliente', 'foto_dni', 'foto_casa', 'foto_negocio'] as $campo) {
+        foreach (['foto_cliente', 'foto_dni', 'foto_dni_reverso', 'foto_casa', 'foto_negocio'] as $campo) {
             if (! $request->hasFile($campo)) {
                 continue;
             }

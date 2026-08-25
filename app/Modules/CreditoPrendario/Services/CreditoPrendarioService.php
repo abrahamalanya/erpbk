@@ -123,6 +123,12 @@ final class CreditoPrendarioService
             $credito->bienes()->attach($bienIds);
             Bien::query()->whereIn('id', $bienIds)->update(['estado' => 'en_garantia']);
 
+            // Generated here (not at aprobar()) so the admin can already
+            // review the actual contrato/declaración while the crédito is
+            // still pendiente, instead of deciding blind on raw fields.
+            $this->documentos->generarContrato($credito, $actor);
+            $this->documentos->generarDeclaracion($credito, $actor);
+
             $credito = $credito->fresh(['bienes']);
             $this->notificar($credito);
             $this->notificaciones->enviar($this->hierarchy->controladoresDe($credito), new CreditoSolicitadoNotification($credito));
@@ -141,11 +147,6 @@ final class CreditoPrendarioService
                 'aprobado_por' => $aprobador->id,
                 'fecha_aprobacion' => now(),
             ]);
-
-            if ($credito->numero_refrendo === 0) {
-                $this->documentos->generarContrato($credito, $aprobador);
-                $this->documentos->generarDeclaracion($credito, $aprobador);
-            }
 
             $credito = $credito->fresh();
             $this->notificar($credito);

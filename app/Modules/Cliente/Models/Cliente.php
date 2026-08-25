@@ -37,6 +37,7 @@ class Cliente extends Model
         'referencia',
         'foto_cliente_path',
         'foto_dni_path',
+        'foto_dni_reverso_path',
         'foto_casa_path',
         'foto_negocio_path',
         'estado',
@@ -45,7 +46,7 @@ class Cliente extends Model
     /**
      * @var list<string>
      */
-    protected $appends = ['foto_cliente_url', 'foto_dni_url', 'foto_casa_url', 'foto_negocio_url'];
+    protected $appends = ['foto_cliente_url', 'foto_dni_url', 'foto_dni_reverso_url', 'foto_casa_url', 'foto_negocio_url'];
 
     public function empresa(): BelongsTo
     {
@@ -78,6 +79,13 @@ class Cliente extends Model
     {
         return Attribute::get(fn (): ?string => $this->foto_dni_path
             ? Storage::disk('public')->url($this->foto_dni_path)
+            : null);
+    }
+
+    protected function fotoDniReversoUrl(): Attribute
+    {
+        return Attribute::get(fn (): ?string => $this->foto_dni_reverso_path
+            ? Storage::disk('public')->url($this->foto_dni_reverso_path)
             : null);
     }
 

@@ -59,7 +59,19 @@ it('registers a crédito as pendiente with the config default interest', functio
         ->and($response->json('data.interes'))->toBe('10.00');
 });
 
-it('allows administrador_agencia to approve and generates contrato + declaracion', function () {
+it('generates contrato + declaracion as soon as the crédito is registered, before any approval', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+    $creditoId = $this->postJson('/api/creditos-prendarios', [
+        'bien_ids' => [$this->bien->id],
+        'monto_prestamo' => 500, 'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+
+    $tipos = CreditoPrendario::find($creditoId)
+        ->documentos()->pluck('tipo')->sort()->values()->all();
+    expect($tipos)->toBe(['contrato', 'declaracion']);
+});
+
+it('allows administrador_agencia to approve without generating duplicate documentos', function () {
     Sanctum::actingAs($this->asesor, ['*']);
     $creditoId = $this->postJson('/api/creditos-prendarios', [
         'bien_ids' => [$this->bien->id],

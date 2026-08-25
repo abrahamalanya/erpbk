@@ -12,7 +12,7 @@ class EmpresaSeeder extends Seeder
      */
     public function run(): void
     {
-        Empresa::create(['nombre' => 'Empresa Principal', 'estado' => 'activo']);
+        Empresa::create(['nombre' => 'CREDIMAS', 'estado' => 'activo']);
         Empresa::create(['nombre' => 'Empresa Secundaria', 'estado' => 'activo']);
     }
 }

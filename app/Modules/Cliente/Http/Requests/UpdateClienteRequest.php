@@ -37,10 +37,11 @@ class UpdateClienteRequest extends FormRequest
             'direccion' => ['nullable', 'string', 'max:255'],
             'referencia' => ['nullable', 'string', 'max:500'],
             'estado' => ['sometimes', Rule::in(['activo', 'inactivo'])],
-            'foto_cliente' => ['nullable', 'image', 'max:4096', 'mimes:jpg,jpeg,png'],
-            'foto_dni' => ['nullable', 'image', 'max:4096', 'mimes:jpg,jpeg,png'],
-            'foto_casa' => ['nullable', 'image', 'max:4096', 'mimes:jpg,jpeg,png'],
-            'foto_negocio' => ['nullable', 'image', 'max:4096', 'mimes:jpg,jpeg,png'],
+            'foto_cliente' => ['nullable', 'image', 'max:8192', 'mimes:jpg,jpeg,png'],
+            'foto_dni' => ['nullable', 'image', 'max:8192', 'mimes:jpg,jpeg,png'],
+            'foto_dni_reverso' => ['nullable', 'image', 'max:8192', 'mimes:jpg,jpeg,png'],
+            'foto_casa' => ['nullable', 'image', 'max:8192', 'mimes:jpg,jpeg,png'],
+            'foto_negocio' => ['nullable', 'image', 'max:8192', 'mimes:jpg,jpeg,png'],
         ];
     }
 

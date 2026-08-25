@@ -13,10 +13,10 @@ class AgenciaSeeder extends Seeder
      */
     public function run(): void
     {
-        $principal = Empresa::where('nombre', 'Empresa Principal')->firstOrFail();
+        $principal = Empresa::where('nombre', 'CREDIMAS')->firstOrFail();
         $secundaria = Empresa::where('nombre', 'Empresa Secundaria')->firstOrFail();
 
-        foreach (['Agencia Lima', 'Agencia Arequipa', 'Agencia Trujillo'] as $nombre) {
+        foreach (['Agencia Pucallpa', 'Agencia Juanjui', 'Agencia Tocache'] as $nombre) {
             Agencia::create([
                 'empresa_id' => $principal->id,
                 'nombre' => $nombre,

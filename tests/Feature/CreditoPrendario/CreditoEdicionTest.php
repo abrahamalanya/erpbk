@@ -209,6 +209,65 @@ it('streams a freshly rendered PDF for a generated documento, without persisting
     expect($response->headers->get('content-type'))->toContain('application/pdf');
 });
 
+it('denies the asesor from viewing documentos while the crédito is pendiente or rechazado', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+    $creditoId = $this->postJson('/api/creditos-prendarios', [
+        'bien_ids' => [$this->bien->id],
+        'monto_prestamo' => 500, 'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+
+    $documento = CreditoPrendario::find($creditoId)->documentos()->where('tipo', 'contrato')->firstOrFail();
+
+    $this->get("/api/creditos-prendarios/{$creditoId}/documentos/{$documento->id}/ver")
+        ->assertForbidden();
+
+    Sanctum::actingAs($this->adminAgencia, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/rechazar", ['motivo' => 'falta información'])
+        ->assertSuccessful();
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $this->get("/api/creditos-prendarios/{$creditoId}/documentos/{$documento->id}/ver")
+        ->assertForbidden();
+});
+
+it('allows the asesor to view documentos once aprobado, and revokes it again if the aprobación is reverted', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+    $creditoId = $this->postJson('/api/creditos-prendarios', [
+        'bien_ids' => [$this->bien->id],
+        'monto_prestamo' => 500, 'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+
+    $documento = CreditoPrendario::find($creditoId)->documentos()->where('tipo', 'contrato')->firstOrFail();
+
+    Sanctum::actingAs($this->adminAgencia, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/aprobar")->assertSuccessful();
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $this->get("/api/creditos-prendarios/{$creditoId}/documentos/{$documento->id}/ver")
+        ->assertSuccessful();
+
+    Sanctum::actingAs($this->adminAgencia, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/revertir-aprobacion")->assertSuccessful();
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $this->get("/api/creditos-prendarios/{$creditoId}/documentos/{$documento->id}/ver")
+        ->assertForbidden();
+});
+
+it('allows administrador_agencia to view documentos while the crédito is still pendiente', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+    $creditoId = $this->postJson('/api/creditos-prendarios', [
+        'bien_ids' => [$this->bien->id],
+        'monto_prestamo' => 500, 'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+
+    $documento = CreditoPrendario::find($creditoId)->documentos()->where('tipo', 'contrato')->firstOrFail();
+
+    Sanctum::actingAs($this->adminAgencia, ['*']);
+    $this->get("/api/creditos-prendarios/{$creditoId}/documentos/{$documento->id}/ver")
+        ->assertSuccessful();
+});
+
 it('returns 404 when the documento does not belong to the given crédito', function () {
     Sanctum::actingAs($this->asesor, ['*']);
     $bienOtroCredito = Bien::factory()->paraCliente($this->cliente)->create(['tipo' => 'electro', 'valorizacion' => 1000]);

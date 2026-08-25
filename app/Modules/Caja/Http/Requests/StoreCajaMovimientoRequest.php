@@ -27,7 +27,7 @@ class StoreCajaMovimientoRequest extends FormRequest
             'concepto_id' => ['required', 'integer', 'exists:conceptos,id'],
             'monto' => ['required', 'numeric', 'min:0.01'],
             'comprobante' => ['required_if:tipo,egreso', 'nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:8192'],
-            'fotos_adicionales' => ['sometimes', 'array'],
+            'fotos_adicionales' => ['sometimes', 'array', 'max:10'],
             'fotos_adicionales.*' => ['file', 'mimes:jpg,jpeg,png,webp', 'max:8192'],
         ];
     }
@@ -47,6 +47,7 @@ class StoreCajaMovimientoRequest extends FormRequest
             'monto.required' => 'El monto es requerido',
             'monto.min' => 'El monto debe ser mayor a cero',
             'comprobante.required_if' => 'El comprobante de pago es requerido para registrar un gasto',
+            'fotos_adicionales.max' => 'No puedes subir más de 10 fotos adicionales',
         ];
     }
 }

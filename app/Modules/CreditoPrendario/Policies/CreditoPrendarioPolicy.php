@@ -33,6 +33,24 @@ class CreditoPrendarioPolicy
         return $user->can('creditos_prendarios.crear');
     }
 
+    /**
+     * Same visibility as view(), but an asesor additionally can't open the
+     * generated contrato/declaración until an admin has aprobado the
+     * crédito — reviewing draft paperwork before approval isn't meant to
+     * feel final to the asesor. Purely state-based (not a one-time flag), so
+     * revertirAprobacion() sending it back to pendiente hides them again
+     * automatically. Every other role that can see the crédito (admins,
+     * supervisor) keeps seeing documentos regardless of estado.
+     */
+    public function verDocumento(User $user, CreditoPrendario $credito): bool
+    {
+        if (! $this->view($user, $credito)) {
+            return false;
+        }
+
+        return ! $user->hasRole('asesor') || ! in_array($credito->estado, ['pendiente', 'rechazado'], true);
+    }
+
     public function aprobar(User $user, CreditoPrendario $credito): bool
     {
         return $user->can('creditos_prendarios.aprobar') && $this->hierarchy->puedeAprobar($user, $credito);

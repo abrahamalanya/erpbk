@@ -20,13 +20,14 @@ beforeEach(function () {
     $this->peinadora->assignRole('peinadora');
 });
 
-it('stores the four cliente photos on creation', function () {
+it('stores the five cliente photos on creation', function () {
     Sanctum::actingAs($this->peinadora, ['*']);
 
     $response = $this->postJson('/api/clientes', [
         'nombre' => 'Juan', 'apellido' => 'Perez', 'tipo_documento' => 'dni', 'numero_documento' => '77777777',
         'foto_cliente' => UploadedFile::fake()->image('cliente.jpg'),
         'foto_dni' => UploadedFile::fake()->image('dni.jpg'),
+        'foto_dni_reverso' => UploadedFile::fake()->image('dni-reverso.jpg'),
         'foto_casa' => UploadedFile::fake()->image('casa.jpg'),
         'foto_negocio' => UploadedFile::fake()->image('negocio.jpg'),
     ])->assertCreated();
@@ -35,6 +36,7 @@ it('stores the four cliente photos on creation', function () {
 
     expect($cliente->foto_cliente_path)->not->toBeNull()
         ->and($cliente->foto_dni_path)->not->toBeNull()
+        ->and($cliente->foto_dni_reverso_path)->not->toBeNull()
         ->and($cliente->foto_casa_path)->not->toBeNull()
         ->and($cliente->foto_negocio_path)->not->toBeNull();
 

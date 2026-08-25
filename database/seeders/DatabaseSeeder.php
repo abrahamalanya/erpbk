@@ -20,7 +20,10 @@ class DatabaseSeeder extends Seeder
             BancoSeeder::class,
             EmpresaSeeder::class,
             AgenciaSeeder::class,
+            CuentaBancariaSeeder::class,
             UserSeeder::class,
+            ClienteSeeder::class,
+            BienSeeder::class,
         ]);
     }
 }

@@ -35,9 +35,9 @@ class StoreBienRequest extends FormRequest
             'observacion' => ['nullable', 'string', 'max:2000'],
             'valorizacion' => ['required', 'numeric', 'min:0'],
             'puntaje' => ['required', 'integer', 'min:1', 'max:10'],
-            'foto_cliente_producto' => ['nullable', 'image', 'max:4096', 'mimes:jpg,jpeg,png'],
-            'fotos' => ['nullable', 'array'],
-            'fotos.*' => ['image', 'max:4096', 'mimes:jpg,jpeg,png'],
+            'foto_cliente_producto' => ['nullable', 'image', 'max:8192', 'mimes:jpg,jpeg,png'],
+            'fotos' => ['nullable', 'array', 'max:10'],
+            'fotos.*' => ['image', 'max:8192', 'mimes:jpg,jpeg,png'],
             'video' => ['nullable', 'file', 'mimetypes:video/mp4,video/quicktime,video/x-msvideo,video/webm', 'max:51200'],
         ];
     }
@@ -96,6 +96,7 @@ class StoreBienRequest extends FormRequest
             'puntaje.max' => 'El puntaje debe estar entre 1 y 10',
             'video.mimetypes' => 'El video debe ser un archivo de video válido (mp4, mov, avi o webm)',
             'video.max' => 'El video no puede superar los 50MB',
+            'fotos.max' => 'No puedes subir más de 10 fotos',
         ];
     }
 }

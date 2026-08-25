@@ -48,10 +48,11 @@ class StoreClienteRequest extends FormRequest
                 Rule::requiredIf(fn (): bool => $actor->hasAnyRole(['administrador_general', 'secretaria', 'sistemas'])),
                 'nullable', 'integer', 'exists:agencias,id',
             ],
-            'foto_cliente' => ['nullable', 'image', 'max:4096', 'mimes:jpg,jpeg,png'],
-            'foto_dni' => ['nullable', 'image', 'max:4096', 'mimes:jpg,jpeg,png'],
-            'foto_casa' => ['nullable', 'image', 'max:4096', 'mimes:jpg,jpeg,png'],
-            'foto_negocio' => ['nullable', 'image', 'max:4096', 'mimes:jpg,jpeg,png'],
+            'foto_cliente' => ['nullable', 'image', 'max:8192', 'mimes:jpg,jpeg,png'],
+            'foto_dni' => ['nullable', 'image', 'max:8192', 'mimes:jpg,jpeg,png'],
+            'foto_dni_reverso' => ['nullable', 'image', 'max:8192', 'mimes:jpg,jpeg,png'],
+            'foto_casa' => ['nullable', 'image', 'max:8192', 'mimes:jpg,jpeg,png'],
+            'foto_negocio' => ['nullable', 'image', 'max:8192', 'mimes:jpg,jpeg,png'],
         ];
     }
 
@@ -93,6 +94,7 @@ class StoreClienteRequest extends FormRequest
             'agencia_id.required' => 'La agencia es requerida',
             'foto_cliente.image' => 'La foto del cliente debe ser una imagen',
             'foto_dni.image' => 'La foto del DNI debe ser una imagen',
+            'foto_dni_reverso.image' => 'La foto del reverso del DNI debe ser una imagen',
             'foto_casa.image' => 'La foto de la casa debe ser una imagen',
             'foto_negocio.image' => 'La foto del negocio debe ser una imagen',
         ];
