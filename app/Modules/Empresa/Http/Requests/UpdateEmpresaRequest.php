@@ -25,6 +25,13 @@ class UpdateEmpresaRequest extends FormRequest
     {
         return [
             'nombre' => ['sometimes', 'required', 'string', 'max:255'],
+            'ruc' => ['nullable', 'string', 'max:11'],
+            'razon_social' => ['nullable', 'string', 'max:255'],
+            'domicilio_legal' => ['nullable', 'string', 'max:255'],
+            'actividad_economica' => ['nullable', 'string', 'max:255'],
+            'representante_legal' => ['nullable', 'string', 'max:255'],
+            'logo' => ['nullable', 'image', 'max:8192', 'mimes:jpg,jpeg,png'],
+            'firma' => ['nullable', 'image', 'max:8192', 'mimes:jpg,jpeg,png'],
             'estado' => ['sometimes', Rule::in(['activo', 'inactivo'])],
         ];
     }

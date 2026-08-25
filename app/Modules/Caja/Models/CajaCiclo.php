@@ -27,6 +27,7 @@ class CajaCiclo extends Model
         'estado',
         'saldo_apertura',
         'saldo_calculado_cierre',
+        'saldo_efectivo_cierre',
         'saldo_arqueo_cierre',
         'diferencia',
         'cerrada_por',
@@ -47,6 +48,7 @@ class CajaCiclo extends Model
             'fecha' => 'date',
             'saldo_apertura' => 'decimal:2',
             'saldo_calculado_cierre' => 'decimal:2',
+            'saldo_efectivo_cierre' => 'decimal:2',
             'saldo_arqueo_cierre' => 'decimal:2',
             'diferencia' => 'decimal:2',
             'cierre_forzado' => 'boolean',
@@ -87,6 +89,38 @@ class CajaCiclo extends Model
         $egresos = (string) $this->movimientos()->where('tipo', 'egreso')->sum('monto');
 
         return bcadd($this->saldo_apertura, bcsub($ingresos, $egresos, 2), 2);
+    }
+
+    /**
+     * Physical-cash-only balance: same as saldoActual(), but ingresos/
+     * billetajes handed off digitally (yape/plin/transferencia — see
+     * BilletajeService::aprobarPorCuentaBancaria()) are excluded, since that
+     * money never became cash in the actor's hand. This is what the cierre
+     * screen compares monto_contado against; saldoActual() stays the "can I
+     * afford this" check for desembolsar/registrarMovimiento, since digital
+     * billetaje is still real money the actor has to work with, just not
+     * physical cash.
+     *
+     * Floored at zero: every disbursement/gasto this app models is recorded
+     * as a plain egreso with no medio of its own (it's always assumed to be
+     * a physical hand-off), so once digital billetaje funds more spending
+     * than the actor ever received in physical cash, the naive cash-only
+     * subtraction would go negative — nonsensical for "cash you should have
+     * on hand". Once egresos exceed cash-in, the excess is treated as having
+     * been paid out of the digital portion (already reflected correctly in
+     * saldoActual()); the physical-cash expectation simply bottoms out at 0.
+     */
+    public function saldoEfectivo(): string
+    {
+        $ingresos = (string) $this->movimientos()
+            ->whereIn('tipo', ['ingreso', 'billetaje'])
+            ->where('medio', 'efectivo')
+            ->sum('monto');
+        $egresos = (string) $this->movimientos()->where('tipo', 'egreso')->sum('monto');
+
+        $saldo = bcadd($this->saldo_apertura, bcsub($ingresos, $egresos, 2), 2);
+
+        return bccomp($saldo, '0', 2) < 0 ? '0.00' : $saldo;
     }
 
     protected static function newFactory(): CajaCicloFactory

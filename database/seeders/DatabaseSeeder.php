@@ -21,9 +21,12 @@ class DatabaseSeeder extends Seeder
             EmpresaSeeder::class,
             AgenciaSeeder::class,
             CuentaBancariaSeeder::class,
+            ConfiguracionCreditoPrendarioSeeder::class,
             UserSeeder::class,
+            BovedaSeeder::class,
             ClienteSeeder::class,
             BienSeeder::class,
+            CreditoPrendarioSeeder::class,
         ]);
     }
 }

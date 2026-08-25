@@ -11,6 +11,7 @@
         td.label { width: 35%; font-weight: bold; }
         .placeholder { color: #b00; font-style: italic; }
         .firma-linea { margin-top: 60px; border-top: 1px solid #000; width: 250px; text-align: center; padding-top: 4px; }
+        .firma-imagen { max-height: 50px; max-width: 160px; display: block; }
     </style>
 </head>
 <body>
@@ -42,7 +43,12 @@
     <table style="margin-top: 60px;">
         <tr>
             <td style="width: 50%;"><div class="firma-linea">Firma del cliente</div></td>
-            <td style="width: 50%;"><div class="firma-linea">Firma por {{ $credito->empresa->nombre }}</div></td>
+            <td style="width: 50%;">
+                @if ($credito->empresa->firma_path)
+                    <img class="firma-imagen" src="{{ $fotoDataUri($credito->empresa->firma_path, 400) }}">
+                @endif
+                <div class="firma-linea">Firma por {{ $credito->empresa->nombre }}</div>
+            </td>
         </tr>
     </table>
 </body>

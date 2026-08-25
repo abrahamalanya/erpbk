@@ -18,7 +18,10 @@ return new class extends Migration
 
             $table->string('tipo');
             $table->decimal('monto', 12, 2);
+            $table->string('medio')->default('efectivo');
+            $table->string('canal')->nullable();
             $table->string('concepto')->nullable();
+            $table->text('descripcion')->nullable();
 
             $table->foreignId('billetaje_id')->nullable()->constrained()->nullOnDelete();
             $table->foreignId('registrado_por')->nullable()->constrained('users')->nullOnDelete();

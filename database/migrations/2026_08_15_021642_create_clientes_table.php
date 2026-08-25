@@ -28,6 +28,7 @@ return new class extends Migration
 
             $table->string('foto_cliente_path')->nullable();
             $table->string('foto_dni_path')->nullable();
+            $table->string('foto_dni_reverso_path')->nullable();
             $table->string('foto_casa_path')->nullable();
             $table->string('foto_negocio_path')->nullable();
 

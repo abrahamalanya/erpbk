@@ -138,10 +138,13 @@ final class BilletajeService
 
     /**
      * Bank path (yape/plin/transferencia/depósito): the money never becomes
-     * physical cash, so it only moves through the cuenta bancaria's own
-     * ledger — no CajaMovimiento/BovedaMovimiento is created here, otherwise
-     * the caja's cierre would count cash that was never physically handed
-     * over.
+     * physical cash, so the bóveda side only moves through the cuenta
+     * bancaria's own ledger (no BovedaMovimiento). It DOES still land in the
+     * actor's caja as a 'billetaje' CajaMovimiento tagged medio=cuenta_bancaria
+     * — it's real money they now have to work with (can fund a desembolso,
+     * etc. — see CajaCiclo::saldoActual()) — but CajaCiclo::saldoEfectivo()
+     * excludes it, so the cierre screen's monto_contado comparison isn't
+     * thrown off by cash that was never physically handed over.
      */
     private function aprobarPorCuentaBancaria(Billetaje $billetaje, User $aprobador, ?string $canalEgreso, ?int $cuentaBancariaId): void
     {
@@ -171,6 +174,23 @@ final class BilletajeService
             'Billetaje entregado por '.$canalEgreso,
             'billetaje',
         );
+
+        $ciclo = $billetaje->cajaCiclo;
+
+        CajaMovimiento::query()->create([
+            'caja_ciclo_id' => $ciclo->id,
+            'empresa_id' => $billetaje->empresa_id,
+            'tipo' => 'billetaje',
+            'medio' => 'cuenta_bancaria',
+            'canal' => $canalEgreso,
+            'monto' => $billetaje->monto,
+            'concepto' => 'Billetaje aprobado por '.$canalEgreso,
+            'billetaje_id' => $billetaje->id,
+            'registrado_por' => $aprobador->id,
+            'fecha_caja' => $ciclo->fecha,
+        ]);
+
+        CajaActualizada::dispatch($ciclo->caja, $ciclo->fresh()->saldoActual());
     }
 
     public function rechazar(Billetaje $billetaje, User $aprobador, ?string $motivo = null): Billetaje

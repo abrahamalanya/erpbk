@@ -9,6 +9,7 @@ use App\Nucleo\Http\Controllers\Controller;
 use App\Nucleo\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Storage;
 
 class EmpresaController extends Controller
 {
@@ -25,9 +26,12 @@ class EmpresaController extends Controller
     {
         Gate::authorize('create', Empresa::class);
 
-        $empresa = Empresa::query()->create($request->validated());
+        $data = $request->safe()->except(['logo', 'firma']);
+        $empresa = Empresa::query()->create($data);
 
-        return $this->successResponse($empresa, 'Empresa creada', 201);
+        $this->storeImagenes($request, $empresa);
+
+        return $this->successResponse($empresa->fresh(), 'Empresa creada', 201);
     }
 
     public function show(Empresa $empresa): JsonResponse
@@ -41,9 +45,12 @@ class EmpresaController extends Controller
     {
         Gate::authorize('update', $empresa);
 
-        $empresa->update($request->validated());
+        $data = $request->safe()->except(['logo', 'firma']);
+        $empresa->update($data);
 
-        return $this->successResponse($empresa, 'Empresa actualizada');
+        $this->storeImagenes($request, $empresa);
+
+        return $this->successResponse($empresa->fresh(), 'Empresa actualizada');
     }
 
     public function destroy(Empresa $empresa): JsonResponse
@@ -53,5 +60,22 @@ class EmpresaController extends Controller
         $empresa->delete();
 
         return $this->successResponse(null, 'Empresa eliminada');
+    }
+
+    private function storeImagenes(StoreEmpresaRequest|UpdateEmpresaRequest $request, Empresa $empresa): void
+    {
+        foreach (['logo', 'firma'] as $campo) {
+            if (! $request->hasFile($campo)) {
+                continue;
+            }
+
+            $column = "{$campo}_path";
+
+            if ($empresa->{$column}) {
+                Storage::disk('public')->delete($empresa->{$column});
+            }
+
+            $empresa->update([$column => $request->file($campo)->store("empresas/{$empresa->id}", 'public')]);
+        }
     }
 }

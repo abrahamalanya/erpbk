@@ -102,6 +102,7 @@ final class CajaService
         string $monto,
         ?UploadedFile $comprobante,
         array $fotosAdicionales = [],
+        ?string $descripcion = null,
     ): CajaMovimiento {
         $caja = $this->cajaDe($actor);
         $ciclo = $caja->cicloAbierto()->first();
@@ -121,13 +122,14 @@ final class CajaService
             throw new DomainException('Tu caja no tiene saldo suficiente para este gasto.');
         }
 
-        return DB::transaction(function () use ($ciclo, $actor, $tipo, $concepto, $monto, $comprobante, $fotosAdicionales): CajaMovimiento {
+        return DB::transaction(function () use ($ciclo, $actor, $tipo, $concepto, $monto, $comprobante, $fotosAdicionales, $descripcion): CajaMovimiento {
             $movimiento = CajaMovimiento::query()->create([
                 'caja_ciclo_id' => $ciclo->id,
                 'empresa_id' => $ciclo->empresa_id,
                 'tipo' => $tipo,
                 'monto' => $monto,
                 'concepto' => $concepto->nombre,
+                'descripcion' => $descripcion,
                 'concepto_id' => $concepto->id,
                 'registrado_por' => $actor->id,
                 'fecha_caja' => $ciclo->fecha,
@@ -170,8 +172,18 @@ final class CajaService
             throw new DomainException('No tienes un ciclo de caja abierto.');
         }
 
-        $ciclo->load(['movimientos.concepto', 'movimientos.billetaje', 'movimientos.registradoPor']);
+        // 'concepto' is deliberately NOT eager-loaded here: CajaMovimiento has
+        // both a plain 'concepto' string column (a snapshot of the concepto's
+        // nombre at the time it was registered — see registrarMovimiento())
+        // and a concepto() belongsTo relation of the same name. Loading the
+        // relation makes Eloquent's array/JSON serialization replace the
+        // string with the full Concepto model (relations are merged after
+        // attributes in Model::toArray()), and the frontend renders that
+        // value directly as text — crashing the whole page when it's an
+        // object instead of a string.
+        $ciclo->load(['movimientos.billetaje', 'movimientos.registradoPor']);
         $ciclo->setAttribute('saldo_calculado', $ciclo->saldoActual());
+        $ciclo->setAttribute('saldo_efectivo', $ciclo->saldoEfectivo());
 
         return $ciclo;
     }
@@ -194,7 +206,9 @@ final class CajaService
         return CajaMovimiento::query()
             ->whereHas('cajaCiclo', fn ($query) => $query->where('caja_id', $caja->id))
             ->where('tipo', $tipo)
-            ->with(['concepto', 'fotos', 'registradoPor'])
+            // 'concepto' relation deliberately not eager-loaded — see the
+            // comment on the same load in resumenCierre() above.
+            ->with(['fotos', 'registradoPor'])
             ->latest('fecha_caja')
             ->latest('id')
             ->paginate(15);
@@ -221,9 +235,12 @@ final class CajaService
      * Closes any ciclo still abierta past its own calendar day — run by the
      * scheduled cajas:cerrar-automatico command, never by a person. Since
      * nobody physically counted the cash, the arqueo is just the calculated
-     * balance (no diferencia). The bóveda that funds this caja is guaranteed
-     * to still be open (its own cierre is blocked while this caja is open),
-     * so asegurarAbierta() below is a defensive no-op in practice.
+     * cash-only balance (saldoEfectivo(), so no diferencia — using the total
+     * saldoActual() here would falsely show a sobrante for any digital
+     * billetaje still sitting in this ciclo). The bóveda that funds this
+     * caja is guaranteed to still be open (its own cierre is blocked while
+     * this caja is open), so asegurarAbierta() below is a defensive no-op in
+     * practice.
      */
     public function cerrarAutomatico(CajaCiclo $ciclo): CajaCiclo
     {
@@ -233,7 +250,7 @@ final class CajaService
             'Rechazado automáticamente por cierre automático de fin de día.'
         );
 
-        return $this->cerrarCiclo($ciclo, null, $ciclo->saldoActual(), forzado: false, automatico: true);
+        return $this->cerrarCiclo($ciclo, null, $ciclo->saldoEfectivo(), forzado: false, automatico: true);
     }
 
     /**
@@ -271,12 +288,14 @@ final class CajaService
     {
         return DB::transaction(function () use ($ciclo, $actor, $montoContado, $forzado, $automatico): CajaCiclo {
             $saldoCalculado = $ciclo->saldoActual();
+            $saldoEfectivo = $ciclo->saldoEfectivo();
 
             $ciclo->update([
                 'estado' => 'cerrada',
                 'saldo_calculado_cierre' => $saldoCalculado,
+                'saldo_efectivo_cierre' => $saldoEfectivo,
                 'saldo_arqueo_cierre' => $montoContado,
-                'diferencia' => bcsub($montoContado, $saldoCalculado, 2),
+                'diferencia' => bcsub($montoContado, $saldoEfectivo, 2),
                 'cerrada_por' => $actor?->id,
                 'cerrada_at' => now(),
                 'cierre_forzado' => $forzado,

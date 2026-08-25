@@ -20,6 +20,7 @@ final class DocumentoCreditoPrendarioService
         'contrato' => 'modules.credito-prendario.documentos.contrato',
         'declaracion' => 'modules.credito-prendario.documentos.declaracion',
         'adenda' => 'modules.credito-prendario.documentos.adenda',
+        'fotos' => 'modules.credito-prendario.documentos.fotos',
     ];
 
     public function __construct(private readonly PdfGeneratorService $pdfGenerator) {}
@@ -40,6 +41,17 @@ final class DocumentoCreditoPrendarioService
     }
 
     /**
+     * The "constancia fotográfica" — the client's photo with each bien plus
+     * the bien's own product photos, printed for the client to sign
+     * alongside the contrato/declaración (same firma_at gate before
+     * desembolsar).
+     */
+    public function generarFotos(CreditoPrendario $credito, User $actor): DocumentoCreditoPrendario
+    {
+        return $this->generar($credito, $actor, 'fotos');
+    }
+
+    /**
      * Renders the PDF fresh from the crédito's current data — nothing is
      * kept on disk, so this runs again on every "ver documento" request.
      */
@@ -47,9 +59,65 @@ final class DocumentoCreditoPrendarioService
     {
         $vista = self::VISTAS[$documento->tipo] ?? throw new DomainException("Tipo de documento desconocido: {$documento->tipo}");
 
-        $credito = $documento->credito()->with(['bienes', 'cliente', 'agencia', 'empresa'])->firstOrFail();
+        $credito = $documento->credito()->with(['bienes.fotos', 'cliente', 'agencia', 'empresa'])->firstOrFail();
 
-        return $this->pdfGenerator->renderizarDesdeVista($vista, ['credito' => $credito]);
+        $datos = [
+            'credito' => $credito,
+            'documento' => $documento,
+            'fotoDataUri' => fn (?string $path, int $maxAncho = 900): ?string => $this->fotoDataUri($path, $maxAncho),
+        ];
+
+        return $this->pdfGenerator->renderizarDesdeVista($vista, $datos);
+    }
+
+    /**
+     * Downscales and re-encodes an uploaded foto into an embeddable data URI
+     * for the "fotos" documento — real client uploads run up to 8MB each
+     * (see StoreClienteRequest/StoreBienRequest), and a bien can have several,
+     * so embedding them at original size would bloat the PDF into tens of MB
+     * and risk exhausting memory_limit while dompdf assembles it. Shrinking
+     * to 900px wide, quality 75 keeps a legible print while the resulting
+     * PDF stays a reasonable size.
+     */
+    private function fotoDataUri(?string $path, int $maxAncho = 900): ?string
+    {
+        if (! $path || ! Storage::disk('public')->exists($path)) {
+            return null;
+        }
+
+        $absoluto = Storage::disk('public')->path($path);
+        $info = @getimagesize($absoluto);
+
+        if (! $info) {
+            return null;
+        }
+
+        [$ancho, $alto, $tipo] = $info;
+
+        $origen = match ($tipo) {
+            IMAGETYPE_JPEG => imagecreatefromjpeg($absoluto),
+            IMAGETYPE_PNG => imagecreatefrompng($absoluto),
+            default => null,
+        };
+
+        if (! $origen) {
+            return null;
+        }
+
+        if ($ancho > $maxAncho) {
+            $nuevoAlto = (int) round($alto * ($maxAncho / $ancho));
+            $redimensionada = imagecreatetruecolor($maxAncho, $nuevoAlto);
+            imagecopyresampled($redimensionada, $origen, 0, 0, 0, 0, $maxAncho, $nuevoAlto, $ancho, $alto);
+            imagedestroy($origen);
+            $origen = $redimensionada;
+        }
+
+        ob_start();
+        imagejpeg($origen, null, 75);
+        $bytes = ob_get_clean();
+        imagedestroy($origen);
+
+        return 'data:image/jpeg;base64,'.base64_encode($bytes);
     }
 
     /**

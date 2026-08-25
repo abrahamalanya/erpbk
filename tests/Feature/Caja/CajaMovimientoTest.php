@@ -38,6 +38,47 @@ it('registers an ingreso without a comprobante', function () {
     $this->getJson('/api/caja')->assertSuccessful()->assertJsonPath('data.saldo_actual', '100.00');
 });
 
+it('accepts an optional descripcion and persists it', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+    $this->postJson('/api/caja/aperturar')->assertCreated();
+
+    $this->postJson('/api/caja/movimientos', [
+        'tipo' => 'ingreso',
+        'concepto_id' => $this->conceptoIngreso->id,
+        'monto' => 100,
+        'descripcion' => 'Vuelto de la venta del mediodía',
+    ])->assertCreated()->assertJsonPath('data.descripcion', 'Vuelto de la venta del mediodía');
+});
+
+it('registers a movimiento fine without a descripcion', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+    $this->postJson('/api/caja/aperturar')->assertCreated();
+
+    $this->postJson('/api/caja/movimientos', [
+        'tipo' => 'ingreso',
+        'concepto_id' => $this->conceptoIngreso->id,
+        'monto' => 100,
+    ])->assertCreated()->assertJsonPath('data.descripcion', null);
+});
+
+it('exposes concepto as a plain string (not the eager-loaded Concepto relation object) on the cierre resumen', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+    $this->postJson('/api/caja/aperturar')->assertCreated();
+    $this->postJson('/api/caja/movimientos', [
+        'tipo' => 'ingreso',
+        'concepto_id' => $this->conceptoIngreso->id,
+        'monto' => 100,
+    ])->assertCreated();
+
+    // CajaMovimiento has both a plain 'concepto' string column and a
+    // concepto() belongsTo relation of the same name — if that relation is
+    // ever eager-loaded again, Eloquent's serialization replaces the string
+    // with the full Concepto model, and the frontend (which renders this
+    // value directly as text) crashes the whole page. Regression for that.
+    $response = $this->getJson('/api/caja/cierre/resumen')->assertSuccessful();
+    expect($response->json('data.movimientos.0.concepto'))->toBe('Ingreso vario');
+});
+
 it('requires a comprobante to register a gasto', function () {
     Sanctum::actingAs($this->asesor, ['*']);
     $this->postJson('/api/caja/aperturar')->assertCreated();

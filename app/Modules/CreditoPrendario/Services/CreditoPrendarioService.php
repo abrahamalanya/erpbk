@@ -128,6 +128,7 @@ final class CreditoPrendarioService
             // still pendiente, instead of deciding blind on raw fields.
             $this->documentos->generarContrato($credito, $actor);
             $this->documentos->generarDeclaracion($credito, $actor);
+            $this->documentos->generarFotos($credito, $actor);
 
             $credito = $credito->fresh(['bienes']);
             $this->notificar($credito);

@@ -21,6 +21,7 @@ return new class extends Migration
 
             $table->decimal('saldo_apertura', 12, 2)->default(0);
             $table->decimal('saldo_calculado_cierre', 12, 2)->nullable();
+            $table->decimal('saldo_efectivo_cierre', 12, 2)->nullable();
             $table->decimal('saldo_arqueo_cierre', 12, 2)->nullable();
             $table->decimal('diferencia', 12, 2)->nullable();
 

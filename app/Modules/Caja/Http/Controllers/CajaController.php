@@ -91,6 +91,7 @@ class CajaController extends Controller
             (string) $request->validated('monto'),
             $request->file('comprobante'),
             $request->file('fotos_adicionales', []),
+            $request->validated('descripcion'),
         );
 
         return $this->successResponse($movimiento, 'Movimiento registrado', 201);

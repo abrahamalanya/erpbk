@@ -26,6 +26,7 @@ class StoreCajaMovimientoRequest extends FormRequest
             'tipo' => ['required', 'string', 'in:ingreso,egreso'],
             'concepto_id' => ['required', 'integer', 'exists:conceptos,id'],
             'monto' => ['required', 'numeric', 'min:0.01'],
+            'descripcion' => ['nullable', 'string', 'max:1000'],
             'comprobante' => ['required_if:tipo,egreso', 'nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:8192'],
             'fotos_adicionales' => ['sometimes', 'array', 'max:10'],
             'fotos_adicionales.*' => ['file', 'mimes:jpg,jpeg,png,webp', 'max:8192'],
