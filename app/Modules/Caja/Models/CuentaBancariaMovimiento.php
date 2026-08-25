@@ -8,6 +8,7 @@ use Database\Factories\CuentaBancariaMovimientoFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
 
 class CuentaBancariaMovimiento extends Model
 {
@@ -52,6 +53,11 @@ class CuentaBancariaMovimiento extends Model
     public function registradoPor(): BelongsTo
     {
         return $this->belongsTo(User::class, 'registrado_por');
+    }
+
+    public function fotos(): MorphMany
+    {
+        return $this->morphMany(MovimientoFoto::class, 'fotografiable');
     }
 
     protected static function newFactory(): CuentaBancariaMovimientoFactory

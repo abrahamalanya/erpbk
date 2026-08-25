@@ -13,6 +13,7 @@ use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Usuario\Models\User;
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -130,7 +131,7 @@ final class BovedaService
      * Doesn't apply to the principal's own inyección — that's external
      * capital materializing, with no "origen" to pick from.
      */
-    public function inyectar(Boveda $boveda, User $actor, string $monto, ?string $concepto, string $medio = 'efectivo', ?int $cuentaBancariaId = null, ?int $cuentaBancariaOrigenId = null): BovedaMovimiento|CuentaBancariaMovimiento
+    public function inyectar(Boveda $boveda, User $actor, string $monto, ?string $concepto, string $medio = 'efectivo', ?int $cuentaBancariaId = null, ?int $cuentaBancariaOrigenId = null, ?UploadedFile $comprobante = null): BovedaMovimiento|CuentaBancariaMovimiento
     {
         if ($boveda->tipo === 'principal') {
             $concepto ??= 'Inyección de capital';
@@ -144,6 +145,7 @@ final class BovedaService
                     $concepto,
                     'inyeccion',
                     (string) Str::uuid(),
+                    $comprobante,
                 );
             }
 
@@ -156,10 +158,10 @@ final class BovedaService
             return $this->crearMovimiento($ciclo, $actor, 'ingreso', $monto, $concepto, 'inyeccion');
         }
 
-        return $this->trasladarDesdePrincipal($boveda, $actor, $monto, $concepto, $medio, $cuentaBancariaId, $cuentaBancariaOrigenId);
+        return $this->trasladarDesdePrincipal($boveda, $actor, $monto, $concepto, $medio, $cuentaBancariaId, $cuentaBancariaOrigenId, $comprobante);
     }
 
-    private function trasladarDesdePrincipal(Boveda $agencia, User $actor, string $monto, ?string $concepto, string $medio, ?int $cuentaBancariaId, ?int $cuentaBancariaOrigenId): BovedaMovimiento|CuentaBancariaMovimiento
+    private function trasladarDesdePrincipal(Boveda $agencia, User $actor, string $monto, ?string $concepto, string $medio, ?int $cuentaBancariaId, ?int $cuentaBancariaOrigenId, ?UploadedFile $comprobante = null): BovedaMovimiento|CuentaBancariaMovimiento
     {
         $principal = $this->principalDe($agencia->empresa_id);
 
@@ -188,7 +190,7 @@ final class BovedaService
         $cuentaBancariaDestino = $medio === 'cuenta_bancaria' ? $this->cuentaBancariaDe($agencia, $cuentaBancariaId) : null;
         $grupoId = (string) Str::uuid();
 
-        return DB::transaction(function () use ($agencia, $principal, $actor, $monto, $concepto, $cuentaBancariaOrigen, $cuentaBancariaDestino, $grupoId): BovedaMovimiento|CuentaBancariaMovimiento {
+        return DB::transaction(function () use ($agencia, $principal, $actor, $monto, $concepto, $cuentaBancariaOrigen, $cuentaBancariaDestino, $grupoId, $comprobante): BovedaMovimiento|CuentaBancariaMovimiento {
             if ($cuentaBancariaOrigen) {
                 $this->cuentaBancariaService->registrarMovimiento(
                     $cuentaBancariaOrigen,
@@ -213,6 +215,7 @@ final class BovedaService
                     $concepto ?? 'Traspaso desde bóveda principal',
                     'traspaso',
                     $grupoId,
+                    $comprobante,
                 );
             }
 
@@ -444,6 +447,7 @@ final class BovedaService
                 'fecha' => $m->fecha_boveda->toDateString(),
                 'registrado_por' => $m->registradoPor,
                 'cuenta_bancaria' => null,
+                'comprobante_url' => null,
                 'puede_eliminar' => $m->boveda_ciclo_id === $cicloAbiertoId,
             ]);
 
@@ -452,7 +456,7 @@ final class BovedaService
             ->whereIn('origen', ['inyeccion', 'traspaso'])
             ->when($desde, fn (Builder $q) => $q->whereDate('fecha', '>=', $desde))
             ->when($hasta, fn (Builder $q) => $q->whereDate('fecha', '<=', $hasta))
-            ->with(['registradoPor', 'cuentaBancaria.banco'])
+            ->with(['registradoPor', 'cuentaBancaria.banco', 'fotos'])
             ->get()
             ->map(fn (CuentaBancariaMovimiento $m): array => [
                 'id' => $m->id,
@@ -464,6 +468,7 @@ final class BovedaService
                 'fecha' => $m->fecha->toDateString(),
                 'registrado_por' => $m->registradoPor,
                 'cuenta_bancaria' => $m->cuentaBancaria,
+                'comprobante_url' => $m->fotos->first()?->url,
                 // Never independently deletable: no ciclo concept applies to
                 // a cuenta bancaria. It can still be removed as the
                 // automatic other side of a cash traspaso being undone —

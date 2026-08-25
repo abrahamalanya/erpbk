@@ -9,6 +9,7 @@ use App\Modules\Caja\Models\CuentaBancaria;
 use App\Modules\Caja\Models\CuentaBancariaMovimiento;
 use App\Modules\Usuario\Models\User;
 use DomainException;
+use Illuminate\Http\UploadedFile;
 
 final class CuentaBancariaService
 {
@@ -99,7 +100,7 @@ final class CuentaBancariaService
      * traspaso together) — left null for the plain "Registrar movimiento"
      * action an admin performs directly on the account.
      */
-    public function registrarMovimiento(CuentaBancaria $cuentaBancaria, User $actor, string $tipo, string $monto, ?string $concepto, ?string $origen = null, ?string $grupoId = null): CuentaBancariaMovimiento
+    public function registrarMovimiento(CuentaBancaria $cuentaBancaria, User $actor, string $tipo, string $monto, ?string $concepto, ?string $origen = null, ?string $grupoId = null, ?UploadedFile $comprobante = null): CuentaBancariaMovimiento
     {
         if ($tipo === 'egreso' && bccomp($monto, $cuentaBancaria->saldoActual(), 2) > 0) {
             throw new DomainException('La cuenta bancaria no tiene saldo suficiente para este movimiento.');
@@ -116,6 +117,13 @@ final class CuentaBancariaService
             'registrado_por' => $actor->id,
             'fecha' => now()->toDateString(),
         ]);
+
+        if ($comprobante) {
+            $movimiento->fotos()->create([
+                'tipo' => 'comprobante',
+                'path' => $comprobante->store("cuenta-bancaria-movimientos/{$movimiento->id}", 'public'),
+            ]);
+        }
 
         $this->notificar($cuentaBancaria->boveda);
 

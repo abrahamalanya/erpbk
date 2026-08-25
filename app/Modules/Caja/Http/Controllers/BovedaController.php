@@ -105,6 +105,7 @@ class BovedaController extends Controller
             $request->validated('medio', 'efectivo'),
             $cuentaBancariaId !== null ? (int) $cuentaBancariaId : null,
             $cuentaBancariaOrigenId !== null ? (int) $cuentaBancariaOrigenId : null,
+            $request->file('comprobante'),
         );
 
         return $this->successResponse($movimiento, 'Capital inyectado', 201);

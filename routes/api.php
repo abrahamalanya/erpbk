@@ -10,6 +10,7 @@ use App\Modules\CreditoPrendario\Http\Controllers\ConfiguracionCreditoPrendarioC
 use App\Modules\CreditoPrendario\Http\Controllers\CreditoPrendarioController;
 use App\Modules\Empresa\Http\Controllers\AgenciaController;
 use App\Modules\Empresa\Http\Controllers\EmpresaController;
+use App\Modules\Reportes\Http\Controllers\ReporteMovimientosController;
 use App\Modules\Sistemas\Http\Controllers\AuthController;
 use App\Modules\Sistemas\Http\Controllers\ConceptoController;
 use App\Modules\Sistemas\Http\Controllers\NotificacionController;
@@ -105,6 +106,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::get('configuraciones-credito-prendario', [ConfiguracionCreditoPrendarioController::class, 'index'])->name('configuraciones-credito-prendario.index');
     Route::put('configuraciones-credito-prendario', [ConfiguracionCreditoPrendarioController::class, 'update'])->name('configuraciones-credito-prendario.update');
+
+    Route::get('reportes/movimientos-dinero', [ReporteMovimientosController::class, 'movimientosDinero'])->name('reportes.movimientos-dinero');
 });
 
 // ===== HEALTH CHECK =====

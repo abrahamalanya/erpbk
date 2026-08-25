@@ -2,12 +2,15 @@
 
 use App\Modules\Caja\Models\Boveda;
 use App\Modules\Caja\Models\CuentaBancaria;
+use App\Modules\Caja\Models\CuentaBancariaMovimiento;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Usuario\Models\User;
 use App\Nucleo\Models\Banco;
 use Database\Seeders\PermissionSeeder;
 use Database\Seeders\RoleSeeder;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
 
 beforeEach(function () {
@@ -46,6 +49,23 @@ it('injects capital directly into a cuenta bancaria of the principal boveda', fu
     $this->getJson("/api/bovedas/{$this->bovedaPrincipal->id}")
         ->assertJsonPath('data.ciclo_abierto.saldo_actual', '5000.00')
         ->assertJsonPath('data.saldo_total', '5800.00');
+});
+
+it('stores a comprobante when injecting via cuenta bancaria', function () {
+    Storage::fake('public');
+
+    $cuenta = CuentaBancaria::factory()->paraBoveda($this->bovedaPrincipal)->create(['banco_id' => $this->banco->id]);
+
+    $response = $this->postJson("/api/bovedas/{$this->bovedaPrincipal->id}/inyectar", [
+        'monto' => 800,
+        'medio' => 'cuenta_bancaria',
+        'cuenta_bancaria_id' => $cuenta->id,
+        'comprobante' => UploadedFile::fake()->image('voucher.jpg'),
+    ])->assertCreated();
+
+    $movimiento = CuentaBancariaMovimiento::query()->findOrFail($response->json('data.id'));
+
+    expect($movimiento->fotos()->where('tipo', 'comprobante')->count())->toBe(1);
 });
 
 it('requires a cuenta_bancaria_id when medio is cuenta_bancaria', function () {

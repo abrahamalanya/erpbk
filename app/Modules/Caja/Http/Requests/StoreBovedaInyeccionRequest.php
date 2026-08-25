@@ -38,6 +38,7 @@ class StoreBovedaInyeccionRequest extends FormRequest
                 'nullable',
                 'integer',
             ],
+            'comprobante' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:8192'],
         ];
     }
 
