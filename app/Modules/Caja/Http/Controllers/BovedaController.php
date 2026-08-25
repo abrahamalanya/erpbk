@@ -8,6 +8,7 @@ use App\Modules\Caja\Http\Requests\StoreCajaCierreRequest;
 use App\Modules\Caja\Models\Boveda;
 use App\Modules\Caja\Services\BovedaService;
 use App\Modules\Caja\Services\CajaBovedaHierarchyService;
+use App\Modules\Caja\Services\CuentaBancariaService;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Usuario\Models\User;
 use App\Nucleo\Http\Controllers\Controller;
@@ -23,6 +24,7 @@ class BovedaController extends Controller
     public function __construct(
         private readonly BovedaService $bovedaService,
         private readonly CajaBovedaHierarchyService $hierarchy,
+        private readonly CuentaBancariaService $cuentaBancariaService,
     ) {}
 
     /**
@@ -92,14 +94,48 @@ class BovedaController extends Controller
     {
         Gate::authorize('inyectar', $boveda);
 
+        $cuentaBancariaId = $request->validated('cuenta_bancaria_id');
+        $cuentaBancariaOrigenId = $request->validated('cuenta_bancaria_origen_id');
+
         $movimiento = $this->bovedaService->inyectar(
             $boveda,
             $request->user(),
             (string) $request->validated('monto'),
             $request->validated('concepto'),
+            $request->validated('medio', 'efectivo'),
+            $cuentaBancariaId !== null ? (int) $cuentaBancariaId : null,
+            $cuentaBancariaOrigenId !== null ? (int) $cuentaBancariaOrigenId : null,
         );
 
         return $this->successResponse($movimiento, 'Capital inyectado', 201);
+    }
+
+    /**
+     * Reporte de inyecciones/traspasos de esta bóveda (efectivo y cuenta
+     * bancaria juntos), opcionalmente filtrado por fecha. Misma autoridad
+     * que inyectar() — quien puede inyectar capital puede ver y deshacer
+     * sus propias inyecciones.
+     */
+    public function inyecciones(Boveda $boveda): JsonResponse
+    {
+        Gate::authorize('inyectar', $boveda);
+
+        $reporte = $this->bovedaService->reporteInyecciones(
+            $boveda,
+            request()->query('desde'),
+            request()->query('hasta'),
+        );
+
+        return $this->successResponse($reporte);
+    }
+
+    public function eliminarInyeccion(Boveda $boveda, int $movimiento): JsonResponse
+    {
+        Gate::authorize('inyectar', $boveda);
+
+        $this->bovedaService->eliminarInyeccion($boveda, $movimiento);
+
+        return $this->successResponse(null, 'Inyección eliminada');
     }
 
     public function reabrir(Boveda $boveda): JsonResponse
@@ -144,6 +180,10 @@ class BovedaController extends Controller
             if ($boveda->cicloAbierto) {
                 $boveda->cicloAbierto->setAttribute('saldo_actual', $this->bovedaService->calcularSaldo($boveda->cicloAbierto));
             }
+
+            $saldos = $this->cuentaBancariaService->saldoTotalBoveda($boveda);
+            $boveda->setAttribute('saldo_cuentas_bancarias', $saldos['cuentas_bancarias']);
+            $boveda->setAttribute('saldo_total', $saldos['total']);
         });
     }
 }

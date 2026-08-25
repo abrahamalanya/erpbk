@@ -76,7 +76,7 @@ it('only shows a supervisor their own billetajes, not other agencias', function 
     $asesorA->assignRole('asesor');
     Sanctum::actingAs($asesorA, ['*']);
     $this->postJson('/api/caja/aperturar')->assertCreated();
-    $this->postJson('/api/billetajes', ['monto' => 40])->assertCreated();
+    $this->postJson('/api/billetajes', ['monto' => 40, 'motivo' => 'Gastos operativos', 'medio_recepcion' => 'efectivo'])->assertCreated();
 
     $supervisorB = User::factory()->forAgencia($this->agenciaB)->create();
     $supervisorB->assignRole('supervisor');

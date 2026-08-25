@@ -48,6 +48,11 @@ class Boveda extends Model
         return $this->hasOne(BovedaCiclo::class)->where('estado', 'abierta');
     }
 
+    public function cuentasBancarias(): HasMany
+    {
+        return $this->hasMany(CuentaBancaria::class);
+    }
+
     protected static function newFactory(): BovedaFactory
     {
         return BovedaFactory::new();

@@ -7,8 +7,12 @@ use App\Modules\Caja\Events\CajaActualizada;
 use App\Modules\Caja\Models\BovedaMovimiento;
 use App\Modules\Caja\Models\Caja;
 use App\Modules\Caja\Models\CajaCiclo;
+use App\Modules\Caja\Models\CajaMovimiento;
+use App\Modules\Sistemas\Models\Concepto;
 use App\Modules\Usuario\Models\User;
 use DomainException;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 
 final class CajaService
@@ -17,6 +21,7 @@ final class CajaService
         private readonly CajaBovedaHierarchyService $hierarchy,
         private readonly BovedaService $bovedaService,
         private readonly BilletajeService $billetajeService,
+        private readonly CuentaBancariaService $cuentaBancariaService,
     ) {}
 
     public function cajaDe(User $user): Caja
@@ -78,6 +83,121 @@ final class CajaService
         }
 
         return $this->cerrarCiclo($ciclo, $actor, $montoContado, forzado: false);
+    }
+
+    /**
+     * Registers a manual ingreso/gasto against the actor's own caja ciclo —
+     * e.g. an unrelated cash top-up, or an operating expense paid out of the
+     * cajón. Distinct from a billetaje (which always increases cash and is
+     * only ever created by BilletajeService::aprobar()): here the actor
+     * picks a concepto from the empresa's catalog and, for a gasto,
+     * comprobante is required (see StoreCajaMovimientoRequest).
+     *
+     * @param  list<UploadedFile>  $fotosAdicionales
+     */
+    public function registrarMovimiento(
+        User $actor,
+        string $tipo,
+        int $conceptoId,
+        string $monto,
+        ?UploadedFile $comprobante,
+        array $fotosAdicionales = [],
+    ): CajaMovimiento {
+        $caja = $this->cajaDe($actor);
+        $ciclo = $caja->cicloAbierto()->first();
+
+        if (! $ciclo) {
+            throw new DomainException('Debes aperturar tu caja antes de registrar un movimiento.');
+        }
+
+        $concepto = Concepto::query()->findOrFail($conceptoId);
+        $tipoConcepto = $tipo === 'ingreso' ? 'ingreso' : 'gasto';
+
+        if ($concepto->tipo !== $tipoConcepto || ! $concepto->activo) {
+            throw new DomainException('El concepto seleccionado no es válido para este tipo de movimiento.');
+        }
+
+        if ($tipo === 'egreso' && bccomp($monto, $ciclo->saldoActual(), 2) > 0) {
+            throw new DomainException('Tu caja no tiene saldo suficiente para este gasto.');
+        }
+
+        return DB::transaction(function () use ($ciclo, $actor, $tipo, $concepto, $monto, $comprobante, $fotosAdicionales): CajaMovimiento {
+            $movimiento = CajaMovimiento::query()->create([
+                'caja_ciclo_id' => $ciclo->id,
+                'empresa_id' => $ciclo->empresa_id,
+                'tipo' => $tipo,
+                'monto' => $monto,
+                'concepto' => $concepto->nombre,
+                'concepto_id' => $concepto->id,
+                'registrado_por' => $actor->id,
+                'fecha_caja' => $ciclo->fecha,
+            ]);
+
+            if ($comprobante) {
+                $movimiento->fotos()->create([
+                    'tipo' => 'comprobante',
+                    'path' => $comprobante->store("caja-movimientos/{$movimiento->id}", 'public'),
+                ]);
+            }
+
+            foreach ($fotosAdicionales as $orden => $foto) {
+                $movimiento->fotos()->create([
+                    'tipo' => 'adicional',
+                    'path' => $foto->store("caja-movimientos/{$movimiento->id}", 'public'),
+                    'orden' => $orden,
+                ]);
+            }
+
+            $this->notificar($ciclo->caja);
+
+            return $movimiento->fresh(['fotos', 'concepto']);
+        });
+    }
+
+    /**
+     * The actor's open ciclo with every movimiento so far, plus the
+     * calculated saldo — powers the cierre screen's "detalle de
+     * movimientos" so the operator sees what they're closing with, and can
+     * compute sobrante/faltante live as they type monto_contado (the actual
+     * diferencia is only persisted once cerrar() runs).
+     */
+    public function resumenCierre(User $actor): CajaCiclo
+    {
+        $caja = $this->cajaDe($actor);
+        $ciclo = $caja->cicloAbierto()->first();
+
+        if (! $ciclo) {
+            throw new DomainException('No tienes un ciclo de caja abierto.');
+        }
+
+        $ciclo->load(['movimientos.concepto', 'movimientos.billetaje', 'movimientos.registradoPor']);
+        $ciclo->setAttribute('saldo_calculado', $ciclo->saldoActual());
+
+        return $ciclo;
+    }
+
+    /**
+     * The actor's own ingreso/gasto history across every ciclo (not just the
+     * currently open one) — powers the Ingresos/Gastos modules. $tipo is
+     * always 'ingreso' or 'egreso' here (never 'billetaje'), so this never
+     * surfaces billetaje hand-off movimientos; a 'egreso' row with no
+     * concepto_id/billetaje_id is a credito prendario desembolso (see
+     * CreditoPrendarioService::desembolsar()), which the frontend labels
+     * accordingly.
+     *
+     * @return LengthAwarePaginator<int, CajaMovimiento>
+     */
+    public function listarMovimientos(User $actor, string $tipo): LengthAwarePaginator
+    {
+        $caja = $this->cajaDe($actor);
+
+        return CajaMovimiento::query()
+            ->whereHas('cajaCiclo', fn ($query) => $query->where('caja_id', $caja->id))
+            ->where('tipo', $tipo)
+            ->with(['concepto', 'fotos', 'registradoPor'])
+            ->latest('fecha_caja')
+            ->latest('id')
+            ->paginate(15);
     }
 
     public function cerrarForzado(User $superior, Caja $caja, string $montoContado): CajaCiclo
@@ -196,9 +316,10 @@ final class CajaService
 
             $this->notificar($ciclo->caja->fresh(['cicloAbierto']));
 
+            $bovedaFresca = $boveda->fresh(['cicloAbierto']);
             BovedaActualizada::dispatch(
                 $boveda,
-                $bovedaCiclo->fresh()->saldoActual(),
+                $bovedaFresca->cicloAbierto ? $this->cuentaBancariaService->saldoTotalBoveda($bovedaFresca)['total'] : null,
                 $this->hierarchy->controladoresDe($boveda),
             );
 

@@ -7,12 +7,15 @@ use App\Modules\Caja\Models\Boveda;
 use App\Modules\Caja\Models\BovedaCiclo;
 use App\Modules\Caja\Models\BovedaMovimiento;
 use App\Modules\Caja\Models\Caja;
+use App\Modules\Caja\Models\CuentaBancaria;
+use App\Modules\Caja\Models\CuentaBancariaMovimiento;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Usuario\Models\User;
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 final class BovedaService
 {
@@ -34,6 +37,8 @@ final class BovedaService
      * @var list<string>
      */
     public const ROLES_AGENCIA = ['administrador_agencia', 'supervisor', 'asesor'];
+
+    public function __construct(private readonly CuentaBancariaService $cuentaBancariaService) {}
 
     public function principalDe(int $empresaId): Boveda
     {
@@ -110,45 +115,138 @@ final class BovedaService
      * bóveda ever receives fresh capital, since billetaje only ever moves
      * money out of it (to fund asesor/supervisor cajas) or back into it
      * (when those cajas close with leftover cash).
+     *
+     * $medio picks WHERE the money lands: 'efectivo' (default, the bóveda's
+     * cash ciclo) or 'cuenta_bancaria' (a specific cuenta bancaria of THIS
+     * bóveda, given by $cuentaBancariaId) — applies to both the principal's
+     * own injection and an agencia traspaso.
+     *
+     * For a traspaso (agencia bóveda) landing in a cuenta bancaria, the money
+     * left the principal via an actual bank transfer, not physical cash — so
+     * $cuentaBancariaOrigenId picks which of the principal's OWN cuentas
+     * bancarias it came out of, and the egreso is debited there instead of
+     * the principal's cash ciclo. Landing in efectivo still always comes out
+     * of the principal's cash (unchanged, $cuentaBancariaOrigenId is ignored).
+     * Doesn't apply to the principal's own inyección — that's external
+     * capital materializing, with no "origen" to pick from.
      */
-    public function inyectar(Boveda $boveda, User $actor, string $monto, ?string $concepto): BovedaMovimiento
+    public function inyectar(Boveda $boveda, User $actor, string $monto, ?string $concepto, string $medio = 'efectivo', ?int $cuentaBancariaId = null, ?int $cuentaBancariaOrigenId = null): BovedaMovimiento|CuentaBancariaMovimiento
     {
         if ($boveda->tipo === 'principal') {
+            $concepto ??= 'Inyección de capital';
+
+            if ($medio === 'cuenta_bancaria') {
+                return $this->cuentaBancariaService->registrarMovimiento(
+                    $this->cuentaBancariaDe($boveda, $cuentaBancariaId),
+                    $actor,
+                    'ingreso',
+                    $monto,
+                    $concepto,
+                    'inyeccion',
+                    (string) Str::uuid(),
+                );
+            }
+
             $ciclo = $boveda->cicloAbierto()->first();
 
             if (! $ciclo) {
                 throw new DomainException('La bóveda principal no tiene un ciclo abierto. Apertúrala primero.');
             }
 
-            return $this->crearMovimiento($ciclo, $actor, 'ingreso', $monto, $concepto ?? 'Inyección de capital');
+            return $this->crearMovimiento($ciclo, $actor, 'ingreso', $monto, $concepto, 'inyeccion');
         }
 
-        return $this->trasladarDesdePrincipal($boveda, $actor, $monto, $concepto);
+        return $this->trasladarDesdePrincipal($boveda, $actor, $monto, $concepto, $medio, $cuentaBancariaId, $cuentaBancariaOrigenId);
     }
 
-    private function trasladarDesdePrincipal(Boveda $agencia, User $actor, string $monto, ?string $concepto): BovedaMovimiento
+    private function trasladarDesdePrincipal(Boveda $agencia, User $actor, string $monto, ?string $concepto, string $medio, ?int $cuentaBancariaId, ?int $cuentaBancariaOrigenId): BovedaMovimiento|CuentaBancariaMovimiento
     {
         $principal = $this->principalDe($agencia->empresa_id);
-        $cicloPrincipal = $principal->cicloAbierto()->first();
 
-        if (! $cicloPrincipal) {
-            throw new DomainException('La bóveda principal no tiene un ciclo abierto. Apertúrala primero.');
+        // Resolved before the transaction so an invalid cuenta bancaria (or
+        // insufficient saldo) fails fast, without touching the ledger at all.
+        $cuentaBancariaOrigen = $medio === 'cuenta_bancaria'
+            ? $this->cuentaBancariaDe($principal, $cuentaBancariaOrigenId, 'de la que saldrá el dinero')
+            : null;
+
+        if ($cuentaBancariaOrigen) {
+            if (bccomp($monto, $cuentaBancariaOrigen->saldoActual(), 2) > 0) {
+                throw new DomainException('La cuenta bancaria de origen no tiene saldo suficiente para este traspaso.');
+            }
+        } else {
+            $cicloPrincipal = $principal->cicloAbierto()->first();
+
+            if (! $cicloPrincipal) {
+                throw new DomainException('La bóveda principal no tiene un ciclo abierto. Apertúrala primero.');
+            }
+
+            if (bccomp($monto, $this->calcularSaldo($cicloPrincipal), 2) > 0) {
+                throw new DomainException('La bóveda principal no tiene saldo suficiente para este traspaso.');
+            }
         }
 
-        if (bccomp($monto, $this->calcularSaldo($cicloPrincipal), 2) > 0) {
-            throw new DomainException('La bóveda principal no tiene saldo suficiente para este traspaso.');
-        }
+        $cuentaBancariaDestino = $medio === 'cuenta_bancaria' ? $this->cuentaBancariaDe($agencia, $cuentaBancariaId) : null;
+        $grupoId = (string) Str::uuid();
 
-        return DB::transaction(function () use ($agencia, $cicloPrincipal, $actor, $monto, $concepto): BovedaMovimiento {
+        return DB::transaction(function () use ($agencia, $principal, $actor, $monto, $concepto, $cuentaBancariaOrigen, $cuentaBancariaDestino, $grupoId): BovedaMovimiento|CuentaBancariaMovimiento {
+            if ($cuentaBancariaOrigen) {
+                $this->cuentaBancariaService->registrarMovimiento(
+                    $cuentaBancariaOrigen,
+                    $actor,
+                    'egreso',
+                    $monto,
+                    $concepto ?? 'Traspaso a bóveda de agencia',
+                    'traspaso',
+                    $grupoId,
+                );
+            } else {
+                $cicloPrincipal = $principal->cicloAbierto()->firstOrFail();
+                $this->crearMovimiento($cicloPrincipal, $actor, 'egreso', $monto, $concepto ?? 'Traspaso a bóveda de agencia', 'traspaso', $grupoId);
+            }
+
+            if ($cuentaBancariaDestino) {
+                return $this->cuentaBancariaService->registrarMovimiento(
+                    $cuentaBancariaDestino,
+                    $actor,
+                    'ingreso',
+                    $monto,
+                    $concepto ?? 'Traspaso desde bóveda principal',
+                    'traspaso',
+                    $grupoId,
+                );
+            }
+
             $cicloAgencia = $this->asegurarAbierta($agencia, $actor);
 
-            $this->crearMovimiento($cicloPrincipal, $actor, 'egreso', $monto, $concepto ?? 'Traspaso a bóveda de agencia');
-
-            return $this->crearMovimiento($cicloAgencia, $actor, 'ingreso', $monto, $concepto ?? 'Traspaso desde bóveda principal');
+            return $this->crearMovimiento($cicloAgencia, $actor, 'ingreso', $monto, $concepto ?? 'Traspaso desde bóveda principal', 'traspaso', $grupoId);
         });
     }
 
-    private function crearMovimiento(BovedaCiclo $ciclo, User $actor, string $tipo, string $monto, string $concepto): BovedaMovimiento
+    /**
+     * Resolves the cuenta bancaria a traspaso/inyección should move
+     * through — must belong to $boveda and be active. $rol only changes the
+     * wording of the "you must pick one" error, so it reads correctly
+     * whether this is the receiving or the sending side.
+     */
+    private function cuentaBancariaDe(Boveda $boveda, ?int $cuentaBancariaId, string $rol = 'que recibirá el dinero'): CuentaBancaria
+    {
+        if ($cuentaBancariaId === null) {
+            throw new DomainException("Debes seleccionar la cuenta bancaria {$rol}.");
+        }
+
+        $cuenta = CuentaBancaria::query()
+            ->where('boveda_id', $boveda->id)
+            ->where('activa', true)
+            ->find($cuentaBancariaId);
+
+        if (! $cuenta) {
+            throw new DomainException('La cuenta bancaria seleccionada no pertenece a esta bóveda o está inactiva.');
+        }
+
+        return $cuenta;
+    }
+
+    private function crearMovimiento(BovedaCiclo $ciclo, User $actor, string $tipo, string $monto, string $concepto, ?string $origen = null, ?string $grupoId = null): BovedaMovimiento
     {
         $movimiento = BovedaMovimiento::query()->create([
             'boveda_ciclo_id' => $ciclo->id,
@@ -156,6 +254,8 @@ final class BovedaService
             'tipo' => $tipo,
             'monto' => $monto,
             'concepto' => $concepto,
+            'origen' => $origen,
+            'grupo_id' => $grupoId,
             'registrado_por' => $actor->id,
             'fecha_boveda' => $ciclo->fecha,
         ]);
@@ -172,7 +272,11 @@ final class BovedaService
      * of a single owner (a bóveda can have more than one controlling admin).
      * Duplicates CajaBovedaHierarchyService::controladoresDe() instead of
      * injecting it — that service already depends on BovedaService, so the
-     * reverse dependency would be circular.
+     * reverse dependency would be circular. The broadcast saldo is the full
+     * saldo_total (efectivo + cuentas bancarias activas), null while the
+     * ciclo is closed — same "hide the amount when closed" UX as before,
+     * just no longer cash-only. CuentaBancariaService has zero dependencies
+     * of its own, so injecting it here is safe.
      */
     private function notificar(Boveda $boveda): void
     {
@@ -180,7 +284,9 @@ final class BovedaService
             ? User::role('administrador_general')->where('empresa_id', $boveda->empresa_id)->get()
             : User::role('administrador_agencia')->where('agencia_id', $boveda->agencia_id)->get();
 
-        BovedaActualizada::dispatch($boveda, $boveda->cicloAbierto?->saldoActual(), $destinatarios);
+        $saldoTotal = $boveda->cicloAbierto ? $this->cuentaBancariaService->saldoTotalBoveda($boveda)['total'] : null;
+
+        BovedaActualizada::dispatch($boveda, $saldoTotal, $destinatarios);
     }
 
     private function crearCiclo(Boveda $boveda, User $actor, string $saldoApertura): BovedaCiclo
@@ -305,5 +411,137 @@ final class BovedaService
         $egresos = (string) $ciclo->movimientos()->where('tipo', 'egreso')->sum('monto');
 
         return bcadd($ciclo->saldo_apertura, bcsub($ingresos, $egresos, 2), 2);
+    }
+
+    /**
+     * Every inyección/traspaso that touched this bóveda — either as cash
+     * (BovedaMovimiento, tagged with origen 'inyeccion'/'traspaso' by
+     * inyectar()/trasladarDesdePrincipal() above) or as a cuenta bancaria
+     * credit — merged into one normalized, date-filterable list. Returned
+     * as plain arrays (not Eloquent models) since the two source tables
+     * have different shapes; the frontend only needs one flat report.
+     *
+     * @return Collection<int, array<string, mixed>>
+     */
+    public function reporteInyecciones(Boveda $boveda, ?string $desde, ?string $hasta): Collection
+    {
+        $cicloAbiertoId = $boveda->cicloAbierto?->id;
+
+        $cash = BovedaMovimiento::query()
+            ->whereHas('bovedaCiclo', fn (Builder $q) => $q->where('boveda_id', $boveda->id))
+            ->whereIn('origen', ['inyeccion', 'traspaso'])
+            ->when($desde, fn (Builder $q) => $q->whereDate('fecha_boveda', '>=', $desde))
+            ->when($hasta, fn (Builder $q) => $q->whereDate('fecha_boveda', '<=', $hasta))
+            ->with('registradoPor')
+            ->get()
+            ->map(fn (BovedaMovimiento $m): array => [
+                'id' => $m->id,
+                'medio' => 'efectivo',
+                'tipo' => $m->tipo,
+                'monto' => $m->monto,
+                'concepto' => $m->concepto,
+                'origen' => $m->origen,
+                'fecha' => $m->fecha_boveda->toDateString(),
+                'registrado_por' => $m->registradoPor,
+                'cuenta_bancaria' => null,
+                'puede_eliminar' => $m->boveda_ciclo_id === $cicloAbiertoId,
+            ]);
+
+        $banco = CuentaBancariaMovimiento::query()
+            ->whereHas('cuentaBancaria', fn (Builder $q) => $q->where('boveda_id', $boveda->id))
+            ->whereIn('origen', ['inyeccion', 'traspaso'])
+            ->when($desde, fn (Builder $q) => $q->whereDate('fecha', '>=', $desde))
+            ->when($hasta, fn (Builder $q) => $q->whereDate('fecha', '<=', $hasta))
+            ->with(['registradoPor', 'cuentaBancaria.banco'])
+            ->get()
+            ->map(fn (CuentaBancariaMovimiento $m): array => [
+                'id' => $m->id,
+                'medio' => 'cuenta_bancaria',
+                'tipo' => $m->tipo,
+                'monto' => $m->monto,
+                'concepto' => $m->concepto,
+                'origen' => $m->origen,
+                'fecha' => $m->fecha->toDateString(),
+                'registrado_por' => $m->registradoPor,
+                'cuenta_bancaria' => $m->cuentaBancaria,
+                // Never independently deletable: no ciclo concept applies to
+                // a cuenta bancaria. It can still be removed as the
+                // automatic other side of a cash traspaso being undone —
+                // see eliminarInyeccion()/eliminarParDelGrupo() below.
+                'puede_eliminar' => false,
+            ]);
+
+        return $cash->concat($banco)->sortByDesc('fecha')->values();
+    }
+
+    /**
+     * Undoes an inyección/traspaso — only allowed while it still belongs to
+     * $boveda's CURRENTLY open ciclo (never a closed one, and never a
+     * cuenta-bancaria-only row, which has no ciclo to check against — those
+     * simply never reach this method since the frontend only offers the
+     * action on cash rows within the open ciclo, mirrored here as a hard
+     * guard rather than trusted from the client).
+     */
+    public function eliminarInyeccion(Boveda $boveda, int $movimientoId): void
+    {
+        $ciclo = $boveda->cicloAbierto()->first();
+
+        if (! $ciclo) {
+            throw new DomainException('La bóveda no tiene un ciclo abierto.');
+        }
+
+        $movimiento = BovedaMovimiento::query()
+            ->where('boveda_ciclo_id', $ciclo->id)
+            ->whereIn('origen', ['inyeccion', 'traspaso'])
+            ->find($movimientoId);
+
+        if (! $movimiento) {
+            throw new DomainException('Este movimiento no se puede eliminar: no pertenece al ciclo actual de esta bóveda.');
+        }
+
+        DB::transaction(function () use ($movimiento, $boveda): void {
+            if ($movimiento->grupo_id) {
+                $this->eliminarParDelGrupo($movimiento);
+            }
+
+            $movimiento->delete();
+            $this->notificar($boveda->fresh(['cicloAbierto']));
+        });
+    }
+
+    /**
+     * Deletes the OTHER side of a traspaso being undone, so the ledger
+     * never ends up one-sided. A cash pair must still belong to ITS OWN
+     * bóveda's currently open ciclo — otherwise the whole deletion is
+     * refused (rather than silently leaving the traspaso half-undone). A
+     * cuenta bancaria pair has no such constraint (no ciclo concept), so
+     * it's always removed together with the cash side.
+     */
+    private function eliminarParDelGrupo(BovedaMovimiento $movimiento): void
+    {
+        $parCash = BovedaMovimiento::query()
+            ->where('grupo_id', $movimiento->grupo_id)
+            ->where('id', '!=', $movimiento->id)
+            ->first();
+
+        if ($parCash) {
+            $bovedaPar = $parCash->bovedaCiclo->boveda;
+            $cicloAbiertoPar = $bovedaPar->cicloAbierto()->first();
+
+            if (! $cicloAbiertoPar || $cicloAbiertoPar->id !== $parCash->boveda_ciclo_id) {
+                throw new DomainException('No se puede eliminar: el otro lado de este traspaso ya no pertenece al ciclo actual de su bóveda.');
+            }
+
+            $parCash->delete();
+            $this->notificar($bovedaPar->fresh(['cicloAbierto']));
+
+            return;
+        }
+
+        $parBanco = CuentaBancariaMovimiento::query()->where('grupo_id', $movimiento->grupo_id)->first();
+
+        if ($parBanco) {
+            $this->cuentaBancariaService->eliminarMovimientoDeGrupo($parBanco);
+        }
     }
 }

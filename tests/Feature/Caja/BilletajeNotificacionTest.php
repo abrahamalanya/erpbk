@@ -26,7 +26,7 @@ it('notifies the controlling administrador_agencia (not the solicitante) when a 
 
     Sanctum::actingAs($asesor, ['*']);
     $this->postJson('/api/caja/aperturar')->assertCreated();
-    $this->postJson('/api/billetajes', ['monto' => 100])->assertCreated();
+    $this->postJson('/api/billetajes', ['monto' => 100, 'motivo' => 'Gastos operativos', 'medio_recepcion' => 'efectivo'])->assertCreated();
 
     Event::assertDispatched(NotificacionCreada::class, fn (NotificacionCreada $event): bool => $event->destinatario->id === $administradorAgencia->id
         && $event->notificacion->data['url'] === '/billetajes');
@@ -47,7 +47,7 @@ it('notifies the solicitante (not the aprobador) when their billetaje is aprobad
     $asesor->assignRole('asesor');
     Sanctum::actingAs($asesor, ['*']);
     $this->postJson('/api/caja/aperturar')->assertCreated();
-    $billetajeId = $this->postJson('/api/billetajes', ['monto' => 100])->json('data.id');
+    $billetajeId = $this->postJson('/api/billetajes', ['monto' => 100, 'motivo' => 'Gastos operativos', 'medio_recepcion' => 'efectivo'])->json('data.id');
 
     Event::fake([NotificacionCreada::class]);
 
@@ -70,7 +70,7 @@ it('stores the notification in the database with a mensaje and url, and lists it
 
     Sanctum::actingAs($asesor, ['*']);
     $this->postJson('/api/caja/aperturar')->assertCreated();
-    $this->postJson('/api/billetajes', ['monto' => 100])->assertCreated();
+    $this->postJson('/api/billetajes', ['monto' => 100, 'motivo' => 'Gastos operativos', 'medio_recepcion' => 'efectivo'])->assertCreated();
 
     Sanctum::actingAs($administradorAgencia, ['*']);
     $response = $this->getJson('/api/notificaciones')->assertSuccessful();
@@ -91,7 +91,7 @@ it('allows marking a single notification as read, and denies marking someone els
 
     Sanctum::actingAs($asesor, ['*']);
     $this->postJson('/api/caja/aperturar')->assertCreated();
-    $this->postJson('/api/billetajes', ['monto' => 100])->assertCreated();
+    $this->postJson('/api/billetajes', ['monto' => 100, 'motivo' => 'Gastos operativos', 'medio_recepcion' => 'efectivo'])->assertCreated();
 
     Sanctum::actingAs($administradorAgencia, ['*']);
     $notificacionId = $administradorAgencia->notifications()->firstOrFail()->id;
@@ -114,8 +114,8 @@ it('allows marking every notification as read at once', function () {
 
     Sanctum::actingAs($asesor, ['*']);
     $this->postJson('/api/caja/aperturar')->assertCreated();
-    $this->postJson('/api/billetajes', ['monto' => 100])->assertCreated();
-    $this->postJson('/api/billetajes', ['monto' => 50])->assertCreated();
+    $this->postJson('/api/billetajes', ['monto' => 100, 'motivo' => 'Gastos operativos', 'medio_recepcion' => 'efectivo'])->assertCreated();
+    $this->postJson('/api/billetajes', ['monto' => 50, 'motivo' => 'Gastos operativos', 'medio_recepcion' => 'efectivo'])->assertCreated();
 
     Sanctum::actingAs($administradorAgencia, ['*']);
     expect($administradorAgencia->unreadNotifications()->count())->toBe(2);

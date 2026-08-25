@@ -25,6 +25,8 @@ class BovedaMovimiento extends Model
         'tipo',
         'monto',
         'concepto',
+        'origen',
+        'grupo_id',
         'billetaje_id',
         'caja_ciclo_id',
         'registrado_por',

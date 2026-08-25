@@ -18,7 +18,7 @@ class AgenciaController extends Controller
     {
         Gate::authorize('viewAny', Agencia::class);
 
-        return $this->successResponse(Agencia::query()->paginate(15));
+        return $this->successResponse(Agencia::query()->with('empresa')->paginate(15));
     }
 
     public function store(StoreAgenciaRequest $request): JsonResponse
@@ -55,8 +55,43 @@ class AgenciaController extends Controller
     {
         Gate::authorize('delete', $agencia);
 
+        $motivos = $this->motivosNoEliminable($agencia);
+
+        if ($motivos !== []) {
+            return $this->errorResponse(
+                'No se puede eliminar la agencia porque tiene registros asociados: '.implode(', ', $motivos).'.',
+                422
+            );
+        }
+
         $agencia->delete();
 
         return $this->successResponse(null, 'Agencia eliminada');
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function motivosNoEliminable(Agencia $agencia): array
+    {
+        $checks = [
+            'boveda' => 'bóveda',
+            'cajas' => 'cajas',
+            'clientes' => 'clientes',
+            'bienes' => 'bienes',
+            'creditosPrendarios' => 'créditos prendarios',
+            'configuracionesCreditoPrendario' => 'configuraciones de crédito prendario',
+            'interesesBien' => 'intereses de bien',
+        ];
+
+        $motivos = [];
+
+        foreach ($checks as $relation => $etiqueta) {
+            if ($agencia->{$relation}()->exists()) {
+                $motivos[] = $etiqueta;
+            }
+        }
+
+        return $motivos;
     }
 }

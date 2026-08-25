@@ -42,7 +42,7 @@ it('broadcasts to its own owner (not the aprobador) when a billetaje aprobado mo
     $asesor->assignRole('asesor');
     Sanctum::actingAs($asesor, ['*']);
     $this->postJson('/api/caja/aperturar')->assertCreated();
-    $billetajeId = $this->postJson('/api/billetajes', ['monto' => 100])->json('data.id');
+    $billetajeId = $this->postJson('/api/billetajes', ['monto' => 100, 'motivo' => 'Gastos operativos', 'medio_recepcion' => 'efectivo'])->json('data.id');
 
     Event::fake([CajaActualizada::class]);
 

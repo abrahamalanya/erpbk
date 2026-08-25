@@ -71,7 +71,7 @@ it('auto-rejects pending billetajes when force-closing a caja', function () {
     $asesor->assignRole('asesor');
     Sanctum::actingAs($asesor, ['*']);
     $this->postJson('/api/caja/aperturar')->assertCreated();
-    $this->postJson('/api/billetajes', ['monto' => 100])->assertCreated();
+    $this->postJson('/api/billetajes', ['monto' => 100, 'motivo' => 'Gastos operativos', 'medio_recepcion' => 'efectivo'])->assertCreated();
 
     $caja = Caja::query()->where('user_id', $asesor->id)->firstOrFail();
 

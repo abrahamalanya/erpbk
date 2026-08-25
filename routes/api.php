@@ -3,6 +3,7 @@
 use App\Modules\Caja\Http\Controllers\BilletajeController;
 use App\Modules\Caja\Http\Controllers\BovedaController;
 use App\Modules\Caja\Http\Controllers\CajaController;
+use App\Modules\Caja\Http\Controllers\CuentaBancariaController;
 use App\Modules\Cliente\Http\Controllers\ClienteController;
 use App\Modules\CreditoPrendario\Http\Controllers\BienController;
 use App\Modules\CreditoPrendario\Http\Controllers\ConfiguracionCreditoPrendarioController;
@@ -10,11 +11,13 @@ use App\Modules\CreditoPrendario\Http\Controllers\CreditoPrendarioController;
 use App\Modules\Empresa\Http\Controllers\AgenciaController;
 use App\Modules\Empresa\Http\Controllers\EmpresaController;
 use App\Modules\Sistemas\Http\Controllers\AuthController;
+use App\Modules\Sistemas\Http\Controllers\ConceptoController;
 use App\Modules\Sistemas\Http\Controllers\NotificacionController;
 use App\Modules\Sistemas\Http\Controllers\PermissionController;
 use App\Modules\Sistemas\Http\Controllers\RoleController;
 use App\Modules\Tienda\Http\Controllers\TiendaController;
 use App\Modules\Usuario\Http\Controllers\UserController;
+use App\Nucleo\Http\Controllers\BancoController;
 use Illuminate\Support\Facades\Route;
 
 // ===== AUTH ROUTES (públicas) =====
@@ -49,6 +52,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('caja', [CajaController::class, 'miCaja'])->name('caja.mia');
     Route::post('caja/aperturar', [CajaController::class, 'aperturar'])->name('caja.aperturar');
     Route::post('caja/cerrar', [CajaController::class, 'cerrar'])->name('caja.cerrar');
+    Route::get('caja/cierre/resumen', [CajaController::class, 'resumenCierre'])->name('caja.cierre.resumen');
+    Route::get('caja/movimientos', [CajaController::class, 'movimientos'])->name('caja.movimientos.index');
+    Route::post('caja/movimientos', [CajaController::class, 'registrarMovimiento'])->name('caja.movimientos.registrar');
     Route::apiResource('cajas', CajaController::class)->only(['index', 'show']);
     Route::post('cajas/{caja}/cerrar-forzado', [CajaController::class, 'cerrarForzado'])->name('cajas.cerrar-forzado');
     Route::post('cajas/{caja}/reabrir', [CajaController::class, 'reabrir'])->name('cajas.reabrir');
@@ -58,11 +64,27 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('bovedas/{boveda}/cerrar', [BovedaController::class, 'cerrar'])->name('bovedas.cerrar');
     Route::post('bovedas/{boveda}/aperturar', [BovedaController::class, 'aperturar'])->name('bovedas.aperturar');
     Route::post('bovedas/{boveda}/inyectar', [BovedaController::class, 'inyectar'])->name('bovedas.inyectar');
+    Route::get('bovedas/{boveda}/inyecciones', [BovedaController::class, 'inyecciones'])->name('bovedas.inyecciones');
+    Route::delete('bovedas/{boveda}/inyecciones/{movimiento}', [BovedaController::class, 'eliminarInyeccion'])->name('bovedas.inyecciones.eliminar');
     Route::post('bovedas/{boveda}/reabrir', [BovedaController::class, 'reabrir'])->name('bovedas.reabrir');
+
+    Route::apiResource('bancos', BancoController::class);
+
+    Route::get('bovedas/{boveda}/cuentas-bancarias', [CuentaBancariaController::class, 'index'])->name('bovedas.cuentas-bancarias.index');
+    Route::post('bovedas/{boveda}/cuentas-bancarias', [CuentaBancariaController::class, 'store'])->name('bovedas.cuentas-bancarias.store');
+    Route::get('cuentas-bancarias/{cuentaBancaria}', [CuentaBancariaController::class, 'show'])->name('cuentas-bancarias.show');
+    Route::put('cuentas-bancarias/{cuentaBancaria}', [CuentaBancariaController::class, 'update'])->name('cuentas-bancarias.update');
+    Route::delete('cuentas-bancarias/{cuentaBancaria}', [CuentaBancariaController::class, 'destroy'])->name('cuentas-bancarias.destroy');
+    Route::post('cuentas-bancarias/{cuentaBancaria}/movimiento', [CuentaBancariaController::class, 'movimiento'])->name('cuentas-bancarias.movimiento');
+    Route::get('cuentas-bancarias/{cuentaBancaria}/movimientos', [CuentaBancariaController::class, 'movimientos'])->name('cuentas-bancarias.movimientos');
+    Route::post('cuentas-bancarias/{cuentaBancaria}/conciliar', [CuentaBancariaController::class, 'conciliar'])->name('cuentas-bancarias.conciliar');
+    Route::get('cuentas-bancarias/{cuentaBancaria}/conciliaciones', [CuentaBancariaController::class, 'conciliaciones'])->name('cuentas-bancarias.conciliaciones');
 
     Route::apiResource('billetajes', BilletajeController::class)->only(['index', 'store']);
     Route::post('billetajes/{billetaje}/aprobar', [BilletajeController::class, 'aprobar'])->name('billetajes.aprobar');
     Route::post('billetajes/{billetaje}/rechazar', [BilletajeController::class, 'rechazar'])->name('billetajes.rechazar');
+
+    Route::apiResource('conceptos', ConceptoController::class)->only(['index', 'store', 'update', 'destroy']);
 
     Route::apiResource('bienes', BienController::class)->only(['index', 'store', 'show', 'update'])->parameters(['bienes' => 'bien']);
 

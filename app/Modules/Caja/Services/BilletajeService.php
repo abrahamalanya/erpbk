@@ -23,9 +23,10 @@ final class BilletajeService
         private readonly CajaBovedaHierarchyService $hierarchy,
         private readonly BovedaService $bovedaService,
         private readonly NotificacionService $notificaciones,
+        private readonly CuentaBancariaService $cuentaBancariaService,
     ) {}
 
-    public function solicitar(User $actor, string $monto): Billetaje
+    public function solicitar(User $actor, string $monto, string $motivo, string $medioRecepcion, ?string $datosRecepcion): Billetaje
     {
         $caja = Caja::query()->where('user_id', $actor->id)->first();
         $ciclo = $caja?->cicloAbierto()->first();
@@ -42,6 +43,9 @@ final class BilletajeService
             'empresa_id' => $ciclo->empresa_id,
             'monto' => $monto,
             'estado' => 'pendiente',
+            'motivo' => $motivo,
+            'medio_recepcion' => $medioRecepcion,
+            'datos_recepcion' => $datosRecepcion,
             'solicitado_por' => $actor->id,
         ]);
 
@@ -51,53 +55,35 @@ final class BilletajeService
         return $billetaje;
     }
 
-    public function aprobar(Billetaje $billetaje, User $aprobador): Billetaje
-    {
+    public function aprobar(
+        Billetaje $billetaje,
+        User $aprobador,
+        string $medioEgreso = 'efectivo',
+        ?string $canalEgreso = null,
+        ?int $cuentaBancariaId = null,
+    ): Billetaje {
         $this->asegurarPendiente($billetaje);
 
-        return DB::transaction(function () use ($billetaje, $aprobador): Billetaje {
-            $bovedaCiclo = $this->bovedaService->asegurarAbierta($billetaje->boveda, $aprobador);
-            $saldoActual = $this->bovedaService->calcularSaldo($bovedaCiclo);
-
-            if (bccomp($billetaje->monto, $saldoActual, 2) > 0) {
-                throw new DomainException('La bóveda no tiene saldo suficiente para entregar este billetaje.');
+        return DB::transaction(function () use ($billetaje, $aprobador, $medioEgreso, $canalEgreso, $cuentaBancariaId): Billetaje {
+            if ($medioEgreso === 'cuenta_bancaria') {
+                $this->aprobarPorCuentaBancaria($billetaje, $aprobador, $canalEgreso, $cuentaBancariaId);
+            } else {
+                $this->aprobarEnEfectivo($billetaje, $aprobador);
             }
 
-            CajaMovimiento::query()->create([
-                'caja_ciclo_id' => $billetaje->caja_ciclo_id,
-                'empresa_id' => $billetaje->empresa_id,
-                'tipo' => 'billetaje',
-                'monto' => $billetaje->monto,
-                'concepto' => 'Billetaje aprobado',
-                'billetaje_id' => $billetaje->id,
-                'registrado_por' => $aprobador->id,
-                'fecha_caja' => $billetaje->cajaCiclo->fecha,
-            ]);
-
-            $ciclo = $billetaje->cajaCiclo;
-            CajaActualizada::dispatch($ciclo->caja, $ciclo->saldoActual());
-
-            BovedaMovimiento::query()->create([
-                'boveda_ciclo_id' => $bovedaCiclo->id,
-                'empresa_id' => $bovedaCiclo->empresa_id,
-                'tipo' => 'egreso',
-                'monto' => $billetaje->monto,
-                'concepto' => 'Billetaje entregado',
-                'billetaje_id' => $billetaje->id,
-                'caja_ciclo_id' => $billetaje->caja_ciclo_id,
-                'registrado_por' => $aprobador->id,
-                'fecha_boveda' => $bovedaCiclo->fecha,
-            ]);
-
+            $bovedaFresca = $billetaje->boveda->fresh(['cicloAbierto']);
             BovedaActualizada::dispatch(
                 $billetaje->boveda,
-                $bovedaCiclo->fresh()->saldoActual(),
+                $bovedaFresca->cicloAbierto ? $this->cuentaBancariaService->saldoTotalBoveda($bovedaFresca)['total'] : null,
                 $this->hierarchy->controladoresDe($billetaje->boveda),
             );
 
             $billetaje->update([
                 'estado' => 'aprobado',
                 'aprobado_por' => $aprobador->id,
+                'medio_egreso' => $medioEgreso,
+                'canal_egreso' => $canalEgreso,
+                'cuenta_bancaria_id' => $cuentaBancariaId,
                 'fecha_resolucion' => now(),
             ]);
 
@@ -107,6 +93,84 @@ final class BilletajeService
 
             return $billetaje;
         });
+    }
+
+    /**
+     * Cash path (the historical, still-default behaviour): the cash leaves
+     * the bóveda's ciclo AND lands as physical cash in the caja — both
+     * ledgers move together, exactly as before this method was split out.
+     */
+    private function aprobarEnEfectivo(Billetaje $billetaje, User $aprobador): void
+    {
+        $bovedaCiclo = $this->bovedaService->asegurarAbierta($billetaje->boveda, $aprobador);
+        $saldoActual = $this->bovedaService->calcularSaldo($bovedaCiclo);
+
+        if (bccomp($billetaje->monto, $saldoActual, 2) > 0) {
+            throw new DomainException('La bóveda no tiene saldo suficiente para entregar este billetaje.');
+        }
+
+        CajaMovimiento::query()->create([
+            'caja_ciclo_id' => $billetaje->caja_ciclo_id,
+            'empresa_id' => $billetaje->empresa_id,
+            'tipo' => 'billetaje',
+            'monto' => $billetaje->monto,
+            'concepto' => 'Billetaje aprobado',
+            'billetaje_id' => $billetaje->id,
+            'registrado_por' => $aprobador->id,
+            'fecha_caja' => $billetaje->cajaCiclo->fecha,
+        ]);
+
+        $ciclo = $billetaje->cajaCiclo;
+        CajaActualizada::dispatch($ciclo->caja, $ciclo->saldoActual());
+
+        BovedaMovimiento::query()->create([
+            'boveda_ciclo_id' => $bovedaCiclo->id,
+            'empresa_id' => $bovedaCiclo->empresa_id,
+            'tipo' => 'egreso',
+            'monto' => $billetaje->monto,
+            'concepto' => 'Billetaje entregado',
+            'billetaje_id' => $billetaje->id,
+            'caja_ciclo_id' => $billetaje->caja_ciclo_id,
+            'registrado_por' => $aprobador->id,
+            'fecha_boveda' => $bovedaCiclo->fecha,
+        ]);
+    }
+
+    /**
+     * Bank path (yape/plin/transferencia/depósito): the money never becomes
+     * physical cash, so it only moves through the cuenta bancaria's own
+     * ledger — no CajaMovimiento/BovedaMovimiento is created here, otherwise
+     * the caja's cierre would count cash that was never physically handed
+     * over.
+     */
+    private function aprobarPorCuentaBancaria(Billetaje $billetaje, User $aprobador, ?string $canalEgreso, ?int $cuentaBancariaId): void
+    {
+        if ($cuentaBancariaId === null) {
+            throw new DomainException('Debes seleccionar la cuenta bancaria de la que sale el dinero.');
+        }
+
+        $cuenta = $this->cuentaBancariaService->perteneceABoveda($billetaje->boveda, $cuentaBancariaId);
+
+        if ($canalEgreso === 'yape' && ! $cuenta->acepta_yape) {
+            throw new DomainException('La cuenta bancaria seleccionada no está afiliada a Yape.');
+        }
+
+        if ($canalEgreso === 'plin' && ! $cuenta->acepta_plin) {
+            throw new DomainException('La cuenta bancaria seleccionada no está afiliada a Plin.');
+        }
+
+        if (bccomp($billetaje->monto, $cuenta->saldoActual(), 2) > 0) {
+            throw new DomainException('La cuenta bancaria no tiene saldo suficiente para entregar este billetaje.');
+        }
+
+        $this->cuentaBancariaService->registrarMovimiento(
+            $cuenta,
+            $aprobador,
+            'egreso',
+            $billetaje->monto,
+            'Billetaje entregado por '.$canalEgreso,
+            'billetaje',
+        );
     }
 
     public function rechazar(Billetaje $billetaje, User $aprobador, ?string $motivo = null): Billetaje

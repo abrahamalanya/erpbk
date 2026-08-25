@@ -2,6 +2,7 @@
 
 namespace App\Modules\Caja\Http\Controllers;
 
+use App\Modules\Caja\Http\Requests\AprobarBilletajeRequest;
 use App\Modules\Caja\Http\Requests\RechazarBilletajeRequest;
 use App\Modules\Caja\Http\Requests\StoreBilletajeRequest;
 use App\Modules\Caja\Models\Billetaje;
@@ -35,16 +36,28 @@ class BilletajeController extends Controller
     {
         Gate::authorize('create', Billetaje::class);
 
-        $billetaje = $this->billetajeService->solicitar($request->user(), (string) $request->validated('monto'));
+        $billetaje = $this->billetajeService->solicitar(
+            $request->user(),
+            (string) $request->validated('monto'),
+            $request->validated('motivo'),
+            $request->validated('medio_recepcion'),
+            $request->validated('datos_recepcion'),
+        );
 
         return $this->successResponse($billetaje, 'Billetaje solicitado', 201);
     }
 
-    public function aprobar(Billetaje $billetaje): JsonResponse
+    public function aprobar(AprobarBilletajeRequest $request, Billetaje $billetaje): JsonResponse
     {
         Gate::authorize('aprobar', $billetaje);
 
-        $billetaje = $this->billetajeService->aprobar($billetaje, request()->user());
+        $billetaje = $this->billetajeService->aprobar(
+            $billetaje,
+            $request->user(),
+            $request->validated('medio_egreso', 'efectivo'),
+            $request->validated('canal_egreso'),
+            $request->validated('cuenta_bancaria_id') !== null ? (int) $request->validated('cuenta_bancaria_id') : null,
+        );
 
         return $this->successResponse($billetaje, 'Billetaje aprobado');
     }

@@ -54,6 +54,11 @@ class CajaPolicy
         return $user->can('cajas.cerrar');
     }
 
+    public function registrarMovimiento(User $user): bool
+    {
+        return $user->can('caja_movimientos.crear');
+    }
+
     public function cerrarForzado(User $user, Caja $caja): bool
     {
         return $user->can('cajas.cerrar_forzado') && $this->hierarchy->puedeForzarCierre($user, $caja);

@@ -2,12 +2,14 @@
 
 namespace App\Modules\Caja\Models;
 
+use App\Modules\Sistemas\Models\Concepto;
 use App\Modules\Usuario\Models\User;
 use App\Nucleo\Concerns\BelongsToTenant;
 use Database\Factories\CajaMovimientoFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
 
 class CajaMovimiento extends Model
 {
@@ -25,6 +27,7 @@ class CajaMovimiento extends Model
         'tipo',
         'monto',
         'concepto',
+        'concepto_id',
         'billetaje_id',
         'registrado_por',
         'fecha_caja',
@@ -53,9 +56,19 @@ class CajaMovimiento extends Model
         return $this->belongsTo(Billetaje::class);
     }
 
+    public function concepto(): BelongsTo
+    {
+        return $this->belongsTo(Concepto::class);
+    }
+
     public function registradoPor(): BelongsTo
     {
         return $this->belongsTo(User::class, 'registrado_por');
+    }
+
+    public function fotos(): MorphMany
+    {
+        return $this->morphMany(MovimientoFoto::class, 'fotografiable');
     }
 
     protected static function newFactory(): CajaMovimientoFactory

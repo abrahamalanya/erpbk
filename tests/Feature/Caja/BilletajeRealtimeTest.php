@@ -26,7 +26,7 @@ it('broadcasts to the solicitante and the controlling administrador_agencia when
 
     Sanctum::actingAs($asesor, ['*']);
     $this->postJson('/api/caja/aperturar')->assertCreated();
-    $this->postJson('/api/billetajes', ['monto' => 100])->assertCreated();
+    $this->postJson('/api/billetajes', ['monto' => 100, 'motivo' => 'Gastos operativos', 'medio_recepcion' => 'efectivo'])->assertCreated();
 
     Event::assertDispatched(BilletajeActualizado::class, function (BilletajeActualizado $event) use ($asesor, $administradorAgencia): bool {
         $destinatarioIds = $event->destinatarios->pluck('id')->all();
@@ -51,7 +51,7 @@ it('broadcasts to the solicitante when a billetaje is aprobado', function () {
     $asesor->assignRole('asesor');
     Sanctum::actingAs($asesor, ['*']);
     $this->postJson('/api/caja/aperturar')->assertCreated();
-    $billetajeId = $this->postJson('/api/billetajes', ['monto' => 100])->json('data.id');
+    $billetajeId = $this->postJson('/api/billetajes', ['monto' => 100, 'motivo' => 'Gastos operativos', 'medio_recepcion' => 'efectivo'])->json('data.id');
 
     Event::fake([BilletajeActualizado::class]);
 
@@ -70,7 +70,7 @@ it('broadcasts to the solicitante when a billetaje is rechazado', function () {
     $asesor->assignRole('asesor');
     Sanctum::actingAs($asesor, ['*']);
     $this->postJson('/api/caja/aperturar')->assertCreated();
-    $billetajeId = $this->postJson('/api/billetajes', ['monto' => 100])->json('data.id');
+    $billetajeId = $this->postJson('/api/billetajes', ['monto' => 100, 'motivo' => 'Gastos operativos', 'medio_recepcion' => 'efectivo'])->json('data.id');
 
     Event::fake([BilletajeActualizado::class]);
 

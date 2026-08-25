@@ -25,9 +25,15 @@ class Billetaje extends Model
         'empresa_id',
         'monto',
         'estado',
+        'motivo',
+        'medio_recepcion',
+        'datos_recepcion',
         'solicitado_por',
         'aprobado_por',
         'motivo_rechazo',
+        'medio_egreso',
+        'canal_egreso',
+        'cuenta_bancaria_id',
         'fecha_resolucion',
     ];
 
@@ -62,6 +68,11 @@ class Billetaje extends Model
     public function aprobadoPor(): BelongsTo
     {
         return $this->belongsTo(User::class, 'aprobado_por');
+    }
+
+    public function cuentaBancaria(): BelongsTo
+    {
+        return $this->belongsTo(CuentaBancaria::class);
     }
 
     protected static function newFactory(): BilletajeFactory
