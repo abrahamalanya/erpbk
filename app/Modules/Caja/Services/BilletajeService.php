@@ -15,6 +15,7 @@ use App\Modules\Caja\Notifications\BilletajeSolicitadoNotification;
 use App\Modules\Sistemas\Services\NotificacionService;
 use App\Modules\Usuario\Models\User;
 use DomainException;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 
 final class BilletajeService
@@ -26,7 +27,7 @@ final class BilletajeService
         private readonly CuentaBancariaService $cuentaBancariaService,
     ) {}
 
-    public function solicitar(User $actor, string $monto, string $motivo, string $medioRecepcion, ?string $datosRecepcion): Billetaje
+    public function solicitar(User $actor, string $monto, string $motivo, string $medioRecepcion, ?string $datosRecepcion, ?int $clienteId = null): Billetaje
     {
         $caja = Caja::query()->where('user_id', $actor->id)->first();
         $ciclo = $caja?->cicloAbierto()->first();
@@ -46,6 +47,7 @@ final class BilletajeService
             'motivo' => $motivo,
             'medio_recepcion' => $medioRecepcion,
             'datos_recepcion' => $datosRecepcion,
+            'cliente_id' => $clienteId,
             'solicitado_por' => $actor->id,
         ]);
 
@@ -61,14 +63,22 @@ final class BilletajeService
         string $medioEgreso = 'efectivo',
         ?string $canalEgreso = null,
         ?int $cuentaBancariaId = null,
+        ?UploadedFile $comprobante = null,
     ): Billetaje {
         $this->asegurarPendiente($billetaje);
 
-        return DB::transaction(function () use ($billetaje, $aprobador, $medioEgreso, $canalEgreso, $cuentaBancariaId): Billetaje {
+        return DB::transaction(function () use ($billetaje, $aprobador, $medioEgreso, $canalEgreso, $cuentaBancariaId, $comprobante): Billetaje {
             if ($medioEgreso === 'cuenta_bancaria') {
                 $this->aprobarPorCuentaBancaria($billetaje, $aprobador, $canalEgreso, $cuentaBancariaId);
             } else {
                 $this->aprobarEnEfectivo($billetaje, $aprobador);
+            }
+
+            if ($comprobante) {
+                $billetaje->fotos()->create([
+                    'tipo' => 'comprobante',
+                    'path' => $comprobante->store("billetajes/{$billetaje->id}", 'public'),
+                ]);
             }
 
             $bovedaFresca = $billetaje->boveda->fresh(['cicloAbierto']);

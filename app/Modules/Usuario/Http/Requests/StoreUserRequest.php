@@ -3,6 +3,7 @@
 namespace App\Modules\Usuario\Http\Requests;
 
 use App\Modules\Empresa\Models\Agencia;
+use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Usuario\Models\User;
 use App\Modules\Usuario\Services\UserHierarchyService;
 use Illuminate\Contracts\Validation\ValidationRule;
@@ -33,8 +34,11 @@ class StoreUserRequest extends FormRequest
         return [
             'nombre' => ['required', 'string', 'max:255'],
             'apellido' => ['required', 'string', 'max:255'],
-            'email' => ['required', 'email', 'max:255', 'unique:users,email'],
-            'password' => ['required', 'string', 'min:8'],
+            'dni' => ['required', 'string', 'regex:/^\d{8}$/', 'unique:users,dni'],
+            'usuario' => ['nullable', 'string', 'max:50', 'alpha_dash'],
+            'telefono' => ['nullable', 'string', 'max:20'],
+            'email' => ['nullable', 'email', 'max:255', 'unique:users,email'],
+            'password' => ['nullable', 'string', 'min:8'],
             'estado' => ['sometimes', Rule::in(['activo', 'inactivo'])],
             'role' => ['required', 'string', Rule::in($hierarchy->assignableRoles($actor))],
             'empresa_id' => [
@@ -61,6 +65,11 @@ class StoreUserRequest extends FormRequest
         $validator->after(function (Validator $validator): void {
             $actor = $this->user();
             $role = $this->input('role');
+            $empresaId = $actor->hasRole('sistemas') ? $this->input('empresa_id') : $actor->empresa_id;
+
+            if (! $this->filled('email') && ! Empresa::find($empresaId)?->prefijo) {
+                $validator->errors()->add('email', 'El email es requerido: la empresa no tiene un prefijo de correo configurado.');
+            }
 
             if (! is_string($role)) {
                 return;
@@ -68,7 +77,6 @@ class StoreUserRequest extends FormRequest
 
             $agenciaLevel = in_array($role, ['administrador_agencia', 'peinadora', 'supervisor', 'asesor'], true);
             $agenciaId = $actor->hasRole('administrador_agencia') ? $actor->agencia_id : $this->input('agencia_id');
-            $empresaId = $actor->hasRole('sistemas') ? $this->input('empresa_id') : $actor->empresa_id;
 
             if ($agenciaLevel && $agenciaId) {
                 $agencia = Agencia::find($agenciaId);
@@ -100,9 +108,10 @@ class StoreUserRequest extends FormRequest
         return [
             'nombre.required' => 'El nombre es requerido',
             'apellido.required' => 'El apellido es requerido',
-            'email.required' => 'El email es requerido',
+            'dni.required' => 'El DNI es requerido',
+            'dni.regex' => 'El DNI debe tener 8 dígitos',
+            'dni.unique' => 'Ya existe un usuario con este DNI',
             'email.unique' => 'Ya existe un usuario con este email',
-            'password.required' => 'La contraseña es requerida',
             'password.min' => 'La contraseña debe tener al menos 8 caracteres',
             'role.required' => 'El rol es requerido',
             'role.in' => 'No tienes permiso para asignar este rol',

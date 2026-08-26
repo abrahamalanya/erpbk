@@ -4,6 +4,7 @@ namespace App\Modules\CreditoPrendario\Http\Requests;
 
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class RefrendarCreditoRequest extends FormRequest
 {
@@ -24,6 +25,8 @@ class RefrendarCreditoRequest extends FormRequest
     {
         return [
             'monto_pagado' => ['required', 'numeric', 'min:0.01'],
+            'medio' => ['required', 'string', Rule::in(['efectivo', 'yape', 'plin', 'transferencia'])],
+            'comprobante' => ['required_unless:medio,efectivo', 'nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:8192'],
         ];
     }
 
@@ -37,6 +40,9 @@ class RefrendarCreditoRequest extends FormRequest
         return [
             'monto_pagado.required' => 'El monto pagado es requerido',
             'monto_pagado.min' => 'El monto pagado debe ser mayor a cero',
+            'medio.required' => 'El medio de cobro es requerido',
+            'medio.in' => 'El medio de cobro no es válido',
+            'comprobante.required_unless' => 'Debes subir un comprobante para este medio de cobro',
         ];
     }
 }

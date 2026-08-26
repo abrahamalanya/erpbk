@@ -26,7 +26,7 @@ class BilletajeController extends Controller
     {
         Gate::authorize('viewAny', Billetaje::class);
 
-        $query = Billetaje::query()->with(['boveda', 'solicitadoPor', 'aprobadoPor']);
+        $query = Billetaje::query()->with(['boveda', 'solicitadoPor', 'aprobadoPor', 'cliente', 'fotos']);
         $query = $this->hierarchy->billetajesVisibles($query, request()->user());
 
         return $this->successResponse($query->latest()->paginate(15));
@@ -42,6 +42,7 @@ class BilletajeController extends Controller
             $request->validated('motivo'),
             $request->validated('medio_recepcion'),
             $request->validated('datos_recepcion'),
+            $request->validated('cliente_id') !== null ? (int) $request->validated('cliente_id') : null,
         );
 
         return $this->successResponse($billetaje, 'Billetaje solicitado', 201);
@@ -57,6 +58,7 @@ class BilletajeController extends Controller
             $request->validated('medio_egreso', 'efectivo'),
             $request->validated('canal_egreso'),
             $request->validated('cuenta_bancaria_id') !== null ? (int) $request->validated('cuenta_bancaria_id') : null,
+            $request->file('comprobante'),
         );
 
         return $this->successResponse($billetaje, 'Billetaje aprobado');

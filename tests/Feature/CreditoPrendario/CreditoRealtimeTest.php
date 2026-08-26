@@ -13,7 +13,9 @@ use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Usuario\Models\User;
 use Database\Seeders\PermissionSeeder;
 use Database\Seeders\RoleSeeder;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
 
 beforeEach(function () {
@@ -107,7 +109,7 @@ it('broadcasts the new chained crédito to the asesor and controlling administra
 
     Sanctum::actingAs($this->asesor, ['*']);
     $sugerido = $this->getJson("/api/creditos-prendarios/{$activo->id}")->json('data.monto_refrendo_sugerido.total');
-    $response = $this->postJson("/api/creditos-prendarios/{$activo->id}/refrendar", ['monto_pagado' => $sugerido])
+    $response = $this->postJson("/api/creditos-prendarios/{$activo->id}/refrendar", ['monto_pagado' => $sugerido, 'medio' => 'efectivo'])
         ->assertCreated();
 
     $nuevoId = $response->json('data.id');
@@ -118,7 +120,7 @@ it('broadcasts the new chained crédito to the asesor and controlling administra
         && $event->destinatarios->pluck('id')->contains($this->adminAgencia->id));
 });
 
-it('broadcasts to the asesor and controlling administrador_agencia when a crédito is liquidado', function () {
+it('broadcasts to the asesor and controlling administrador_agencia when a crédito is liquidado_pendiente', function () {
     $activo = CreditoPrendario::factory()->paraBien($this->bien)
         ->activo()
         ->create(['registrado_por' => $this->asesor->id, 'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id]);
@@ -126,8 +128,32 @@ it('broadcasts to the asesor and controlling administrador_agencia when a crédi
     Event::fake([CreditoPrendarioActualizado::class]);
 
     Sanctum::actingAs($this->asesor, ['*']);
-    $this->postJson("/api/creditos-prendarios/{$activo->id}/liquidar", ['monto_pagado' => 1000000])
+    $this->postJson("/api/creditos-prendarios/{$activo->id}/liquidar", ['monto_pagado' => 1000000, 'medio' => 'efectivo'])
         ->assertSuccessful();
+
+    Event::assertDispatched(CreditoPrendarioActualizado::class, fn (CreditoPrendarioActualizado $event): bool => $event->credito->id === $activo->id
+        && $event->credito->estado === 'liquidado_pendiente'
+        && $event->destinatarios->pluck('id')->contains($this->asesor->id)
+        && $event->destinatarios->pluck('id')->contains($this->adminAgencia->id));
+});
+
+it('broadcasts a second time, now as liquidado, once the acta de devolución is firmada', function () {
+    Storage::fake('public');
+
+    $activo = CreditoPrendario::factory()->paraBien($this->bien)
+        ->activo()
+        ->create(['registrado_por' => $this->asesor->id, 'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id]);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$activo->id}/liquidar", ['monto_pagado' => 1000000, 'medio' => 'efectivo'])
+        ->assertSuccessful();
+
+    $devolucion = CreditoPrendario::find($activo->id)->documentos()->where('tipo', 'devolucion')->firstOrFail();
+
+    Event::fake([CreditoPrendarioActualizado::class]);
+    $this->postJson("/api/creditos-prendarios/{$activo->id}/documentos/{$devolucion->id}/subir-firmado", [
+        'archivo' => UploadedFile::fake()->create('firmado.pdf', 100, 'application/pdf'),
+    ])->assertSuccessful();
 
     Event::assertDispatched(CreditoPrendarioActualizado::class, fn (CreditoPrendarioActualizado $event): bool => $event->credito->id === $activo->id
         && $event->credito->estado === 'liquidado'

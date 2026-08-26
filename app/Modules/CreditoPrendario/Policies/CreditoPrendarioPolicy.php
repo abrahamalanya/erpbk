@@ -89,6 +89,19 @@ class CreditoPrendarioPolicy
     }
 
     /**
+     * Same broad authority as refrendar() — an asesor/supervisor can trigger
+     * an adenda (collect the interest, generate the pendiente successor),
+     * they just can't set a new tasa de interés/tipo_cuota themselves
+     * (CreditoPrendarioService::adendar() defaults both to the current
+     * crédito's values when omitted); that's left for an admin to edit
+     * afterward via editar()/actualizarInteres() while it's pendiente/aprobado.
+     */
+    public function adendar(User $user, CreditoPrendario $credito): bool
+    {
+        return $user->can('creditos_prendarios.adendar') && $this->hierarchy->puedeVer($user, $credito);
+    }
+
+    /**
      * Same authority as aprobar/rechazar — editing terms (e.g. a custom
      * interest rate for an exclusive client) is an admin decision, not tied
      * to a specific actor the way subsanar() is.

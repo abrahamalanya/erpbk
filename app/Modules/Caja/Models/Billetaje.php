@@ -2,12 +2,14 @@
 
 namespace App\Modules\Caja\Models;
 
+use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Usuario\Models\User;
 use App\Nucleo\Concerns\BelongsToTenant;
 use Database\Factories\BilletajeFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\MorphMany;
 
 class Billetaje extends Model
 {
@@ -28,6 +30,7 @@ class Billetaje extends Model
         'motivo',
         'medio_recepcion',
         'datos_recepcion',
+        'cliente_id',
         'solicitado_por',
         'aprobado_por',
         'motivo_rechazo',
@@ -73,6 +76,16 @@ class Billetaje extends Model
     public function cuentaBancaria(): BelongsTo
     {
         return $this->belongsTo(CuentaBancaria::class);
+    }
+
+    public function cliente(): BelongsTo
+    {
+        return $this->belongsTo(Cliente::class);
+    }
+
+    public function fotos(): MorphMany
+    {
+        return $this->morphMany(MovimientoFoto::class, 'fotografiable');
     }
 
     protected static function newFactory(): BilletajeFactory

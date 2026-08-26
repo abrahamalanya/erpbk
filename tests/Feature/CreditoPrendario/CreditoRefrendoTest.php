@@ -1,5 +1,7 @@
 <?php
 
+use App\Modules\Caja\Models\Caja;
+use App\Modules\Caja\Models\CajaCiclo;
 use App\Modules\Cliente\Models\Cliente;
 use App\Modules\CreditoPrendario\Models\Bien;
 use App\Modules\CreditoPrendario\Models\ConfiguracionCreditoPrendario;
@@ -20,9 +22,15 @@ beforeEach(function () {
     $this->asesor->assignRole('asesor');
     $this->cliente = Cliente::factory()->forAgencia($this->agencia)->create();
     $this->bien = Bien::factory()->paraCliente($this->cliente)->create(['tipo' => 'electro']);
+
+    $caja = Caja::factory()->create(['user_id' => $this->asesor->id, 'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id]);
+    CajaCiclo::query()->create([
+        'caja_id' => $caja->id, 'empresa_id' => $caja->empresa_id, 'fecha' => now()->toDateString(),
+        'estado' => 'abierta', 'saldo_apertura' => 0, 'abierta_at' => now(),
+    ]);
 });
 
-it('creates a new chained crédito on refrendo and marks the original as refrendado, generating only an adenda', function () {
+it('creates a new chained crédito on refrendo and marks the original as refrendado, keeping the same documentos as a new registro', function () {
     ConfiguracionCreditoPrendario::factory()->deEmpresa($this->empresa)->create([
         'plazo_dias' => 30, 'dias_espera_mora' => 15, 'tasa_mora_diaria' => 1, 'max_refrendos' => null,
     ]);
@@ -34,7 +42,7 @@ it('creates a new chained crédito on refrendo and marks the original as refrend
     Sanctum::actingAs($this->asesor, ['*']);
 
     $sugerido = $this->getJson("/api/creditos-prendarios/{$original->id}")->json('data.monto_refrendo_sugerido.total');
-    $response = $this->postJson("/api/creditos-prendarios/{$original->id}/refrendar", ['monto_pagado' => $sugerido])
+    $response = $this->postJson("/api/creditos-prendarios/{$original->id}/refrendar", ['monto_pagado' => $sugerido, 'medio' => 'efectivo'])
         ->assertCreated();
 
     expect($response->json('data.bienes.0.id'))->toBe($this->bien->id)
@@ -46,7 +54,7 @@ it('creates a new chained crédito on refrendo and marks the original as refrend
 
     $nuevoId = $response->json('data.id');
     $tipos = CreditoPrendario::find($nuevoId)->documentos()->pluck('tipo')->all();
-    expect($tipos)->toBe(['adenda']);
+    expect($tipos)->toEqualCanonicalizing(['contrato', 'declaracion', 'fotos']);
 });
 
 it('rejects refrendo once max_refrendos is reached', function () {
@@ -60,7 +68,7 @@ it('rejects refrendo once max_refrendos is reached', function () {
 
     Sanctum::actingAs($this->asesor, ['*']);
 
-    $this->postJson("/api/creditos-prendarios/{$original->id}/refrendar", ['monto_pagado' => 50])
+    $this->postJson("/api/creditos-prendarios/{$original->id}/refrendar", ['monto_pagado' => 50, 'medio' => 'efectivo'])
         ->assertUnprocessable();
 });
 
@@ -74,7 +82,7 @@ it('rejects refrendo on a crédito still pendiente', function () {
 
     Sanctum::actingAs($this->asesor, ['*']);
 
-    $this->postJson("/api/creditos-prendarios/{$pendiente->id}/refrendar", ['monto_pagado' => 50])
+    $this->postJson("/api/creditos-prendarios/{$pendiente->id}/refrendar", ['monto_pagado' => 50, 'medio' => 'efectivo'])
         ->assertUnprocessable();
 });
 
@@ -91,10 +99,10 @@ it('rejects refrendo with a monto_interes_pagado below the calculated prorated i
 
     Sanctum::actingAs($this->asesor, ['*']);
 
-    $this->postJson("/api/creditos-prendarios/{$activo->id}/refrendar", ['monto_pagado' => 50])
+    $this->postJson("/api/creditos-prendarios/{$activo->id}/refrendar", ['monto_pagado' => 50, 'medio' => 'efectivo'])
         ->assertUnprocessable();
 
-    $this->postJson("/api/creditos-prendarios/{$activo->id}/refrendar", ['monto_pagado' => 100])
+    $this->postJson("/api/creditos-prendarios/{$activo->id}/refrendar", ['monto_pagado' => 100, 'medio' => 'efectivo'])
         ->assertCreated();
 });
 
@@ -121,7 +129,7 @@ it('rejects refrendo with a zero or negative monto_pagado', function () {
 
     Sanctum::actingAs($this->asesor, ['*']);
 
-    $this->postJson("/api/creditos-prendarios/{$activo->id}/refrendar", ['monto_pagado' => 0])
+    $this->postJson("/api/creditos-prendarios/{$activo->id}/refrendar", ['monto_pagado' => 0, 'medio' => 'efectivo'])
         ->assertUnprocessable();
 });
 
@@ -137,7 +145,7 @@ it('rejects refrendo when monto_pagado covers the full total, suggesting Liquida
 
     Sanctum::actingAs($this->asesor, ['*']);
 
-    $this->postJson("/api/creditos-prendarios/{$activo->id}/refrendar", ['monto_pagado' => 1100])
+    $this->postJson("/api/creditos-prendarios/{$activo->id}/refrendar", ['monto_pagado' => 1100, 'medio' => 'efectivo'])
         ->assertUnprocessable()
         ->assertJsonPath('message', 'El monto pagado (1100) cubre el total del crédito (1100.00); selecciona Liquidar para cancelarlo.');
 });
@@ -154,7 +162,7 @@ it('abona a capital cuando el monto pagado supera el interés, generando un suce
 
     Sanctum::actingAs($this->asesor, ['*']);
 
-    $response = $this->postJson("/api/creditos-prendarios/{$activo->id}/refrendar", ['monto_pagado' => 300])
+    $response = $this->postJson("/api/creditos-prendarios/{$activo->id}/refrendar", ['monto_pagado' => 300, 'medio' => 'efectivo'])
         ->assertCreated();
 
     expect($response->json('data.monto_prestamo'))->toBe('800.00');

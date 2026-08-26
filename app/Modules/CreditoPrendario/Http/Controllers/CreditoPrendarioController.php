@@ -3,6 +3,7 @@
 namespace App\Modules\CreditoPrendario\Http\Controllers;
 
 use App\Modules\CreditoPrendario\Http\Requests\ActualizarInteresCreditoRequest;
+use App\Modules\CreditoPrendario\Http\Requests\AdendarCreditoRequest;
 use App\Modules\CreditoPrendario\Http\Requests\DesembolsarCreditoRequest;
 use App\Modules\CreditoPrendario\Http\Requests\LiquidarCreditoRequest;
 use App\Modules\CreditoPrendario\Http\Requests\RechazarCreditoRequest;
@@ -134,7 +135,15 @@ class CreditoPrendarioController extends Controller
     {
         Gate::authorize('refrendar', $credito);
 
-        $nuevo = $this->creditoService->refrendar($credito, $request->user(), (string) $request->validated('monto_pagado'));
+        $data = $request->validated();
+
+        $nuevo = $this->creditoService->refrendar(
+            $credito,
+            $request->user(),
+            (string) $data['monto_pagado'],
+            $data['medio'],
+            $request->file('comprobante'),
+        );
 
         return $this->successResponse($nuevo, 'Crédito refrendado', 201);
     }
@@ -143,9 +152,40 @@ class CreditoPrendarioController extends Controller
     {
         Gate::authorize('liquidar', $credito);
 
-        $credito = $this->creditoService->liquidar($credito, $request->user(), (string) $request->validated('monto_pagado'));
+        $data = $request->validated();
+
+        $credito = $this->creditoService->liquidar(
+            $credito,
+            $request->user(),
+            (string) $data['monto_pagado'],
+            $data['medio'],
+            $request->file('comprobante'),
+        );
 
         return $this->successResponse($credito, 'Crédito liquidado');
+    }
+
+    public function adendar(AdendarCreditoRequest $request, CreditoPrendario $credito): JsonResponse
+    {
+        Gate::authorize('adendar', $credito);
+
+        $data = $request->validated();
+
+        if (($data['interes'] ?? null) !== null || ($data['tipo_cuota'] ?? null) !== null) {
+            Gate::authorize('editar', $credito);
+        }
+
+        $nuevo = $this->creditoService->adendar(
+            $credito,
+            $request->user(),
+            (string) $data['monto_pagado'],
+            isset($data['interes']) ? (string) $data['interes'] : null,
+            $data['tipo_cuota'] ?? null,
+            $data['medio'],
+            $request->file('comprobante'),
+        );
+
+        return $this->successResponse($nuevo, 'Crédito adendado, pendiente de aprobación', 201);
     }
 
     public function actualizarInteres(ActualizarInteresCreditoRequest $request, CreditoPrendario $credito): JsonResponse
@@ -207,6 +247,7 @@ class CreditoPrendarioController extends Controller
         abort_unless($documento->credito_id === $credito->id, 404);
 
         $documento = $this->documentoService->subirFirmado($documento, $request->file('archivo'));
+        $this->creditoService->confirmarLiquidacionSiCorresponde($credito, $documento);
 
         return $this->successResponse($documento, 'Documento firmado subido');
     }

@@ -63,6 +63,8 @@ it('requires datos_recepcion when medio_recepcion is not efectivo', function () 
 });
 
 it('approves a billetaje against a cuenta bancaria, crediting the caja saldo_actual but not saldo_efectivo', function () {
+    Storage::fake('public');
+
     Sanctum::actingAs($this->asesor, ['*']);
     $this->postJson('/api/caja/aperturar')->assertCreated();
     $billetajeId = $this->postJson('/api/billetajes', [
@@ -77,6 +79,7 @@ it('approves a billetaje against a cuenta bancaria, crediting the caja saldo_act
         'medio_egreso' => 'cuenta_bancaria',
         'canal_egreso' => 'yape',
         'cuenta_bancaria_id' => $this->cuenta->id,
+        'comprobante' => UploadedFile::fake()->image('vaucher.jpg'),
     ])->assertSuccessful()->assertJsonPath('data.estado', 'aprobado');
 
     expect($this->cuenta->fresh()->saldoActual())->toBe('350.00');
@@ -92,6 +95,8 @@ it('approves a billetaje against a cuenta bancaria, crediting the caja saldo_act
 });
 
 it('lets the asesor desembolsar a crédito prendario funded by a digital billetaje', function () {
+    Storage::fake('public');
+
     ConfiguracionCreditoPrendario::factory()
         ->deEmpresa($this->empresa)
         ->create(['interes_default' => 10, 'plazo_dias' => 30, 'dias_espera_mora' => 15, 'tasa_mora_diaria' => 1]);
@@ -114,6 +119,7 @@ it('lets the asesor desembolsar a crédito prendario funded by a digital billeta
         'medio_egreso' => 'cuenta_bancaria',
         'canal_egreso' => 'yape',
         'cuenta_bancaria_id' => $this->cuenta->id,
+        'comprobante' => UploadedFile::fake()->image('vaucher.jpg'),
     ])->assertSuccessful();
 
     Sanctum::actingAs($this->asesor, ['*']);
@@ -141,6 +147,8 @@ it('lets the asesor desembolsar a crédito prendario funded by a digital billeta
 });
 
 it('keeps the cierre diferencia at zero when monto_contado matches only the physical cash, ignoring a digital billetaje', function () {
+    Storage::fake('public');
+
     Sanctum::actingAs($this->asesor, ['*']);
     $this->postJson('/api/caja/aperturar')->assertCreated();
     $billetajeId = $this->postJson('/api/billetajes', [
@@ -155,6 +163,7 @@ it('keeps the cierre diferencia at zero when monto_contado matches only the phys
         'medio_egreso' => 'cuenta_bancaria',
         'canal_egreso' => 'yape',
         'cuenta_bancaria_id' => $this->cuenta->id,
+        'comprobante' => UploadedFile::fake()->image('vaucher.jpg'),
     ])->assertSuccessful();
 
     Sanctum::actingAs($this->asesor, ['*']);
@@ -186,6 +195,7 @@ it('floors saldo_efectivo at zero instead of going negative when egresos exceed 
         'medio_egreso' => 'cuenta_bancaria',
         'canal_egreso' => 'yape',
         'cuenta_bancaria_id' => $this->cuenta->id,
+        'comprobante' => UploadedFile::fake()->image('vaucher.jpg'),
     ])->assertSuccessful();
 
     Sanctum::actingAs($this->asesor, ['*']);
@@ -206,6 +216,7 @@ it('floors saldo_efectivo at zero instead of going negative when egresos exceed 
 });
 
 it('denies approving with canal yape on a cuenta not affiliated to yape', function () {
+    Storage::fake('public');
     $this->cuenta->update(['acepta_yape' => false, 'numero_yape' => null]);
 
     Sanctum::actingAs($this->asesor, ['*']);
@@ -222,6 +233,7 @@ it('denies approving with canal yape on a cuenta not affiliated to yape', functi
         'medio_egreso' => 'cuenta_bancaria',
         'canal_egreso' => 'yape',
         'cuenta_bancaria_id' => $this->cuenta->id,
+        'comprobante' => UploadedFile::fake()->image('vaucher.jpg'),
     ])->assertUnprocessable()->assertJsonPath('message', 'La cuenta bancaria seleccionada no está afiliada a Yape.');
 });
 

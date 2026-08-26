@@ -59,7 +59,7 @@ class AuthController extends Controller
      */
     private function withPermissions(User $user): User
     {
-        $user->load('roles');
+        $user->load(['roles', 'empresa']);
         $user->setAttribute('permission_names', $user->getAllPermissions()->pluck('name')->values());
 
         return $user;

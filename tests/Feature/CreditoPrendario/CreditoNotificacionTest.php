@@ -193,7 +193,7 @@ it('notifies the registering asesor when their crédito is refrendado', function
 
     Sanctum::actingAs($this->asesor, ['*']);
     $sugerido = $this->getJson("/api/creditos-prendarios/{$activo->id}")->json('data.monto_refrendo_sugerido.total');
-    $response = $this->postJson("/api/creditos-prendarios/{$activo->id}/refrendar", ['monto_pagado' => $sugerido])
+    $response = $this->postJson("/api/creditos-prendarios/{$activo->id}/refrendar", ['monto_pagado' => $sugerido, 'medio' => 'efectivo'])
         ->assertCreated();
 
     $nuevoId = $response->json('data.id');
@@ -203,16 +203,25 @@ it('notifies the registering asesor when their crédito is refrendado', function
         && str_contains($event->notificacion->data['mensaje'], 'refrendado'));
 });
 
-it('notifies the registering asesor when their crédito is liquidado', function () {
+it('notifies the registering asesor once the acta de devolución is firmada, not right at liquidar', function () {
+    Storage::fake('public');
+
     $activo = CreditoPrendario::factory()->paraBien($this->bien)
         ->activo()
         ->create(['registrado_por' => $this->asesor->id, 'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id]);
 
-    Event::fake([NotificacionCreada::class]);
-
     Sanctum::actingAs($this->asesor, ['*']);
-    $this->postJson("/api/creditos-prendarios/{$activo->id}/liquidar", ['monto_pagado' => 1000000])
+
+    Event::fake([NotificacionCreada::class]);
+    $this->postJson("/api/creditos-prendarios/{$activo->id}/liquidar", ['monto_pagado' => 1000000, 'medio' => 'efectivo'])
         ->assertSuccessful();
+
+    Event::assertNotDispatched(NotificacionCreada::class);
+
+    $devolucion = CreditoPrendario::find($activo->id)->documentos()->where('tipo', 'devolucion')->firstOrFail();
+    $this->postJson("/api/creditos-prendarios/{$activo->id}/documentos/{$devolucion->id}/subir-firmado", [
+        'archivo' => UploadedFile::fake()->create('firmado.pdf', 100, 'application/pdf'),
+    ])->assertSuccessful();
 
     Event::assertDispatched(NotificacionCreada::class, fn (NotificacionCreada $event): bool => $event->destinatario->id === $this->asesor->id
         && $event->notificacion->data['credito_id'] === $activo->id

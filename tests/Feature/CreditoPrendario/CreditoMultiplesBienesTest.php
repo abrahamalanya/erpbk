@@ -132,21 +132,32 @@ it('carries the same set of bienes over to the new crédito on refrendo', functi
     Caja::query()->where('user_id', $this->asesor->id)->first()->cicloAbierto->update(['saldo_apertura' => 10000]);
     $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar")->assertSuccessful();
 
-    $response = $this->postJson("/api/creditos-prendarios/{$creditoId}/refrendar", ['monto_pagado' => 50])
+    $response = $this->postJson("/api/creditos-prendarios/{$creditoId}/refrendar", ['monto_pagado' => 50, 'medio' => 'efectivo'])
         ->assertCreated();
 
     $bienesIds = collect($response->json('data.bienes'))->pluck('id')->sort()->values()->all();
     expect($bienesIds)->toBe([$bien1->id, $bien2->id]);
 });
 
-it('marks every bien of a crédito as recuperado when liquidated', function () {
+it('marks every bien of a crédito as recuperado once the acta de devolución is firmada', function () {
+    Storage::fake('public');
+
     $bien1 = Bien::factory()->paraCliente($this->cliente)->create(['tipo' => 'electro', 'valorizacion' => 200]);
     $bien2 = Bien::factory()->paraCliente($this->cliente)->create(['tipo' => 'electro', 'valorizacion' => 300]);
     $credito = CreditoPrendario::factory()->paraBienes(collect([$bien1, $bien2]))
         ->activo()
         ->create(['registrado_por' => $this->asesor->id]);
 
-    $this->postJson("/api/creditos-prendarios/{$credito->id}/liquidar", ['monto_pagado' => 100000])->assertSuccessful();
+    $this->postJson("/api/creditos-prendarios/{$credito->id}/liquidar", ['monto_pagado' => 100000, 'medio' => 'efectivo'])->assertSuccessful();
+
+    // Todavía no se devolvieron físicamente — liquidado_pendiente hasta firmar.
+    expect($bien1->fresh()->estado)->not->toBe('recuperado')
+        ->and($bien2->fresh()->estado)->not->toBe('recuperado');
+
+    $devolucion = CreditoPrendario::find($credito->id)->documentos()->where('tipo', 'devolucion')->firstOrFail();
+    $this->postJson("/api/creditos-prendarios/{$credito->id}/documentos/{$devolucion->id}/subir-firmado", [
+        'archivo' => UploadedFile::fake()->create('firmado.pdf', 100, 'application/pdf'),
+    ])->assertSuccessful();
 
     expect($bien1->fresh()->estado)->toBe('recuperado')
         ->and($bien2->fresh()->estado)->toBe('recuperado');

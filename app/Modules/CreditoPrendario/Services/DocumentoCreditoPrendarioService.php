@@ -21,6 +21,7 @@ final class DocumentoCreditoPrendarioService
         'declaracion' => 'modules.credito-prendario.documentos.declaracion',
         'adenda' => 'modules.credito-prendario.documentos.adenda',
         'fotos' => 'modules.credito-prendario.documentos.fotos',
+        'devolucion' => 'modules.credito-prendario.documentos.devolucion',
     ];
 
     public function __construct(private readonly PdfGeneratorService $pdfGenerator) {}
@@ -49,6 +50,17 @@ final class DocumentoCreditoPrendarioService
     public function generarFotos(CreditoPrendario $credito, User $actor): DocumentoCreditoPrendario
     {
         return $this->generar($credito, $actor, 'fotos');
+    }
+
+    /**
+     * El acta de devolución de bienes — generada al liquidar, su firma
+     * escaneada es la confirmación de que los bienes fueron físicamente
+     * devueltos al cliente (ver CreditoPrendarioService::liquidar()/
+     * confirmarLiquidacionSiCorresponde()).
+     */
+    public function generarDevolucion(CreditoPrendario $credito, User $actor): DocumentoCreditoPrendario
+    {
+        return $this->generar($credito, $actor, 'devolucion');
     }
 
     /**

@@ -25,6 +25,11 @@ class StoreEmpresaRequest extends FormRequest
     {
         return [
             'nombre' => ['required', 'string', 'max:255'],
+            'prefijo' => [
+                'nullable', 'string', 'max:255',
+                'regex:/^[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/',
+                'unique:empresas,prefijo',
+            ],
             'ruc' => ['nullable', 'string', 'max:11'],
             'razon_social' => ['nullable', 'string', 'max:255'],
             'domicilio_legal' => ['nullable', 'string', 'max:255'],
@@ -45,6 +50,8 @@ class StoreEmpresaRequest extends FormRequest
     {
         return [
             'nombre.required' => 'El nombre es requerido',
+            'prefijo.regex' => 'El prefijo debe ser un dominio válido, por ejemplo credimasperu.com',
+            'prefijo.unique' => 'Ya existe una empresa con este prefijo',
             'estado.in' => 'El estado debe ser activo o inactivo',
         ];
     }

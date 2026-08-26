@@ -108,7 +108,7 @@ class Bien extends Model
     {
         return $query->whereDoesntHave(
             'creditos',
-            fn (Builder $q) => $q->whereIn('estado', ['pendiente', 'aprobado', 'activo', 'vencido', 'en_venta'])
+            fn (Builder $q) => $q->whereIn('estado', ['pendiente', 'aprobado', 'activo', 'vencido', 'en_venta', 'liquidado_pendiente'])
         );
     }
 

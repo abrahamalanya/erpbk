@@ -39,6 +39,7 @@ class CreditoPrendario extends Model
         'registrado_por',
         'refrendo_de_credito_id',
         'numero_refrendo',
+        'adenda_de_credito_id',
         'monto_prestamo',
         'interes',
         'tipo_cuota',
@@ -106,6 +107,16 @@ class CreditoPrendario extends Model
     public function refrendos(): HasMany
     {
         return $this->hasMany(self::class, 'refrendo_de_credito_id');
+    }
+
+    public function adendaDe(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'adenda_de_credito_id');
+    }
+
+    public function adendas(): HasMany
+    {
+        return $this->hasMany(self::class, 'adenda_de_credito_id');
     }
 
     public function documentos(): HasMany

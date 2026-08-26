@@ -22,6 +22,7 @@ class Empresa extends Model
      */
     protected $fillable = [
         'nombre',
+        'prefijo',
         'ruc',
         'razon_social',
         'domicilio_legal',

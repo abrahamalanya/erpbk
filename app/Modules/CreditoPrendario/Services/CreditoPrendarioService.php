@@ -4,11 +4,14 @@ namespace App\Modules\CreditoPrendario\Services;
 
 use App\Modules\Caja\Events\CajaActualizada;
 use App\Modules\Caja\Models\Caja;
+use App\Modules\Caja\Models\CajaCiclo;
 use App\Modules\Caja\Models\CajaMovimiento;
 use App\Modules\CreditoPrendario\Events\CreditoPrendarioActualizado;
 use App\Modules\CreditoPrendario\Models\Bien;
 use App\Modules\CreditoPrendario\Models\CreditoPrendario;
 use App\Modules\CreditoPrendario\Models\CuotaCreditoPrendario;
+use App\Modules\CreditoPrendario\Models\DocumentoCreditoPrendario;
+use App\Modules\CreditoPrendario\Notifications\CreditoAdendadoNotification;
 use App\Modules\CreditoPrendario\Notifications\CreditoAprobacionRevertidaNotification;
 use App\Modules\CreditoPrendario\Notifications\CreditoAprobadoNotification;
 use App\Modules\CreditoPrendario\Notifications\CreditoDesembolsadoNotification;
@@ -23,6 +26,7 @@ use App\Modules\CreditoPrendario\Notifications\CreditoVencidoNotification;
 use App\Modules\Sistemas\Services\NotificacionService;
 use App\Modules\Usuario\Models\User;
 use DomainException;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
@@ -259,6 +263,11 @@ final class CreditoPrendarioService
      * more cuotas than the default extends the crédito's real term (e.g. 2
      * cuotas mensuales = 60 días reales, not 2 checkpoints inside the same
      * 30 días).
+     *
+     * If this crédito came from adendar() (adenda_de_credito_id set), no
+     * cash moves at all — the client isn't receiving new money, this is
+     * only restructuring the terms of a debt that was already desembolsado
+     * under the original crédito. Confirmed explicitly with the user.
      */
     public function desembolsar(CreditoPrendario $credito, User $actor, ?int $numeroCuotas, ?string $interes): CreditoPrendario
     {
@@ -268,18 +277,23 @@ final class CreditoPrendarioService
             throw new DomainException('Todos los documentos deben estar firmados (subir el escaneo firmado) antes de desembolsar.');
         }
 
-        $caja = Caja::query()->where('user_id', $actor->id)->first();
-        $ciclo = $caja?->cicloAbierto()->first();
+        $esAdenda = $credito->adenda_de_credito_id !== null;
+        $ciclo = null;
 
-        if (! $ciclo) {
-            throw new DomainException('Debes aperturar tu caja antes de desembolsar.');
+        if (! $esAdenda) {
+            $caja = Caja::query()->where('user_id', $actor->id)->first();
+            $ciclo = $caja?->cicloAbierto()->first();
+
+            if (! $ciclo) {
+                throw new DomainException('Debes aperturar tu caja antes de desembolsar.');
+            }
+
+            if (bccomp($credito->monto_prestamo, $ciclo->saldoActual(), 2) > 0) {
+                throw new DomainException('No tienes saldo suficiente en tu caja para desembolsar este crédito.');
+            }
         }
 
-        if (bccomp($credito->monto_prestamo, $ciclo->saldoActual(), 2) > 0) {
-            throw new DomainException('No tienes saldo suficiente en tu caja para desembolsar este crédito.');
-        }
-
-        return DB::transaction(function () use ($credito, $actor, $ciclo, $numeroCuotas, $interes): CreditoPrendario {
+        return DB::transaction(function () use ($credito, $actor, $ciclo, $esAdenda, $numeroCuotas, $interes): CreditoPrendario {
             if ($interes !== null) {
                 $credito->update(['interes' => $interes]);
             }
@@ -297,17 +311,19 @@ final class CreditoPrendarioService
                 'fecha_vencimiento' => $fechaDesembolso->copy()->addDays($plazoTotal)->toDateString(),
             ]);
 
-            CajaMovimiento::query()->create([
-                'caja_ciclo_id' => $ciclo->id,
-                'empresa_id' => $ciclo->empresa_id,
-                'tipo' => 'egreso',
-                'monto' => $credito->monto_prestamo,
-                'concepto' => "Desembolso de crédito prendario #{$credito->id}",
-                'registrado_por' => $actor->id,
-                'fecha_caja' => $ciclo->fecha,
-            ]);
+            if (! $esAdenda) {
+                CajaMovimiento::query()->create([
+                    'caja_ciclo_id' => $ciclo->id,
+                    'empresa_id' => $ciclo->empresa_id,
+                    'tipo' => 'egreso',
+                    'monto' => $credito->monto_prestamo,
+                    'concepto' => "Desembolso de crédito prendario #{$credito->id}",
+                    'registrado_por' => $actor->id,
+                    'fecha_caja' => $ciclo->fecha,
+                ]);
 
-            CajaActualizada::dispatch($ciclo->caja, $ciclo->fresh()->saldoActual());
+                CajaActualizada::dispatch($ciclo->caja, $ciclo->fresh()->saldoActual());
+            }
 
             $credito = $credito->fresh();
             $this->generarCronograma($credito, $n, $diasPorCuota);
@@ -364,8 +380,13 @@ final class CreditoPrendarioService
      * es cero en el caso de un refrendo puro. Pagar el total completo no
      * está permitido aquí — eso es Liquidar.
      */
-    public function refrendar(CreditoPrendario $credito, User $actor, string $montoPagado): CreditoPrendario
-    {
+    public function refrendar(
+        CreditoPrendario $credito,
+        User $actor,
+        string $montoPagado,
+        string $medio,
+        ?UploadedFile $comprobante,
+    ): CreditoPrendario {
         if (! in_array($credito->estado, ['activo', 'vencido'], true)) {
             throw new DomainException('Solo se puede refrendar un crédito activo o vencido.');
         }
@@ -391,7 +412,9 @@ final class CreditoPrendarioService
             throw new DomainException("Este crédito ya alcanzó el máximo de {$configuracion->max_refrendos} refrendos permitidos; debe liquidarse el capital.");
         }
 
-        return DB::transaction(function () use ($credito, $actor, $siguienteNumero, $nuevoCapital): CreditoPrendario {
+        $ciclo = $this->resolverCicloParaCobro($actor);
+
+        return DB::transaction(function () use ($credito, $actor, $siguienteNumero, $nuevoCapital, $ciclo, $montoPagado, $medio, $comprobante): CreditoPrendario {
             $credito->update(['estado' => 'refrendado']);
 
             $n = self::CUOTAS_POR_TIPO[$credito->tipo_cuota];
@@ -418,10 +441,17 @@ final class CreditoPrendarioService
 
             $nuevo->bienes()->attach($credito->bienes->pluck('id'));
 
-            $this->documentos->generarAdenda($nuevo, $actor);
+            // Un refrendo puro no cambia ninguna condición del crédito (misma
+            // tasa, mismo tipo de cuota), así que conserva los mismos
+            // documentos que un registro nuevo — "adenda" es un documento
+            // distinto, reservado para cuando SÍ se modifican las condiciones.
+            $this->documentos->generarContrato($nuevo, $actor);
+            $this->documentos->generarDeclaracion($nuevo, $actor);
+            $this->documentos->generarFotos($nuevo, $actor);
 
             $nuevo = $nuevo->fresh(['bienes']);
             $this->generarCronograma($nuevo, $n, $diasPorCuota);
+            $this->registrarCobroEnCaja($ciclo, $actor, $montoPagado, $medio, $comprobante, "Refrendo de crédito prendario #{$credito->id}");
             $this->notificar($nuevo);
             $this->notificaciones->enviar(collect([$nuevo->registradoPor]), new CreditoRefrendadoNotification($nuevo));
 
@@ -429,8 +459,100 @@ final class CreditoPrendarioService
         });
     }
 
-    public function liquidar(CreditoPrendario $credito, User $actor, string $montoPagado): CreditoPrendario
-    {
+    /**
+     * Un refrendo QUE puede modificar condiciones (tasa de interés y,
+     * opcionalmente, tipo de cuota) — a diferencia de refrendar(), que
+     * reactiva el sucesor de inmediato con las mismas condiciones, aquí el
+     * sucesor SIEMPRE nace en pendiente y debe volver a pasar por
+     * aprobar/firmar/desembolsar, con contrato/declaración regenerados.
+     * $nuevoInteres/$nuevoTipoCuota son opcionales a propósito: un asesor
+     * (autorizado igual que refrendar(), ver Policy::adendar()) normalmente
+     * solo cobra el interés y deja el sucesor con la tasa/cuota actuales; un
+     * admin puede fijarlas aquí mismo o editarlas después mientras está
+     * pendiente/aprobado (CreditoPrendarioController::editar()/actualizarInteres()).
+     * El monto_prestamo se conserva igual que en el crédito original (mismo
+     * cálculo de abono a capital que refrendar() si pagan de más);
+     * desembolsar() detecta adenda_de_credito_id y NO mueve caja — no se
+     * entrega dinero nuevo, solo se reescriben las condiciones de una deuda
+     * que ya estaba desembolsada.
+     */
+    public function adendar(
+        CreditoPrendario $credito,
+        User $actor,
+        string $montoPagado,
+        ?string $nuevoInteres,
+        ?string $nuevoTipoCuota,
+        string $medio,
+        ?UploadedFile $comprobante,
+    ): CreditoPrendario {
+        if (! in_array($credito->estado, ['activo', 'vencido'], true)) {
+            throw new DomainException('Solo se puede hacer una adenda a un crédito activo o vencido.');
+        }
+
+        $interes = $this->calcularMontoRefrendo($credito)['interes'];
+        $total = bcadd((string) $credito->monto_prestamo, $interes, 2);
+
+        if (bccomp($montoPagado, $interes, 2) < 0) {
+            throw new DomainException("El monto pagado ({$montoPagado}) es menor al interés calculado ({$interes}).");
+        }
+
+        if (bccomp($montoPagado, $total, 2) >= 0) {
+            throw new DomainException("El monto pagado ({$montoPagado}) cubre el total del crédito ({$total}); selecciona Liquidar para cancelarlo.");
+        }
+
+        $abonoCapital = bcsub($montoPagado, $interes, 2);
+        $nuevoCapital = bcsub((string) $credito->monto_prestamo, $abonoCapital, 2);
+        $configuracion = $this->configuracion->resolverPara($credito->agencia);
+        $ciclo = $this->resolverCicloParaCobro($actor);
+
+        return DB::transaction(function () use ($credito, $actor, $nuevoInteres, $nuevoTipoCuota, $nuevoCapital, $configuracion, $ciclo, $montoPagado, $medio, $comprobante): CreditoPrendario {
+            $credito->update(['estado' => 'adendado']);
+
+            $nuevo = CreditoPrendario::query()->create([
+                'empresa_id' => $credito->empresa_id,
+                'agencia_id' => $credito->agencia_id,
+                'cliente_id' => $credito->cliente_id,
+                // El asesor dueño del caso original, NO $actor — cuando un
+                // admin es quien ejecuta la adenda (p.ej. para dejar ya la
+                // tasa nueva), si el sucesor quedara a su nombre, el asesor
+                // (con visibleQuery scopeado a registrado_por=propio)
+                // perdería visibilidad de su propio crédito justo cuando
+                // necesita firmar los documentos nuevos.
+                'registrado_por' => $credito->registrado_por,
+                'adenda_de_credito_id' => $credito->id,
+                'numero_refrendo' => 0,
+                'monto_prestamo' => $nuevoCapital,
+                // Un asesor normalmente omite esto (solo cobra el interés);
+                // el sucesor conserva la tasa/tipo de cuota actuales y un
+                // admin las edita después, ya con el crédito pendiente.
+                'interes' => $nuevoInteres ?? $credito->interes,
+                'tipo_cuota' => $nuevoTipoCuota ?? $credito->tipo_cuota,
+                'plazo_dias' => $configuracion->plazo_dias,
+                'estado' => 'pendiente',
+            ]);
+
+            $nuevo->bienes()->attach($credito->bienes->pluck('id'));
+
+            $this->documentos->generarContrato($nuevo, $actor);
+            $this->documentos->generarDeclaracion($nuevo, $actor);
+            $this->documentos->generarFotos($nuevo, $actor);
+
+            $nuevo = $nuevo->fresh(['bienes']);
+            $this->registrarCobroEnCaja($ciclo, $actor, $montoPagado, $medio, $comprobante, "Adenda de crédito prendario #{$credito->id}");
+            $this->notificar($nuevo);
+            $this->notificaciones->enviar(collect([$nuevo->registradoPor]), new CreditoAdendadoNotification($nuevo));
+
+            return $nuevo;
+        });
+    }
+
+    public function liquidar(
+        CreditoPrendario $credito,
+        User $actor,
+        string $montoPagado,
+        string $medio,
+        ?UploadedFile $comprobante,
+    ): CreditoPrendario {
         if (! in_array($credito->estado, ['activo', 'vencido'], true)) {
             throw new DomainException('Solo se puede liquidar un crédito activo o vencido.');
         }
@@ -441,15 +563,43 @@ final class CreditoPrendarioService
             throw new DomainException("El monto pagado ({$montoPagado}) es menor al monto a liquidar calculado ({$montoCalculado}).");
         }
 
-        return DB::transaction(function () use ($credito): CreditoPrendario {
+        $ciclo = $this->resolverCicloParaCobro($actor);
+
+        return DB::transaction(function () use ($credito, $actor, $ciclo, $montoPagado, $medio, $comprobante): CreditoPrendario {
+            $credito->update(['estado' => 'liquidado_pendiente']);
+
+            $credito = $credito->fresh(['bienes']);
+            $this->registrarCobroEnCaja($ciclo, $actor, $montoPagado, $medio, $comprobante, "Liquidación de crédito prendario #{$credito->id}");
+            $this->documentos->generarDevolucion($credito, $actor);
+            $this->notificar($credito);
+
+            return $credito->fresh(['bienes', 'documentos']);
+        });
+    }
+
+    /**
+     * El pago ya se cobró en liquidar() — lo que falta para que el crédito
+     * quede realmente liquidado es la firma del acta de devolución, que
+     * confirma que los bienes fueron físicamente entregados de vuelta al
+     * cliente. Hasta entonces el crédito queda "liquidado_pendiente" y sus
+     * bienes siguen indisponibles (ver Bien::scopeDisponibles()). Se llama
+     * desde el mismo flujo genérico de "subir documento firmado" — un no-op
+     * si el documento subido no es la devolución o el crédito ya no está
+     * pendiente de ella.
+     */
+    public function confirmarLiquidacionSiCorresponde(CreditoPrendario $credito, DocumentoCreditoPrendario $documento): void
+    {
+        if ($documento->tipo !== 'devolucion' || $credito->estado !== 'liquidado_pendiente') {
+            return;
+        }
+
+        DB::transaction(function () use ($credito): void {
             $credito->update(['estado' => 'liquidado']);
             Bien::query()->whereIn('id', $credito->bienes->pluck('id'))->update(['estado' => 'recuperado']);
 
-            $credito = $credito->fresh(['bienes']);
+            $credito = $credito->fresh(['bienes', 'registradoPor']);
             $this->notificar($credito);
             $this->notificaciones->enviar(collect([$credito->registradoPor]), new CreditoLiquidadoNotification($credito));
-
-            return $credito;
         });
     }
 
@@ -648,5 +798,59 @@ final class CreditoPrendarioService
             ->push($credito->registradoPor);
 
         CreditoPrendarioActualizado::dispatch($credito, $destinatarios);
+    }
+
+    /**
+     * Todo cobro (refrendar/liquidar/adendar) es dinero real que el actor
+     * recibe físicamente o por yape/plin/transferencia — igual que un
+     * billetaje o una inyección de bóveda, debe quedar en SU propia caja
+     * para que aparezca en su cierre del día. Falla temprano (antes de la
+     * transacción) si no tiene caja aperturada, mismo criterio que
+     * desembolsar()/CajaService::registrarMovimiento().
+     */
+    private function resolverCicloParaCobro(User $actor): CajaCiclo
+    {
+        $caja = Caja::query()->where('user_id', $actor->id)->first();
+        $ciclo = $caja?->cicloAbierto()->first();
+
+        if (! $ciclo) {
+            throw new DomainException('Debes aperturar tu caja antes de registrar un cobro.');
+        }
+
+        return $ciclo;
+    }
+
+    /**
+     * @see resolverCicloParaCobro() — crea el ingreso ya dentro de la misma
+     * transacción que cambia el estado del crédito, para que ambos queden
+     * atómicos (o se registra el cobro Y se actualiza el crédito, o ninguno).
+     */
+    private function registrarCobroEnCaja(
+        CajaCiclo $ciclo,
+        User $actor,
+        string $monto,
+        string $medio,
+        ?UploadedFile $comprobante,
+        string $concepto,
+    ): void {
+        $movimiento = CajaMovimiento::query()->create([
+            'caja_ciclo_id' => $ciclo->id,
+            'empresa_id' => $ciclo->empresa_id,
+            'tipo' => 'ingreso',
+            'monto' => $monto,
+            'medio' => $medio,
+            'concepto' => $concepto,
+            'registrado_por' => $actor->id,
+            'fecha_caja' => $ciclo->fecha,
+        ]);
+
+        if ($comprobante) {
+            $movimiento->fotos()->create([
+                'tipo' => 'comprobante',
+                'path' => $comprobante->store("caja-movimientos/{$movimiento->id}", 'public'),
+            ]);
+        }
+
+        CajaActualizada::dispatch($ciclo->caja, $ciclo->fresh()->saldoActual());
     }
 }

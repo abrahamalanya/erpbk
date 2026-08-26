@@ -6,6 +6,7 @@ use App\Modules\Sistemas\Models\Role;
 use App\Modules\Usuario\Models\User;
 use Database\Seeders\PermissionSeeder;
 use Database\Seeders\RoleSeeder;
+use Illuminate\Support\Facades\Hash;
 use Laravel\Sanctum\Sanctum;
 
 beforeEach(function () {
@@ -23,6 +24,7 @@ it('allows sistemas to create a user for any empresa and agencia, with any assig
     $response = $this->postJson('/api/usuarios', [
         'nombre' => 'Nuevo',
         'apellido' => 'Supervisor',
+        'dni' => '10000001',
         'email' => 'nuevo.supervisor@test.com',
         'password' => 'password123',
         'role' => 'supervisor',
@@ -47,6 +49,7 @@ it('forces administrador_general empresa_id even if a different one is submitted
     $response = $this->postJson('/api/usuarios', [
         'nombre' => 'Nuevo',
         'apellido' => 'AdminAgencia',
+        'dni' => '10000002',
         'email' => 'nuevo.admin.agencia@test.com',
         'password' => 'password123',
         'role' => 'administrador_agencia',
@@ -73,6 +76,7 @@ it('forces administrador_agencia agencia_id even if a different one is submitted
     $response = $this->postJson('/api/usuarios', [
         'nombre' => 'Nuevo',
         'apellido' => 'Asesor',
+        'dni' => '10000003',
         'email' => 'nuevo.asesor@test.com',
         'password' => 'password123',
         'role' => 'asesor',
@@ -139,6 +143,69 @@ it('rejects creation attempts from roles with no assignable roles', function (st
         ->assertJsonValidationErrors('role');
 })->with(['peinadora', 'supervisor', 'asesor']);
 
+it('auto-generates email and password from dni when the empresa has a prefijo and none are given', function () {
+    $sistemas = User::factory()->create();
+    $sistemas->assignRole('sistemas');
+    Sanctum::actingAs($sistemas, ['*']);
+
+    $empresa = Empresa::factory()->create(['prefijo' => 'credimasperu.com']);
+    $agencia = Agencia::factory()->for($empresa)->create();
+
+    $response = $this->postJson('/api/usuarios', [
+        'nombre' => 'Nuevo',
+        'apellido' => 'Supervisor',
+        'dni' => '10000005',
+        'role' => 'supervisor',
+        'empresa_id' => $empresa->id,
+        'agencia_id' => $agencia->id,
+    ])->assertCreated();
+
+    $user = User::query()->findOrFail($response->json('data.id'));
+
+    expect($user->email)->toBe('10000005@credimasperu.com')
+        ->and(Hash::check('10000005', $user->password))->toBeTrue();
+});
+
+it('uses the given "usuario" as the email local part instead of the dni when provided', function () {
+    $sistemas = User::factory()->create();
+    $sistemas->assignRole('sistemas');
+    Sanctum::actingAs($sistemas, ['*']);
+
+    $empresa = Empresa::factory()->create(['prefijo' => 'credimasperu.com']);
+    $agencia = Agencia::factory()->for($empresa)->create();
+
+    $response = $this->postJson('/api/usuarios', [
+        'nombre' => 'Nuevo',
+        'apellido' => 'Supervisor',
+        'dni' => '10000006',
+        'usuario' => 'jperez',
+        'role' => 'supervisor',
+        'empresa_id' => $empresa->id,
+        'agencia_id' => $agencia->id,
+    ])->assertCreated();
+
+    expect($response->json('data.email'))->toBe('jperez@credimasperu.com');
+});
+
+it('requires an explicit email when the empresa has no prefijo configured', function () {
+    $sistemas = User::factory()->create();
+    $sistemas->assignRole('sistemas');
+    Sanctum::actingAs($sistemas, ['*']);
+
+    $empresa = Empresa::factory()->create(['prefijo' => null]);
+    $agencia = Agencia::factory()->for($empresa)->create();
+
+    $this->postJson('/api/usuarios', [
+        'nombre' => 'Nuevo',
+        'apellido' => 'Supervisor',
+        'dni' => '10000007',
+        'role' => 'supervisor',
+        'empresa_id' => $empresa->id,
+        'agencia_id' => $agencia->id,
+    ])->assertUnprocessable()
+        ->assertJsonValidationErrors('email');
+});
+
 it('blocks creation via Gate when usuarios.crear is revoked, even though the role is structurally assignable', function () {
     $sistemas = User::factory()->create();
     $sistemas->assignRole('sistemas');
@@ -157,6 +224,7 @@ it('blocks creation via Gate when usuarios.crear is revoked, even though the rol
     $this->postJson('/api/usuarios', [
         'nombre' => 'X',
         'apellido' => 'Y',
+        'dni' => '10000004',
         'email' => 'blocked2@test.com',
         'password' => 'password123',
         'role' => 'secretaria',

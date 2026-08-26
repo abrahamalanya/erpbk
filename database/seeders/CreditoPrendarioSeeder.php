@@ -79,13 +79,23 @@ class CreditoPrendarioSeeder extends Seeder
         for ($i = 1; $i <= self::REPETICIONES_REFRENDO; $i++) {
             $origenRefrendo = $this->crearCreditoActivo($agencia, $asesor, $admin, "Refrendado {$i}", 33);
             $interesRefrendo = $this->creditoService->calcularMontoRefrendo($origenRefrendo)['interes'];
-            $this->creditoService->refrendar($origenRefrendo, $admin, $interesRefrendo);
+            $this->creditoService->refrendar($origenRefrendo, $asesor, $interesRefrendo, 'efectivo', null);
         }
 
         for ($i = 1; $i <= self::REPETICIONES_LIQUIDACION; $i++) {
             $origenLiquidacion = $this->crearCreditoActivo($agencia, $asesor, $admin, "Liquidado {$i}", 10);
             $totalLiquidacion = $this->creditoService->calcularMontoLiquidacion($origenLiquidacion)['total'];
-            $this->creditoService->liquidar($origenLiquidacion, $admin, $totalLiquidacion);
+            $liquidado = $this->creditoService->liquidar($origenLiquidacion, $asesor, $totalLiquidacion, 'efectivo', null);
+
+            // liquidar() deja el crédito en liquidado_pendiente hasta que se
+            // firma el acta de devolución — mismo criterio de reutilizar una
+            // muestra ya publicada que crearCreditoActivo() usa arriba.
+            $devolucion = $liquidado->documentos()->where('tipo', 'devolucion')->firstOrFail();
+            $devolucion->update([
+                'archivo_firmado_path' => 'clientes/samples/dni1.jpeg',
+                'firmado_at' => now(),
+            ]);
+            $this->creditoService->confirmarLiquidacionSiCorresponde($liquidado, $devolucion);
         }
     }
 

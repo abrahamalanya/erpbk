@@ -13,6 +13,7 @@ use App\Modules\Empresa\Http\Controllers\EmpresaController;
 use App\Modules\Reportes\Http\Controllers\ReporteMovimientosController;
 use App\Modules\Sistemas\Http\Controllers\AuthController;
 use App\Modules\Sistemas\Http\Controllers\ConceptoController;
+use App\Modules\Sistemas\Http\Controllers\ConfiguracionSistemaController;
 use App\Modules\Sistemas\Http\Controllers\NotificacionController;
 use App\Modules\Sistemas\Http\Controllers\PermissionController;
 use App\Modules\Sistemas\Http\Controllers\RoleController;
@@ -23,6 +24,9 @@ use Illuminate\Support\Facades\Route;
 
 // ===== AUTH ROUTES (públicas) =====
 Route::post('/auth/login', [AuthController::class, 'login']);
+
+// ===== CONFIGURACIÓN (pública en lectura: la usa el login antes de autenticarse) =====
+Route::get('/configuracion', [ConfiguracionSistemaController::class, 'show'])->name('configuracion.show');
 
 // ===== TIENDA VIRTUAL (públicas, sin auth) =====
 Route::prefix('tienda')->group(function () {
@@ -38,9 +42,11 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::apiResource('empresas', EmpresaController::class);
     Route::apiResource('agencias', AgenciaController::class);
+    Route::get('usuarios/consultar-dni/{dni}', [UserController::class, 'consultarDni'])->name('usuarios.consultar-dni');
     Route::apiResource('usuarios', UserController::class)->parameters(['usuarios' => 'user']);
     Route::apiResource('roles', RoleController::class)->only(['index', 'show', 'update']);
     Route::apiResource('permisos', PermissionController::class)->only(['index']);
+    Route::put('/configuracion', [ConfiguracionSistemaController::class, 'update'])->name('configuracion.update');
 
     Route::get('notificaciones', [NotificacionController::class, 'index'])->name('notificaciones.index');
     Route::post('notificaciones/{notificacion}/marcar-leido', [NotificacionController::class, 'marcarLeido'])->name('notificaciones.marcar-leido');
@@ -96,6 +102,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('creditos-prendarios/{credito}/desembolsar', [CreditoPrendarioController::class, 'desembolsar'])->name('creditos-prendarios.desembolsar');
     Route::post('creditos-prendarios/{credito}/refrendar', [CreditoPrendarioController::class, 'refrendar'])->name('creditos-prendarios.refrendar');
     Route::post('creditos-prendarios/{credito}/liquidar', [CreditoPrendarioController::class, 'liquidar'])->name('creditos-prendarios.liquidar');
+    Route::post('creditos-prendarios/{credito}/adendar', [CreditoPrendarioController::class, 'adendar'])->name('creditos-prendarios.adendar');
     Route::post('creditos-prendarios/{credito}/actualizar-interes', [CreditoPrendarioController::class, 'actualizarInteres'])->name('creditos-prendarios.actualizar-interes');
     Route::post('creditos-prendarios/{credito}/revertir-aprobacion', [CreditoPrendarioController::class, 'revertirAprobacion'])->name('creditos-prendarios.revertir-aprobacion');
     Route::post('creditos-prendarios/{credito}/enviar-tienda', [CreditoPrendarioController::class, 'enviarATienda'])->name('creditos-prendarios.enviar-tienda');

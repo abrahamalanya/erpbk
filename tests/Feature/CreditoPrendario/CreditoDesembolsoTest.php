@@ -174,10 +174,10 @@ it('exposes monto_liquidacion_sugerido on show() and rejects liquidar with an in
     $show = $this->getJson("/api/creditos-prendarios/{$creditoId}")->assertSuccessful();
     expect($show->json('data.monto_liquidacion_sugerido.total'))->toBe('1100.00');
 
-    $this->postJson("/api/creditos-prendarios/{$creditoId}/liquidar", ['monto_pagado' => 1000])
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/liquidar", ['monto_pagado' => 1000, 'medio' => 'efectivo'])
         ->assertUnprocessable();
 
-    $this->postJson("/api/creditos-prendarios/{$creditoId}/liquidar", ['monto_pagado' => 1100])
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/liquidar", ['monto_pagado' => 1100, 'medio' => 'efectivo'])
         ->assertSuccessful()
-        ->assertJsonPath('data.estado', 'liquidado');
+        ->assertJsonPath('data.estado', 'liquidado_pendiente');
 });
