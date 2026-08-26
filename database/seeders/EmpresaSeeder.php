@@ -12,8 +12,7 @@ class EmpresaSeeder extends Seeder
      */
     public function run(): void
     {
-        Empresa::create([
-            'nombre' => 'CREDIMAS',
+        Empresa::firstOrCreate(['nombre' => 'CREDIMAS'], [
             'ruc' => '20602137903',
             'razon_social' => 'CREDIMAS ORIENTE E.I.R.L.',
             'domicilio_legal' => 'CAL.SAN PEDRO/SAN TOMAS MZA. A LOTE. 12 (A.H. LOS OLVOS) YARINACOCHA - CORONEL PORTILLO - UCAYALI',
@@ -21,6 +20,10 @@ class EmpresaSeeder extends Seeder
             'representante_legal' => 'OSORES PAUCARCHUCO PABLO ELVIS',
             'estado' => 'activo',
         ]);
-        Empresa::create(['nombre' => 'Empresa Secundaria', 'estado' => 'activo']);
+
+        // Empresa de demostración, para probar aislamiento multi-tenant: solo local.
+        if (app()->environment('local')) {
+            Empresa::firstOrCreate(['nombre' => 'Empresa Secundaria'], ['estado' => 'activo']);
+        }
     }
 }
