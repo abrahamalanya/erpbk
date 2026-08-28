@@ -22,6 +22,17 @@ class StoreUserRequest extends FormRequest
     }
 
     /**
+     * Accept a single `role` string as a one-element `roles` array so older
+     * clients keep working while the API moves to multiple roles per user.
+     */
+    protected function prepareForValidation(): void
+    {
+        if (! $this->has('roles') && $this->filled('role')) {
+            $this->merge(['roles' => [$this->input('role')]]);
+        }
+    }
+
+    /**
      * Get the validation rules that apply to the request.
      *
      * @return array<string, ValidationRule|array<mixed>|string>
@@ -30,6 +41,10 @@ class StoreUserRequest extends FormRequest
     {
         $actor = $this->user();
         $hierarchy = app(UserHierarchyService::class);
+        $roles = $this->rolesInput();
+
+        $agenciaLevel = (bool) array_intersect($roles, ['administrador_agencia', 'peinadora', 'supervisor', 'asesor']);
+        $needsSupervisor = in_array('asesor', $roles, true) && ! in_array('supervisor', $roles, true);
 
         return [
             'nombre' => ['required', 'string', 'max:255'],
@@ -40,21 +55,32 @@ class StoreUserRequest extends FormRequest
             'email' => ['nullable', 'email', 'max:255', 'unique:users,email'],
             'password' => ['nullable', 'string', 'min:8'],
             'estado' => ['sometimes', Rule::in(['activo', 'inactivo'])],
-            'role' => ['required', 'string', Rule::in($hierarchy->assignableRoles($actor))],
+            'roles' => ['required', 'array', 'min:1'],
+            'roles.*' => ['string', Rule::in($hierarchy->assignableRoles($actor))],
             'empresa_id' => [
                 Rule::requiredIf(fn (): bool => $actor->hasRole('sistemas')),
                 'nullable', 'integer', 'exists:empresas,id',
             ],
             'agencia_id' => [
-                Rule::requiredIf(fn (): bool => in_array($this->input('role'), ['administrador_agencia', 'peinadora', 'supervisor', 'asesor'], true)
-                    && ! $actor->hasRole('administrador_agencia')),
+                Rule::requiredIf(fn (): bool => $agenciaLevel && ! $actor->hasRole('administrador_agencia')),
                 'nullable', 'integer', 'exists:agencias,id',
             ],
             'supervisor_id' => [
-                Rule::requiredIf(fn (): bool => $this->input('role') === 'asesor'),
+                Rule::requiredIf(fn (): bool => $needsSupervisor),
                 'nullable', 'integer', 'exists:users,id',
             ],
         ];
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function rolesInput(): array
+    {
+        return array_values(array_filter(
+            (array) $this->input('roles', []),
+            'is_string',
+        ));
     }
 
     /**
@@ -64,18 +90,18 @@ class StoreUserRequest extends FormRequest
     {
         $validator->after(function (Validator $validator): void {
             $actor = $this->user();
-            $role = $this->input('role');
+            $roles = $this->rolesInput();
             $empresaId = $actor->hasRole('sistemas') ? $this->input('empresa_id') : $actor->empresa_id;
 
             if (! $this->filled('email') && ! Empresa::find($empresaId)?->prefijo) {
                 $validator->errors()->add('email', 'El email es requerido: la empresa no tiene un prefijo de correo configurado.');
             }
 
-            if (! is_string($role)) {
+            if ($roles === []) {
                 return;
             }
 
-            $agenciaLevel = in_array($role, ['administrador_agencia', 'peinadora', 'supervisor', 'asesor'], true);
+            $agenciaLevel = (bool) array_intersect($roles, ['administrador_agencia', 'peinadora', 'supervisor', 'asesor']);
             $agenciaId = $actor->hasRole('administrador_agencia') ? $actor->agencia_id : $this->input('agencia_id');
 
             if ($agenciaLevel && $agenciaId) {
@@ -86,7 +112,7 @@ class StoreUserRequest extends FormRequest
                 }
             }
 
-            if ($role === 'asesor' && $this->filled('supervisor_id')) {
+            if (in_array('asesor', $roles, true) && $this->filled('supervisor_id')) {
                 $supervisor = User::find($this->input('supervisor_id'));
 
                 if (! $supervisor || ! $supervisor->hasRole('supervisor')) {
@@ -113,8 +139,9 @@ class StoreUserRequest extends FormRequest
             'dni.unique' => 'Ya existe un usuario con este DNI',
             'email.unique' => 'Ya existe un usuario con este email',
             'password.min' => 'La contraseña debe tener al menos 8 caracteres',
-            'role.required' => 'El rol es requerido',
-            'role.in' => 'No tienes permiso para asignar este rol',
+            'roles.required' => 'El rol es requerido',
+            'roles.min' => 'El rol es requerido',
+            'roles.*.in' => 'No tienes permiso para asignar este rol',
             'empresa_id.required' => 'La empresa es requerida',
             'agencia_id.required' => 'La agencia es requerida para este rol',
             'supervisor_id.required' => 'El supervisor es requerido para el rol asesor',

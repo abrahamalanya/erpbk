@@ -43,6 +43,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('empresas', EmpresaController::class);
     Route::apiResource('agencias', AgenciaController::class);
     Route::get('usuarios/consultar-dni/{dni}', [UserController::class, 'consultarDni'])->name('usuarios.consultar-dni');
+    Route::get('usuarios/roles-asignables', [UserController::class, 'rolesAsignables'])->name('usuarios.roles-asignables');
     Route::apiResource('usuarios', UserController::class)->parameters(['usuarios' => 'user']);
     Route::apiResource('roles', RoleController::class)->only(['index', 'show', 'update']);
     Route::apiResource('permisos', PermissionController::class)->only(['index']);

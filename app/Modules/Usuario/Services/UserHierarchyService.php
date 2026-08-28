@@ -23,30 +23,41 @@ final class UserHierarchyService
     /**
      * @var list<string>
      */
-    private const EMPRESA_LEVEL_ROLES = ['administrador_general', 'secretaria'];
+    private const AGENCIA_LEVEL_ROLES = ['administrador_agencia', 'peinadora', 'supervisor', 'asesor'];
 
     /**
+     * Union of every role each of the actor's own roles is allowed to assign.
+     * An actor may wear several hats, so the ceiling is the combination of all.
+     *
      * @return list<string>
      */
     public function assignableRoles(User $actor): array
     {
-        foreach (self::ASSIGNABLE_ROLES as $actorRole => $targets) {
+        $targets = [];
+
+        foreach (self::ASSIGNABLE_ROLES as $actorRole => $roles) {
             if ($actor->hasRole($actorRole)) {
-                return $targets;
+                $targets = array_merge($targets, $roles);
             }
         }
 
-        return [];
+        return array_values(array_unique($targets));
     }
 
-    public function resolveEmpresaId(User $actor, string $targetRole, ?int $requestedEmpresaId): ?int
+    public function resolveEmpresaId(User $actor, ?int $requestedEmpresaId): ?int
     {
         return $actor->hasRole('sistemas') ? $requestedEmpresaId : $actor->empresa_id;
     }
 
-    public function resolveAgenciaId(User $actor, string $targetRole, ?int $requestedAgenciaId): ?int
+    /**
+     * The user gets an agencia as soon as *any* of its target roles is an
+     * agencia-level role; a purely empresa-level set stays agencia-less.
+     *
+     * @param  list<string>  $targetRoles
+     */
+    public function resolveAgenciaId(User $actor, array $targetRoles, ?int $requestedAgenciaId): ?int
     {
-        if (in_array($targetRole, self::EMPRESA_LEVEL_ROLES, true)) {
+        if (! array_intersect($targetRoles, self::AGENCIA_LEVEL_ROLES)) {
             return null;
         }
 

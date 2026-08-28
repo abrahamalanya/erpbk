@@ -29,6 +29,18 @@ class UserController extends Controller
         return $this->successResponse($this->consultaDni->consultar($dni));
     }
 
+    /**
+     * The roles the authenticated user is allowed to assign when creating or
+     * editing another user, so the frontend selector never has to hardcode
+     * the assignment hierarchy.
+     */
+    public function rolesAsignables(): JsonResponse
+    {
+        Gate::authorize('create', User::class);
+
+        return $this->successResponse($this->hierarchy->assignableRoles(request()->user()));
+    }
+
     public function index(): JsonResponse
     {
         Gate::authorize('viewAny', User::class);
@@ -78,8 +90,8 @@ class UserController extends Controller
 
         $data = $request->validated();
         $actor = $request->user();
-        $role = $data['role'];
-        $empresaId = $this->hierarchy->resolveEmpresaId($actor, $role, $data['empresa_id'] ?? null);
+        $roles = array_values(array_unique($data['roles']));
+        $empresaId = $this->hierarchy->resolveEmpresaId($actor, $data['empresa_id'] ?? null);
 
         $user = User::query()->create([
             'nombre' => $data['nombre'],
@@ -90,11 +102,11 @@ class UserController extends Controller
             'password' => $data['password'] ?? $data['dni'],
             'estado' => $data['estado'] ?? 'activo',
             'empresa_id' => $empresaId,
-            'agencia_id' => $this->hierarchy->resolveAgenciaId($actor, $role, $data['agencia_id'] ?? null),
+            'agencia_id' => $this->hierarchy->resolveAgenciaId($actor, $roles, $data['agencia_id'] ?? null),
             'supervisor_id' => $data['supervisor_id'] ?? null,
         ]);
 
-        $user->assignRole($role);
+        $user->syncRoles($roles);
 
         return $this->successResponse($user->load(['roles', 'empresa', 'agencia']), 'Usuario creado', 201);
     }
@@ -123,7 +135,15 @@ class UserController extends Controller
     {
         Gate::authorize('update', $user);
 
-        $user->update($request->validated());
+        $data = $request->validated();
+        $roles = $data['roles'] ?? null;
+        unset($data['roles']);
+
+        $user->update($data);
+
+        if ($roles !== null) {
+            $user->syncRoles(array_values(array_unique($roles)));
+        }
 
         return $this->successResponse($user->load(['roles', 'empresa', 'agencia']), 'Usuario actualizado');
     }

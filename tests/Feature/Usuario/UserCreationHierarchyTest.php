@@ -27,7 +27,7 @@ it('allows sistemas to create a user for any empresa and agencia, with any assig
         'dni' => '10000001',
         'email' => 'nuevo.supervisor@test.com',
         'password' => 'password123',
-        'role' => 'supervisor',
+        'roles' => ['supervisor'],
         'empresa_id' => $empresa->id,
         'agencia_id' => $agencia->id,
     ])->assertCreated();
@@ -35,6 +35,70 @@ it('allows sistemas to create a user for any empresa and agencia, with any assig
     expect($response->json('data.empresa_id'))->toBe($empresa->id)
         ->and($response->json('data.agencia_id'))->toBe($agencia->id)
         ->and(collect($response->json('data.roles'))->pluck('name')->all())->toBe(['supervisor']);
+});
+
+it('assigns several roles to a single user and keeps the agencia when the set mixes levels', function () {
+    $empresa = Empresa::factory()->create();
+    $agencia = Agencia::factory()->for($empresa)->create();
+
+    $admin = User::factory()->forEmpresa($empresa)->create();
+    $admin->assignRole('administrador_general');
+    Sanctum::actingAs($admin, ['*']);
+
+    $response = $this->postJson('/api/usuarios', [
+        'nombre' => 'Doble',
+        'apellido' => 'Sombrero',
+        'dni' => '10000010',
+        'email' => 'doble.sombrero@test.com',
+        'password' => 'password123',
+        'roles' => ['administrador_agencia', 'supervisor'],
+        'agencia_id' => $agencia->id,
+    ])->assertCreated();
+
+    expect(collect($response->json('data.roles'))->pluck('name')->sort()->values()->all())
+        ->toBe(['administrador_agencia', 'supervisor'])
+        ->and($response->json('data.empresa_id'))->toBe($empresa->id)
+        ->and($response->json('data.agencia_id'))->toBe($agencia->id);
+});
+
+it('still accepts the legacy single "role" string', function () {
+    $sistemas = User::factory()->create();
+    $sistemas->assignRole('sistemas');
+    Sanctum::actingAs($sistemas, ['*']);
+
+    $empresa = Empresa::factory()->create();
+    $agencia = Agencia::factory()->for($empresa)->create();
+
+    $response = $this->postJson('/api/usuarios', [
+        'nombre' => 'Legacy',
+        'apellido' => 'Cliente',
+        'dni' => '10000011',
+        'email' => 'legacy.cliente@test.com',
+        'password' => 'password123',
+        'role' => 'supervisor',
+        'empresa_id' => $empresa->id,
+        'agencia_id' => $agencia->id,
+    ])->assertCreated();
+
+    expect(collect($response->json('data.roles'))->pluck('name')->all())->toBe(['supervisor']);
+});
+
+it('rejects a role combination that steps outside the actor hierarchy', function () {
+    $empresa = Empresa::factory()->create();
+    $agencia = Agencia::factory()->for($empresa)->create();
+
+    $adminAgencia = User::factory()->forAgencia($agencia)->create();
+    $adminAgencia->assignRole('administrador_agencia');
+    Sanctum::actingAs($adminAgencia, ['*']);
+
+    $this->postJson('/api/usuarios', [
+        'nombre' => 'X',
+        'apellido' => 'Y',
+        'email' => 'combo@test.com',
+        'password' => 'password123',
+        'roles' => ['supervisor', 'administrador_general'],
+    ])->assertUnprocessable()
+        ->assertJsonValidationErrors('roles.1');
 });
 
 it('forces administrador_general empresa_id even if a different one is submitted', function () {
@@ -122,9 +186,9 @@ it('rejects assigning a role outside the actor hierarchy', function () {
         'apellido' => 'Y',
         'email' => 'nope@test.com',
         'password' => 'password123',
-        'role' => 'administrador_general',
+        'roles' => ['administrador_general'],
     ])->assertUnprocessable()
-        ->assertJsonValidationErrors('role');
+        ->assertJsonValidationErrors('roles.0');
 });
 
 it('rejects creation attempts from roles with no assignable roles', function (string $role) {
@@ -138,9 +202,9 @@ it('rejects creation attempts from roles with no assignable roles', function (st
         'apellido' => 'Y',
         'email' => 'blocked@test.com',
         'password' => 'password123',
-        'role' => 'asesor',
+        'roles' => ['asesor'],
     ])->assertUnprocessable()
-        ->assertJsonValidationErrors('role');
+        ->assertJsonValidationErrors('roles.0');
 })->with(['peinadora', 'supervisor', 'asesor']);
 
 it('auto-generates email and password from dni when the empresa has a prefijo and none are given', function () {

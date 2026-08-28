@@ -2,6 +2,7 @@
 
 namespace App\Modules\Usuario\Http\Requests;
 
+use App\Modules\Usuario\Services\UserHierarchyService;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -14,6 +15,17 @@ class UpdateUserRequest extends FormRequest
     public function authorize(): bool
     {
         return true;
+    }
+
+    /**
+     * Accept a single `role` string as a one-element `roles` array so older
+     * clients keep working while the API moves to multiple roles per user.
+     */
+    protected function prepareForValidation(): void
+    {
+        if (! $this->has('roles') && $this->filled('role')) {
+            $this->merge(['roles' => [$this->input('role')]]);
+        }
     }
 
     /**
@@ -33,6 +45,8 @@ class UpdateUserRequest extends FormRequest
             'telefono' => ['nullable', 'string', 'max:20'],
             'estado' => ['sometimes', Rule::in(['activo', 'inactivo'])],
             'password' => ['sometimes', 'required', 'string', 'min:8'],
+            'roles' => ['sometimes', 'array', 'min:1'],
+            'roles.*' => ['string', Rule::in(app(UserHierarchyService::class)->assignableRoles($this->user()))],
         ];
     }
 
