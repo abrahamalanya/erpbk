@@ -21,6 +21,7 @@ class DatabaseSeeder extends Seeder
             BancoSeeder::class,
             EmpresaSeeder::class,
             AgenciaSeeder::class,
+            ConceptoSeeder::class,
             ConfiguracionCreditoPrendarioSeeder::class,
         ]);
 

@@ -34,3 +34,8 @@ El rol `sistemas` es el de acceso total: cruza todas las empresas, no lleva `emp
 ```powershell
 php artisan tinker --execute="try { `$user = App\Modules\Usuario\Models\User::create(['nombre' => 'abraham', 'apellido' => 'alanya', 'email' => 'abrahamalanya@laravel.com', 'password' => bcrypt('abrahamalanya'), 'estado' => 'activo']); `$user->assignRole('sistemas'); echo 'Usuario sistemas creado: '.`$user->email; } catch (\Throwable `$e) { echo 'ERROR: '.`$e->getMessage(); }"
 ```
+
+
+# Seed
+
+php artisan db:seed --class=ConceptoSeeder
