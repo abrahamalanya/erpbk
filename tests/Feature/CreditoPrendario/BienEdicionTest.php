@@ -26,6 +26,8 @@ it('lets an asesor edit a bien of their own cliente', function () {
     $this->putJson("/api/bienes/{$bien->id}", [
         'tipo' => 'varios',
         'nombre' => 'Anillo actualizado',
+        'marca' => 'Genérico',
+        'modelo' => 'S/M',
         'valorizacion' => 650,
         'puntaje' => 6,
     ])->assertSuccessful()
@@ -45,6 +47,8 @@ it('denies an asesor from editing a bien of another asesor\'s cliente', function
     $this->putJson("/api/bienes/{$bien->id}", [
         'tipo' => 'varios',
         'nombre' => 'Intento ajeno',
+        'marca' => 'Genérico',
+        'modelo' => 'S/M',
         'valorizacion' => 100,
         'puntaje' => 5,
     ])->assertForbidden();
@@ -60,6 +64,8 @@ it('denies editing without the bienes.editar permission', function () {
     $this->putJson("/api/bienes/{$bien->id}", [
         'tipo' => 'varios',
         'nombre' => 'Sin permiso',
+        'marca' => 'Genérico',
+        'modelo' => 'S/M',
         'valorizacion' => 100,
         'puntaje' => 5,
     ])->assertForbidden();
@@ -76,6 +82,8 @@ it('denies editing a bien that is backing an active crédito', function () {
     $this->putJson("/api/bienes/{$bien->id}", [
         'tipo' => 'varios',
         'nombre' => 'No debería poder',
+        'marca' => 'Genérico',
+        'modelo' => 'S/M',
         'valorizacion' => 999,
         'puntaje' => 5,
     ])->assertUnprocessable();
@@ -92,6 +100,8 @@ it('allows editing a bien again once its crédito is liquidado', function () {
     $this->putJson("/api/bienes/{$bien->id}", [
         'tipo' => 'varios',
         'nombre' => 'Ahora sí',
+        'marca' => 'Genérico',
+        'modelo' => 'S/M',
         'valorizacion' => 600,
         'puntaje' => 6,
     ])->assertSuccessful();

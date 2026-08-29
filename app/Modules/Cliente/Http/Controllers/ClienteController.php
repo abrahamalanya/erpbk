@@ -10,6 +10,7 @@ use App\Modules\Cliente\Services\ClienteHierarchyService;
 use App\Nucleo\Http\Controllers\Controller;
 use App\Nucleo\Services\ConsultaDniService;
 use App\Nucleo\Traits\ApiResponse;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Gate;
@@ -38,7 +39,18 @@ class ClienteController extends Controller
         $query = Cliente::query()->with(['agencia', 'asesor', 'registradoPor']);
         $query = $this->hierarchy->visibleQuery($query, request()->user());
 
-        return $this->successResponse($query->paginate(15));
+        if (request()->filled('q')) {
+            $termino = trim((string) request()->string('q'));
+            $query->where(function (Builder $sub) use ($termino): void {
+                $sub->where('nombre', 'like', "%{$termino}%")
+                    ->orWhere('apellido', 'like', "%{$termino}%")
+                    ->orWhere('numero_documento', 'like', "%{$termino}%");
+            });
+        }
+
+        $porPagina = max(1, min(request()->integer('per_page', 15), 100));
+
+        return $this->successResponse($query->paginate($porPagina));
     }
 
     public function store(StoreClienteRequest $request): JsonResponse

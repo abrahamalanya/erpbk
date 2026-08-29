@@ -32,7 +32,7 @@ it('requires marca and modelo for tipo electro', function () {
     ])->assertUnprocessable()->assertJsonValidationErrors(['marca', 'modelo']);
 });
 
-it('does not require marca and modelo for tipo varios', function () {
+it('requires marca and modelo for tipo varios', function () {
     $asesor = User::factory()->forAgencia($this->agencia)->create();
     $asesor->assignRole('asesor');
     Sanctum::actingAs($asesor, ['*']);
@@ -41,6 +41,22 @@ it('does not require marca and modelo for tipo varios', function () {
         'cliente_id' => $this->cliente->id,
         'tipo' => 'varios',
         'nombre' => 'Anillo de oro',
+        'valorizacion' => 300,
+        'puntaje' => 7,
+    ])->assertUnprocessable()->assertJsonValidationErrors(['marca', 'modelo']);
+});
+
+it('registers a bien tipo varios when marca and modelo are provided', function () {
+    $asesor = User::factory()->forAgencia($this->agencia)->create();
+    $asesor->assignRole('asesor');
+    Sanctum::actingAs($asesor, ['*']);
+
+    $this->postJson('/api/bienes', [
+        'cliente_id' => $this->cliente->id,
+        'tipo' => 'varios',
+        'nombre' => 'Anillo de oro',
+        'marca' => 'Casa de oro',
+        'modelo' => '18k',
         'valorizacion' => 300,
         'puntaje' => 7,
     ])->assertCreated();
@@ -75,7 +91,8 @@ it('allows the registering asesor to view the bien via show', function () {
 
     $bienId = $this->postJson('/api/bienes', [
         'cliente_id' => $clienteDelAsesor->id,
-        'tipo' => 'varios', 'nombre' => 'Anillo de oro', 'valorizacion' => 300, 'puntaje' => 7,
+        'tipo' => 'varios', 'nombre' => 'Anillo de oro', 'marca' => 'Casa de oro', 'modelo' => '18k',
+        'valorizacion' => 300, 'puntaje' => 7,
     ])->assertCreated()->json('data.id');
 
     $this->getJson("/api/bienes/{$bienId}")
@@ -130,6 +147,8 @@ it('stores a video for the bien and exposes its url', function () {
         'cliente_id' => $this->cliente->id,
         'tipo' => 'varios',
         'nombre' => 'Anillo de oro',
+        'marca' => 'Casa de oro',
+        'modelo' => '18k',
         'valorizacion' => 300,
         'puntaje' => 7,
         'video' => $video,

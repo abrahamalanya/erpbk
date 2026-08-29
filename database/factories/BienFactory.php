@@ -67,14 +67,13 @@ class BienFactory extends Factory
     }
 
     /**
-     * Mark the bien as tipo "varios" (marca/modelo/serie may be absent).
+     * Mark the bien as tipo "varios" (serie may be absent; marca/modelo are
+     * still required for every tipo).
      */
     public function varios(): static
     {
         return $this->state(fn (): array => [
             'tipo' => 'varios',
-            'marca' => null,
-            'modelo' => null,
             'serie' => null,
         ]);
     }
