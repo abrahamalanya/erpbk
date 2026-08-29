@@ -136,13 +136,25 @@ class UserController extends Controller
         Gate::authorize('update', $user);
 
         $data = $request->validated();
-        $roles = $data['roles'] ?? null;
+        $actor = $request->user();
+        $roles = isset($data['roles']) ? array_values(array_unique($data['roles'])) : null;
         unset($data['roles']);
+
+        // Whenever the role set or the agencia is part of this request, re-resolve
+        // the agencia the same way `store` does: an agencia-level role pins the
+        // user to an agencia, a purely empresa-level set clears it.
+        if ($roles !== null || array_key_exists('agencia_id', $data)) {
+            $data['agencia_id'] = $this->hierarchy->resolveAgenciaId(
+                $actor,
+                $roles ?? $user->getRoleNames()->all(),
+                $data['agencia_id'] ?? $user->agencia_id,
+            );
+        }
 
         $user->update($data);
 
         if ($roles !== null) {
-            $user->syncRoles(array_values(array_unique($roles)));
+            $user->syncRoles($roles);
         }
 
         return $this->successResponse($user->load(['roles', 'empresa', 'agencia']), 'Usuario actualizado');

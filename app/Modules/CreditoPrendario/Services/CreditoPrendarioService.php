@@ -714,9 +714,12 @@ final class CreditoPrendarioService
      * Manual counterpart to the daily vencido -> en_venta transition
      * actualizarEstadosVencidos() does in batch — lets an admin send a
      * specific crédito to the tienda as soon as it's past the período de
-     * espera, without waiting for the next scheduled run.
+     * espera, without waiting for the next scheduled run. The admin sets the
+     * sale price per bien here; the batch path falls back to the valorización.
+     *
+     * @param  array<int, numeric-string|float|int>  $preciosPorBien  keyed by bien id
      */
-    public function enviarATienda(CreditoPrendario $credito, User $actor): CreditoPrendario
+    public function enviarATienda(CreditoPrendario $credito, User $actor, array $preciosPorBien = []): CreditoPrendario
     {
         $this->asegurarEstado($credito, 'vencido');
 
@@ -726,7 +729,7 @@ final class CreditoPrendarioService
             throw new DomainException("Este crédito aún no supera los {$configuracion->dias_espera_mora} días de espera configurados.");
         }
 
-        return DB::transaction(fn (): CreditoPrendario => $this->transicionarAEnVenta($credito));
+        return DB::transaction(fn (): CreditoPrendario => $this->transicionarAEnVenta($credito, $preciosPorBien));
     }
 
     /**
@@ -753,10 +756,19 @@ final class CreditoPrendarioService
         return $credito->fecha_vencimiento->copy()->addDays($configuracion->dias_espera_mora)->toDateString();
     }
 
-    private function transicionarAEnVenta(CreditoPrendario $credito): CreditoPrendario
+    /**
+     * @param  array<int, numeric-string|float|int>  $preciosPorBien  keyed by bien id
+     */
+    private function transicionarAEnVenta(CreditoPrendario $credito, array $preciosPorBien = []): CreditoPrendario
     {
         $credito->update(['estado' => 'en_venta']);
-        Bien::query()->whereIn('id', $credito->bienes->pluck('id'))->update(['estado' => 'disponible_venta']);
+
+        foreach ($credito->bienes as $bien) {
+            $bien->update([
+                'estado' => 'disponible_venta',
+                'precio_venta' => $preciosPorBien[$bien->id] ?? $bien->precio_venta ?? $bien->valorizacion,
+            ]);
+        }
 
         $credito = $credito->fresh();
         $this->notificar($credito);

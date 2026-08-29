@@ -92,6 +92,7 @@ class TiendaController extends Controller
             'marca' => $bien->marca,
             'modelo' => $bien->modelo,
             'valorizacion' => $bien->valorizacion,
+            'precio_venta' => $bien->precio_venta,
             'puntaje' => $bien->puntaje,
             'foto_cliente_producto_url' => $bien->foto_cliente_producto_url,
             'video_url' => $bien->video_url,

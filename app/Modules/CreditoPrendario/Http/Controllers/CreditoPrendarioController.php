@@ -5,6 +5,7 @@ namespace App\Modules\CreditoPrendario\Http\Controllers;
 use App\Modules\CreditoPrendario\Http\Requests\ActualizarInteresCreditoRequest;
 use App\Modules\CreditoPrendario\Http\Requests\AdendarCreditoRequest;
 use App\Modules\CreditoPrendario\Http\Requests\DesembolsarCreditoRequest;
+use App\Modules\CreditoPrendario\Http\Requests\EnviarATiendaRequest;
 use App\Modules\CreditoPrendario\Http\Requests\LiquidarCreditoRequest;
 use App\Modules\CreditoPrendario\Http\Requests\RechazarCreditoRequest;
 use App\Modules\CreditoPrendario\Http\Requests\RefrendarCreditoRequest;
@@ -206,11 +207,14 @@ class CreditoPrendarioController extends Controller
         return $this->successResponse($credito, 'Aprobación revertida, el crédito vuelve a pendiente');
     }
 
-    public function enviarATienda(CreditoPrendario $credito): JsonResponse
+    public function enviarATienda(EnviarATiendaRequest $request, CreditoPrendario $credito): JsonResponse
     {
-        Gate::authorize('enviarATienda', $credito);
+        // Authorization is enforced by EnviarATiendaRequest::authorize().
+        $precios = collect($request->validated()['precios'])
+            ->mapWithKeys(fn ($precio, $bienId): array => [(int) $bienId => $precio])
+            ->all();
 
-        $credito = $this->creditoService->enviarATienda($credito, request()->user());
+        $credito = $this->creditoService->enviarATienda($credito, $request->user(), $precios);
 
         return $this->successResponse($credito, 'Crédito enviado a la tienda');
     }

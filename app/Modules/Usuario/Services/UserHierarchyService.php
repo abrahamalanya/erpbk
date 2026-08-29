@@ -50,6 +50,14 @@ final class UserHierarchyService
     }
 
     /**
+     * @param  list<string>  $roles
+     */
+    public function includesAgenciaLevelRole(array $roles): bool
+    {
+        return (bool) array_intersect($roles, self::AGENCIA_LEVEL_ROLES);
+    }
+
+    /**
      * The user gets an agencia as soon as *any* of its target roles is an
      * agencia-level role; a purely empresa-level set stays agencia-less.
      *

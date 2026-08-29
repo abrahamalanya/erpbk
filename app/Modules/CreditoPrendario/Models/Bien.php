@@ -46,6 +46,7 @@ class Bien extends Model
         'serie',
         'observacion',
         'valorizacion',
+        'precio_venta',
         'puntaje',
         'foto_cliente_producto_path',
         'video_path',
@@ -66,6 +67,7 @@ class Bien extends Model
     {
         return [
             'valorizacion' => 'decimal:2',
+            'precio_venta' => 'decimal:2',
         ];
     }
 

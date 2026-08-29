@@ -4,6 +4,7 @@ use App\Modules\Cliente\Models\Cliente;
 use App\Modules\CreditoPrendario\Models\Bien;
 use App\Modules\CreditoPrendario\Models\ConfiguracionCreditoPrendario;
 use App\Modules\CreditoPrendario\Models\CreditoPrendario;
+use App\Modules\CreditoPrendario\Services\CreditoPrendarioService;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Usuario\Models\User;
@@ -28,16 +29,58 @@ beforeEach(function () {
     $this->adminAgencia->assignRole('administrador_agencia');
 });
 
-it('lets an administrador_agencia send a vencido crédito past the período de espera to the tienda', function () {
+it('lets an administrador_agencia send a vencido crédito past the período de espera to the tienda, with a sale price per bien', function () {
     $credito = CreditoPrendario::factory()->paraBien($this->bien)
         ->vencido(diasVencido: 20)
         ->create(['registrado_por' => $this->asesor->id, 'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id]);
 
     Sanctum::actingAs($this->adminAgencia, ['*']);
-    $response = $this->postJson("/api/creditos-prendarios/{$credito->id}/enviar-tienda")->assertSuccessful();
+    $response = $this->postJson("/api/creditos-prendarios/{$credito->id}/enviar-tienda", [
+        'precios' => [$this->bien->id => 1499.90],
+    ])->assertSuccessful();
 
     expect($response->json('data.estado'))->toBe('en_venta')
-        ->and($this->bien->fresh()->estado)->toBe('disponible_venta');
+        ->and($this->bien->fresh()->estado)->toBe('disponible_venta')
+        ->and($this->bien->fresh()->precio_venta)->toBe('1499.90');
+});
+
+it('rejects enviar-tienda when a bien has no sale price', function () {
+    $credito = CreditoPrendario::factory()->paraBien($this->bien)
+        ->vencido(diasVencido: 20)
+        ->create(['registrado_por' => $this->asesor->id, 'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id]);
+
+    Sanctum::actingAs($this->adminAgencia, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$credito->id}/enviar-tienda", ['precios' => []])
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('precios');
+
+    expect($credito->fresh()->estado)->toBe('vencido');
+});
+
+it('shows the sale price in the public tienda listing', function () {
+    $credito = CreditoPrendario::factory()->paraBien($this->bien)
+        ->vencido(diasVencido: 20)
+        ->create(['registrado_por' => $this->asesor->id, 'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id]);
+
+    Sanctum::actingAs($this->adminAgencia, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$credito->id}/enviar-tienda", [
+        'precios' => [$this->bien->id => 900],
+    ])->assertSuccessful();
+
+    $this->getJson("/api/tienda/bienes/{$this->bien->id}")
+        ->assertSuccessful()
+        ->assertJsonPath('data.precio_venta', '900.00');
+});
+
+it('falls back to the valorización as sale price when the daily batch sends a crédito to the tienda', function () {
+    $credito = CreditoPrendario::factory()->paraBien($this->bien)
+        ->vencido(diasVencido: 20)
+        ->create(['registrado_por' => $this->asesor->id, 'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id]);
+
+    app(CreditoPrendarioService::class)->actualizarEstadosVencidos();
+
+    expect($this->bien->fresh()->estado)->toBe('disponible_venta')
+        ->and($this->bien->fresh()->precio_venta)->toBe($this->bien->fresh()->valorizacion);
 });
 
 it('rejects enviar-tienda when the crédito has not yet surpassed the período de espera', function () {
@@ -46,7 +89,7 @@ it('rejects enviar-tienda when the crédito has not yet surpassed the período d
         ->create(['registrado_por' => $this->asesor->id, 'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id]);
 
     Sanctum::actingAs($this->adminAgencia, ['*']);
-    $this->postJson("/api/creditos-prendarios/{$credito->id}/enviar-tienda")
+    $this->postJson("/api/creditos-prendarios/{$credito->id}/enviar-tienda", ['precios' => [$this->bien->id => 900]])
         ->assertUnprocessable()
         ->assertJsonPath('message', 'Este crédito aún no supera los 15 días de espera configurados.');
 
@@ -59,7 +102,8 @@ it('rejects enviar-tienda when the crédito is not vencido', function () {
         ->create(['registrado_por' => $this->asesor->id, 'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id]);
 
     Sanctum::actingAs($this->adminAgencia, ['*']);
-    $this->postJson("/api/creditos-prendarios/{$credito->id}/enviar-tienda")->assertUnprocessable();
+    $this->postJson("/api/creditos-prendarios/{$credito->id}/enviar-tienda", ['precios' => [$this->bien->id => 900]])
+        ->assertUnprocessable();
 });
 
 it('forbids an asesor from sending a crédito to the tienda', function () {
