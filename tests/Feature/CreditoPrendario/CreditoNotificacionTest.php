@@ -4,9 +4,9 @@ use App\Modules\Caja\Events\CajaActualizada;
 use App\Modules\Caja\Models\Caja;
 use App\Modules\Caja\Models\CajaCiclo;
 use App\Modules\Cliente\Models\Cliente;
+use App\Modules\Credito\Models\ConfiguracionCredito;
+use App\Modules\Credito\Models\Credito;
 use App\Modules\CreditoPrendario\Models\Bien;
-use App\Modules\CreditoPrendario\Models\ConfiguracionCreditoPrendario;
-use App\Modules\CreditoPrendario\Models\CreditoPrendario;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Sistemas\Events\NotificacionCreada;
@@ -22,7 +22,7 @@ beforeEach(function () {
     $this->seed([RoleSeeder::class, PermissionSeeder::class]);
     $this->empresa = Empresa::factory()->create();
     $this->agencia = Agencia::factory()->for($this->empresa)->create();
-    ConfiguracionCreditoPrendario::factory()->deEmpresa($this->empresa)->create([
+    ConfiguracionCredito::factory()->deEmpresa($this->empresa)->create([
         'interes_default' => 10, 'plazo_dias' => 30, 'dias_espera_mora' => 15,
         'dias_minimo_interes' => 15, 'tasa_mora_diaria' => 1,
     ]);
@@ -144,7 +144,7 @@ it('notifies the registering asesor when an admin desembolsa their crédito', fu
     $this->postJson("/api/creditos-prendarios/{$creditoId}/aprobar")->assertSuccessful();
 
     Sanctum::actingAs($this->asesor, ['*']);
-    foreach (CreditoPrendario::find($creditoId)->documentos as $documento) {
+    foreach (Credito::find($creditoId)->documentos as $documento) {
         $this->postJson("/api/creditos-prendarios/{$creditoId}/documentos/{$documento->id}/subir-firmado", [
             'archivo' => UploadedFile::fake()->create('firmado.pdf', 100, 'application/pdf'),
         ])->assertSuccessful();
@@ -185,7 +185,7 @@ it('notifies the registering asesor when an admin edits the interest rate', func
 });
 
 it('notifies the registering asesor when their crédito is refrendado', function () {
-    $activo = CreditoPrendario::factory()->paraBien($this->bien)
+    $activo = Credito::factory()->paraBien($this->bien)
         ->activo()
         ->create(['registrado_por' => $this->asesor->id, 'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id]);
 
@@ -206,7 +206,7 @@ it('notifies the registering asesor when their crédito is refrendado', function
 it('notifies the registering asesor once the acta de devolución is firmada, not right at liquidar', function () {
     Storage::fake('public');
 
-    $activo = CreditoPrendario::factory()->paraBien($this->bien)
+    $activo = Credito::factory()->paraBien($this->bien)
         ->activo()
         ->create(['registrado_por' => $this->asesor->id, 'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id]);
 
@@ -218,7 +218,7 @@ it('notifies the registering asesor once the acta de devolución is firmada, not
 
     Event::assertNotDispatched(NotificacionCreada::class);
 
-    $devolucion = CreditoPrendario::find($activo->id)->documentos()->where('tipo', 'devolucion')->firstOrFail();
+    $devolucion = Credito::find($activo->id)->documentos()->where('tipo', 'devolucion')->firstOrFail();
     $this->postJson("/api/creditos-prendarios/{$activo->id}/documentos/{$devolucion->id}/subir-firmado", [
         'archivo' => UploadedFile::fake()->create('firmado.pdf', 100, 'application/pdf'),
     ])->assertSuccessful();
@@ -228,7 +228,7 @@ it('notifies the registering asesor once the acta de devolución is firmada, not
         && str_contains($event->notificacion->data['mensaje'], 'liquidado'));
 });
 
-it('broadcasts CajaActualizada for the actor desembolsando (not just the CreditoPrendarioActualizado event)', function () {
+it('broadcasts CajaActualizada for the actor desembolsando (not just the CreditoActualizado event)', function () {
     Storage::fake('public');
 
     Sanctum::actingAs($this->asesor, ['*']);
@@ -241,7 +241,7 @@ it('broadcasts CajaActualizada for the actor desembolsando (not just the Credito
     $this->postJson("/api/creditos-prendarios/{$creditoId}/aprobar")->assertSuccessful();
 
     Sanctum::actingAs($this->asesor, ['*']);
-    foreach (CreditoPrendario::find($creditoId)->documentos as $documento) {
+    foreach (Credito::find($creditoId)->documentos as $documento) {
         $this->postJson("/api/creditos-prendarios/{$creditoId}/documentos/{$documento->id}/subir-firmado", [
             'archivo' => UploadedFile::fake()->create('firmado.pdf', 100, 'application/pdf'),
         ])->assertSuccessful();

@@ -3,9 +3,9 @@
 use App\Modules\Caja\Models\Caja;
 use App\Modules\Caja\Models\CajaCiclo;
 use App\Modules\Cliente\Models\Cliente;
+use App\Modules\Credito\Models\ConfiguracionCredito;
+use App\Modules\Credito\Models\Credito;
 use App\Modules\CreditoPrendario\Models\Bien;
-use App\Modules\CreditoPrendario\Models\ConfiguracionCreditoPrendario;
-use App\Modules\CreditoPrendario\Models\CreditoPrendario;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Usuario\Models\User;
@@ -19,7 +19,7 @@ beforeEach(function () {
     $this->seed([RoleSeeder::class, PermissionSeeder::class]);
     $this->empresa = Empresa::factory()->create();
     $this->agencia = Agencia::factory()->for($this->empresa)->create();
-    ConfiguracionCreditoPrendario::factory()->deEmpresa($this->empresa)->create([
+    ConfiguracionCredito::factory()->deEmpresa($this->empresa)->create([
         'interes_default' => 10, 'plazo_dias' => 30, 'dias_espera_mora' => 15, 'tasa_mora_diaria' => 1,
     ]);
 
@@ -86,7 +86,7 @@ it('allows bienes of different tipo (electro + varios) in the same solicitud', f
 
 it('rejects a bien already backing another active crédito, but allows it again once that crédito is liquidado', function () {
     $bien = Bien::factory()->paraCliente($this->cliente)->create(['tipo' => 'electro', 'valorizacion' => 500]);
-    $activo = CreditoPrendario::factory()->paraBien($bien)->activo()->create(['registrado_por' => $this->asesor->id]);
+    $activo = Credito::factory()->paraBien($bien)->activo()->create(['registrado_por' => $this->asesor->id]);
 
     $this->postJson('/api/creditos-prendarios', [
         'bien_ids' => [$bien->id],
@@ -123,7 +123,7 @@ it('carries the same set of bienes over to the new crédito on refrendo', functi
 
     Sanctum::actingAs($this->asesor, ['*']);
 
-    foreach (CreditoPrendario::find($creditoId)->documentos as $documento) {
+    foreach (Credito::find($creditoId)->documentos as $documento) {
         $this->postJson("/api/creditos-prendarios/{$creditoId}/documentos/{$documento->id}/subir-firmado", [
             'archivo' => UploadedFile::fake()->create('firmado.pdf', 100, 'application/pdf'),
         ])->assertSuccessful();
@@ -144,7 +144,7 @@ it('marks every bien of a crédito as recuperado once the acta de devolución is
 
     $bien1 = Bien::factory()->paraCliente($this->cliente)->create(['tipo' => 'electro', 'valorizacion' => 200]);
     $bien2 = Bien::factory()->paraCliente($this->cliente)->create(['tipo' => 'electro', 'valorizacion' => 300]);
-    $credito = CreditoPrendario::factory()->paraBienes(collect([$bien1, $bien2]))
+    $credito = Credito::factory()->paraBienes(collect([$bien1, $bien2]))
         ->activo()
         ->create(['registrado_por' => $this->asesor->id]);
 
@@ -154,7 +154,7 @@ it('marks every bien of a crédito as recuperado once the acta de devolución is
     expect($bien1->fresh()->estado)->not->toBe('recuperado')
         ->and($bien2->fresh()->estado)->not->toBe('recuperado');
 
-    $devolucion = CreditoPrendario::find($credito->id)->documentos()->where('tipo', 'devolucion')->firstOrFail();
+    $devolucion = Credito::find($credito->id)->documentos()->where('tipo', 'devolucion')->firstOrFail();
     $this->postJson("/api/creditos-prendarios/{$credito->id}/documentos/{$devolucion->id}/subir-firmado", [
         'archivo' => UploadedFile::fake()->create('firmado.pdf', 100, 'application/pdf'),
     ])->assertSuccessful();

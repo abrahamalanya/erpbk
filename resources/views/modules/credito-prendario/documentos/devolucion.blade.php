@@ -77,7 +77,7 @@
         <tr>
             <th>N&deg;</th><th>Art&iacute;culo</th><th>Marca</th><th>Modelo</th><th>Serie</th><th>Valorizaci&oacute;n</th>
         </tr>
-        @foreach ($credito->bienes as $i => $bien)
+        @foreach ($garantias as $i => $bien)
         <tr>
             <td>{{ $i + 1 }}</td>
             <td>{{ strtoupper($bien->nombre) }}</td>

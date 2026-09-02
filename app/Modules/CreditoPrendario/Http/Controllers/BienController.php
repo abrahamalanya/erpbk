@@ -3,10 +3,10 @@
 namespace App\Modules\CreditoPrendario\Http\Controllers;
 
 use App\Modules\Cliente\Models\Cliente;
+use App\Modules\Credito\Services\GarantiaHierarchyService;
 use App\Modules\CreditoPrendario\Http\Requests\StoreBienRequest;
 use App\Modules\CreditoPrendario\Http\Requests\UpdateBienRequest;
 use App\Modules\CreditoPrendario\Models\Bien;
-use App\Modules\CreditoPrendario\Services\BienHierarchyService;
 use App\Nucleo\Http\Controllers\Controller;
 use App\Nucleo\Traits\ApiResponse;
 use DomainException;
@@ -19,7 +19,7 @@ class BienController extends Controller
     use ApiResponse;
 
     public function __construct(
-        private readonly BienHierarchyService $hierarchy,
+        private readonly GarantiaHierarchyService $hierarchy,
     ) {}
 
     public function index(): JsonResponse

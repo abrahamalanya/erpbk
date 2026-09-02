@@ -24,6 +24,30 @@ class PermissionSeeder extends Seeder
         'bienes.ver', 'bienes.crear', 'bienes.editar',
         'creditos_prendarios.ver', 'creditos_prendarios.crear', 'creditos_prendarios.subsanar', 'creditos_prendarios.aprobar', 'creditos_prendarios.rechazar', 'creditos_prendarios.subsanar', 'creditos_prendarios.desembolsar', 'creditos_prendarios.refrendar', 'creditos_prendarios.adendar', 'creditos_prendarios.liquidar', 'creditos_prendarios.editar', 'creditos_prendarios.revertir_aprobacion', 'creditos_prendarios.enviar_tienda',
         'configuraciones_credito_prendario.ver', 'configuraciones_credito_prendario.editar',
+        'vehiculos.ver', 'vehiculos.crear', 'vehiculos.editar',
+        'creditos_vehiculares.ver', 'creditos_vehiculares.crear',
+        'inmuebles.ver', 'inmuebles.crear', 'inmuebles.editar',
+        'creditos_hipotecarios.ver', 'creditos_hipotecarios.crear',
+    ];
+
+    /**
+     * Vehicular and hipotecario créditos reuse the prendario lifecycle
+     * permissions (creditos_prendarios.*) since they run on the same engine
+     * and endpoints; only garantía CRUD (vehiculos.* / inmuebles.*) and the
+     * distinct entry action (creditos_vehiculares.* / creditos_hipotecarios.*)
+     * are their own permissions. Roles that can register a bien/crédito
+     * prendario get the equivalents.
+     *
+     * @var list<string>
+     */
+    private const GARANTIA_FORMAL_ROLES = ['administrador_general', 'administrador_agencia', 'supervisor', 'asesor'];
+
+    /**
+     * @var list<string>
+     */
+    private const GARANTIA_FORMAL_PERMISSIONS = [
+        'vehiculos.ver', 'vehiculos.crear', 'vehiculos.editar', 'creditos_vehiculares.ver', 'creditos_vehiculares.crear',
+        'inmuebles.ver', 'inmuebles.crear', 'inmuebles.editar', 'creditos_hipotecarios.ver', 'creditos_hipotecarios.crear',
     ];
 
     /**
@@ -50,6 +74,12 @@ class PermissionSeeder extends Seeder
         Role::where('name', 'sistemas')->firstOrFail()->syncPermissions(Permission::all());
 
         foreach (self::ROLE_PERMISSIONS as $roleName => $permissions) {
+            if (in_array($roleName, self::GARANTIA_FORMAL_ROLES, true)) {
+                $permissions = [...$permissions, ...self::GARANTIA_FORMAL_PERMISSIONS];
+            } elseif ($roleName === 'secretaria') {
+                $permissions = [...$permissions, 'vehiculos.ver', 'creditos_vehiculares.ver', 'inmuebles.ver', 'creditos_hipotecarios.ver'];
+            }
+
             Role::where('name', $roleName)->firstOrFail()->syncPermissions($permissions);
         }
     }

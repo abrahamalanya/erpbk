@@ -3,9 +3,9 @@
 use App\Modules\Caja\Models\Caja;
 use App\Modules\Caja\Models\CajaCiclo;
 use App\Modules\Cliente\Models\Cliente;
+use App\Modules\Credito\Models\ConfiguracionCredito;
+use App\Modules\Credito\Models\Credito;
 use App\Modules\CreditoPrendario\Models\Bien;
-use App\Modules\CreditoPrendario\Models\ConfiguracionCreditoPrendario;
-use App\Modules\CreditoPrendario\Models\CreditoPrendario;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Usuario\Models\User;
@@ -17,7 +17,7 @@ beforeEach(function () {
     $this->seed([RoleSeeder::class, PermissionSeeder::class]);
     $this->empresa = Empresa::factory()->create();
     $this->agencia = Agencia::factory()->for($this->empresa)->create();
-    ConfiguracionCreditoPrendario::factory()->deEmpresa($this->empresa)->create([
+    ConfiguracionCredito::factory()->deEmpresa($this->empresa)->create([
         'interes_default' => 10, 'plazo_dias' => 30, 'dias_espera_mora' => 15, 'tasa_mora_diaria' => 1,
     ]);
 
@@ -109,7 +109,7 @@ it('denies subsanar-ing a crédito whose bienes now back a different active cré
         ->assertSuccessful();
 
     // El bien queda libre tras el rechazo — otro crédito lo puede tomar.
-    CreditoPrendario::factory()->paraBien($this->bien)->create(['estado' => 'activo']);
+    Credito::factory()->paraBien($this->bien)->create(['estado' => 'activo']);
 
     Sanctum::actingAs($this->asesor, ['*']);
     $this->postJson("/api/creditos-prendarios/{$creditoId}/subsanar")->assertUnprocessable();

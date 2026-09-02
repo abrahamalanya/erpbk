@@ -2,14 +2,14 @@
 
 namespace App\Modules\CreditoPrendario\Policies;
 
+use App\Modules\Credito\Services\GarantiaHierarchyService;
 use App\Modules\CreditoPrendario\Models\Bien;
-use App\Modules\CreditoPrendario\Services\BienHierarchyService;
 use App\Modules\Usuario\Models\User;
 
 class BienPolicy
 {
     public function __construct(
-        private readonly BienHierarchyService $hierarchy,
+        private readonly GarantiaHierarchyService $hierarchy,
     ) {}
 
     /**

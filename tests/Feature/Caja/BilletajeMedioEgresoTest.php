@@ -3,9 +3,9 @@
 use App\Modules\Caja\Models\Boveda;
 use App\Modules\Caja\Models\CuentaBancaria;
 use App\Modules\Cliente\Models\Cliente;
+use App\Modules\Credito\Models\ConfiguracionCredito;
+use App\Modules\Credito\Models\Credito;
 use App\Modules\CreditoPrendario\Models\Bien;
-use App\Modules\CreditoPrendario\Models\ConfiguracionCreditoPrendario;
-use App\Modules\CreditoPrendario\Models\CreditoPrendario;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Sistemas\Models\Concepto;
@@ -97,7 +97,7 @@ it('approves a billetaje against a cuenta bancaria, crediting the caja saldo_act
 it('lets the asesor desembolsar a crédito prendario funded by a digital billetaje', function () {
     Storage::fake('public');
 
-    ConfiguracionCreditoPrendario::factory()
+    ConfiguracionCredito::factory()
         ->deEmpresa($this->empresa)
         ->create(['interes_default' => 10, 'plazo_dias' => 30, 'dias_espera_mora' => 15, 'tasa_mora_diaria' => 1]);
 
@@ -133,7 +133,7 @@ it('lets the asesor desembolsar a crédito prendario funded by a digital billeta
     $this->postJson("/api/creditos-prendarios/{$creditoId}/aprobar")->assertSuccessful();
 
     Sanctum::actingAs($this->asesor, ['*']);
-    foreach (CreditoPrendario::find($creditoId)->documentos as $documento) {
+    foreach (Credito::find($creditoId)->documentos as $documento) {
         $this->postJson("/api/creditos-prendarios/{$creditoId}/documentos/{$documento->id}/subir-firmado", [
             'archivo' => UploadedFile::fake()->create('firmado.pdf', 100, 'application/pdf'),
         ])->assertSuccessful();

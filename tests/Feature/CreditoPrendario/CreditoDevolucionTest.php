@@ -3,10 +3,10 @@
 use App\Modules\Caja\Models\Caja;
 use App\Modules\Caja\Models\CajaCiclo;
 use App\Modules\Cliente\Models\Cliente;
+use App\Modules\Credito\Models\ConfiguracionCredito;
+use App\Modules\Credito\Models\Credito;
+use App\Modules\Credito\Models\DocumentoCredito;
 use App\Modules\CreditoPrendario\Models\Bien;
-use App\Modules\CreditoPrendario\Models\ConfiguracionCreditoPrendario;
-use App\Modules\CreditoPrendario\Models\CreditoPrendario;
-use App\Modules\CreditoPrendario\Models\DocumentoCreditoPrendario;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Usuario\Models\User;
@@ -20,7 +20,7 @@ beforeEach(function () {
     $this->seed([RoleSeeder::class, PermissionSeeder::class]);
     $this->empresa = Empresa::factory()->create();
     $this->agencia = Agencia::factory()->for($this->empresa)->create();
-    ConfiguracionCreditoPrendario::factory()->deEmpresa($this->empresa)->create([
+    ConfiguracionCredito::factory()->deEmpresa($this->empresa)->create([
         'interes_default' => 10, 'plazo_dias' => 30, 'dias_espera_mora' => 15,
         'dias_minimo_interes' => 15, 'tasa_mora_diaria' => 1,
     ]);
@@ -51,7 +51,7 @@ it('liquidar deja el crédito en liquidado_pendiente y genera el acta de devoluc
     $this->postJson("/api/creditos-prendarios/{$creditoId}/aprobar")->assertSuccessful();
 
     Sanctum::actingAs($this->asesor, ['*']);
-    foreach (CreditoPrendario::find($creditoId)->documentos as $documento) {
+    foreach (Credito::find($creditoId)->documentos as $documento) {
         $this->postJson("/api/creditos-prendarios/{$creditoId}/documentos/{$documento->id}/subir-firmado", [
             'archivo' => UploadedFile::fake()->create('firmado.pdf', 100, 'application/pdf'),
         ])->assertSuccessful();
@@ -95,7 +95,7 @@ it('recién queda liquidado y libera los bienes al subir el acta de devolución 
     $this->postJson("/api/creditos-prendarios/{$creditoId}/aprobar")->assertSuccessful();
 
     Sanctum::actingAs($this->asesor, ['*']);
-    foreach (CreditoPrendario::find($creditoId)->documentos as $documento) {
+    foreach (Credito::find($creditoId)->documentos as $documento) {
         $this->postJson("/api/creditos-prendarios/{$creditoId}/documentos/{$documento->id}/subir-firmado", [
             'archivo' => UploadedFile::fake()->create('firmado.pdf', 100, 'application/pdf'),
         ])->assertSuccessful();
@@ -108,7 +108,7 @@ it('recién queda liquidado y libera los bienes al subir el acta de devolución 
         'monto_pagado' => $liquidacionSugerida, 'medio' => 'efectivo',
     ])->assertSuccessful();
 
-    $devolucion = CreditoPrendario::find($creditoId)->documentos()->where('tipo', 'devolucion')->firstOrFail();
+    $devolucion = Credito::find($creditoId)->documentos()->where('tipo', 'devolucion')->firstOrFail();
 
     $response = $this->postJson("/api/creditos-prendarios/{$creditoId}/documentos/{$devolucion->id}/subir-firmado", [
         'archivo' => UploadedFile::fake()->create('firmado.pdf', 100, 'application/pdf'),
@@ -116,7 +116,7 @@ it('recién queda liquidado y libera los bienes al subir el acta de devolución 
 
     expect($response->json('data.firmado_at'))->not->toBeNull();
 
-    $credito = CreditoPrendario::find($creditoId);
+    $credito = Credito::find($creditoId);
     expect($credito->estado)->toBe('liquidado')
         ->and($this->bien->fresh()->estado)->toBe('recuperado');
 
@@ -129,11 +129,11 @@ it('recién queda liquidado y libera los bienes al subir el acta de devolución 
 it('firmar cualquier otro documento (no la devolución) no liquida un crédito liquidado_pendiente', function () {
     Storage::fake('public');
 
-    $activo = CreditoPrendario::factory()->paraBien($this->bien)
+    $activo = Credito::factory()->paraBien($this->bien)
         ->activo()
         ->create(['registrado_por' => $this->asesor->id, 'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id]);
 
-    $contrato = DocumentoCreditoPrendario::query()->create([
+    $contrato = DocumentoCredito::query()->create([
         'credito_id' => $activo->id,
         'empresa_id' => $this->empresa->id,
         'tipo' => 'contrato',
@@ -149,5 +149,5 @@ it('firmar cualquier otro documento (no la devolución) no liquida un crédito l
         'archivo' => UploadedFile::fake()->create('firmado.pdf', 100, 'application/pdf'),
     ])->assertSuccessful();
 
-    expect(CreditoPrendario::find($activo->id)->estado)->toBe('liquidado_pendiente');
+    expect(Credito::find($activo->id)->estado)->toBe('liquidado_pendiente');
 });

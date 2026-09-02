@@ -141,7 +141,7 @@
         <tr>
             <th>N&deg;</th><th>Cant.</th><th>Art&iacute;culo</th><th>Marca</th><th>Modelo</th><th>Serie</th><th>Valorizaci&oacute;n</th>
         </tr>
-        @foreach ($credito->bienes as $i => $bien)
+        @foreach ($garantias as $i => $bien)
         <tr>
             <td>{{ $i + 1 }}</td>
             <td>1</td>
@@ -154,7 +154,7 @@
         @endforeach
         <tr>
             <td colspan="6" style="text-align:right; font-weight:bold;">Total valorizaci&oacute;n</td>
-            <td style="font-weight:bold;">S/ {{ number_format($credito->bienes->sum('valorizacion'), 2) }}</td>
+            <td style="font-weight:bold;">S/ {{ number_format($garantias->sum('valorizacion'), 2) }}</td>
         </tr>
     </table>
 

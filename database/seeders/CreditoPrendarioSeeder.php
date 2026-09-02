@@ -3,9 +3,9 @@
 namespace Database\Seeders;
 
 use App\Modules\Cliente\Models\Cliente;
+use App\Modules\Credito\Models\Credito;
+use App\Modules\Credito\Services\CreditoService;
 use App\Modules\CreditoPrendario\Models\Bien;
-use App\Modules\CreditoPrendario\Models\CreditoPrendario;
-use App\Modules\CreditoPrendario\Services\CreditoPrendarioService;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Usuario\Models\User;
 use Carbon\Carbon;
@@ -15,7 +15,7 @@ class CreditoPrendarioSeeder extends Seeder
 {
     /**
      * Every credit here goes through the full real lifecycle — registrar,
-     * aprobar, firmar documentos, desembolsar — via CreditoPrendarioService,
+     * aprobar, firmar documentos, desembolsar — via CreditoService,
      * so cuotas/documentos/movimientos are generated exactly as they would
      * be in production. What differs per bucket is WHEN it happened: each
      * one is created with Carbon's "now" frozen to a specific point in the
@@ -26,7 +26,7 @@ class CreditoPrendarioSeeder extends Seeder
      * días de mora deseados — o 30 - días restantes para "cerca a vencer".
      *
      * 15 vs 16 días vencido are deliberately adjacent: the seeded
-     * ConfiguracionCreditoPrendario has dias_espera_mora = 15, so this pair
+     * ConfiguracionCredito has dias_espera_mora = 15, so this pair
      * demos the exact boundary of puede_enviar_tienda (falso a los 15,
      * verdadero a los 16).
      *
@@ -51,7 +51,7 @@ class CreditoPrendarioSeeder extends Seeder
 
     private const REPETICIONES_LIQUIDACION = 2;
 
-    public function __construct(private readonly CreditoPrendarioService $creditoService) {}
+    public function __construct(private readonly CreditoService $creditoService) {}
 
     /**
      * Run the database seeds.
@@ -99,7 +99,7 @@ class CreditoPrendarioSeeder extends Seeder
         }
     }
 
-    private function crearCreditoActivo(Agencia $agencia, User $asesor, User $admin, string $nombreCliente, int $diasDesdeDesembolso): CreditoPrendario
+    private function crearCreditoActivo(Agencia $agencia, User $asesor, User $admin, string $nombreCliente, int $diasDesdeDesembolso): Credito
     {
         $cliente = Cliente::factory()->forAgencia($agencia)->create([
             'nombre' => $nombreCliente,

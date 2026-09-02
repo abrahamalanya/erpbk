@@ -1,8 +1,8 @@
 <?php
 
 use App\Modules\Cliente\Models\Cliente;
+use App\Modules\Credito\Models\Credito;
 use App\Modules\CreditoPrendario\Models\Bien;
-use App\Modules\CreditoPrendario\Models\CreditoPrendario;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Usuario\Models\User;
@@ -76,7 +76,7 @@ it('denies editing a bien that is backing an active crédito', function () {
     $asesor->assignRole('asesor');
     $cliente = Cliente::factory()->asignadoA($asesor)->create();
     $bien = Bien::factory()->paraCliente($cliente)->create(['valorizacion' => 500]);
-    CreditoPrendario::factory()->paraBien($bien)->create(['estado' => 'activo']);
+    Credito::factory()->paraBien($bien)->create(['estado' => 'activo']);
     Sanctum::actingAs($asesor, ['*']);
 
     $this->putJson("/api/bienes/{$bien->id}", [
@@ -94,7 +94,7 @@ it('allows editing a bien again once its crédito is liquidado', function () {
     $asesor->assignRole('asesor');
     $cliente = Cliente::factory()->asignadoA($asesor)->create();
     $bien = Bien::factory()->paraCliente($cliente)->create(['valorizacion' => 500]);
-    CreditoPrendario::factory()->paraBien($bien)->create(['estado' => 'liquidado']);
+    Credito::factory()->paraBien($bien)->create(['estado' => 'liquidado']);
     Sanctum::actingAs($asesor, ['*']);
 
     $this->putJson("/api/bienes/{$bien->id}", [

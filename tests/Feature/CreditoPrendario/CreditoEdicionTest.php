@@ -3,9 +3,9 @@
 use App\Modules\Caja\Models\Caja;
 use App\Modules\Caja\Models\CajaCiclo;
 use App\Modules\Cliente\Models\Cliente;
+use App\Modules\Credito\Models\ConfiguracionCredito;
+use App\Modules\Credito\Models\Credito;
 use App\Modules\CreditoPrendario\Models\Bien;
-use App\Modules\CreditoPrendario\Models\ConfiguracionCreditoPrendario;
-use App\Modules\CreditoPrendario\Models\CreditoPrendario;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Usuario\Models\User;
@@ -19,7 +19,7 @@ beforeEach(function () {
     $this->seed([RoleSeeder::class, PermissionSeeder::class]);
     $this->empresa = Empresa::factory()->create();
     $this->agencia = Agencia::factory()->for($this->empresa)->create();
-    ConfiguracionCreditoPrendario::factory()->deEmpresa($this->empresa)->create([
+    ConfiguracionCredito::factory()->deEmpresa($this->empresa)->create([
         'interes_default' => 10, 'plazo_dias' => 30, 'dias_espera_mora' => 15, 'tasa_mora_diaria' => 1,
     ]);
 
@@ -51,7 +51,7 @@ it('allows administrador_agencia to revert an accidental aprobación back to pen
         ->assertSuccessful()
         ->assertJsonPath('data.estado', 'pendiente');
 
-    $credito = CreditoPrendario::find($creditoId);
+    $credito = Credito::find($creditoId);
     expect($credito->aprobado_por)->toBeNull()
         ->and($credito->fecha_aprobacion)->toBeNull();
 });
@@ -133,7 +133,7 @@ it('denies updating the interest rate once the crédito is activo', function () 
 
     Sanctum::actingAs($this->asesor, ['*']);
 
-    foreach (CreditoPrendario::find($creditoId)->documentos as $documento) {
+    foreach (Credito::find($creditoId)->documentos as $documento) {
         $this->postJson("/api/creditos-prendarios/{$creditoId}/documentos/{$documento->id}/subir-firmado", [
             'archivo' => UploadedFile::fake()->create('firmado.pdf', 100, 'application/pdf'),
         ])->assertSuccessful();
@@ -200,7 +200,7 @@ it('streams a freshly rendered PDF for a generated documento, without persisting
     Sanctum::actingAs($this->adminAgencia, ['*']);
     $this->postJson("/api/creditos-prendarios/{$creditoId}/aprobar")->assertSuccessful();
 
-    $documento = CreditoPrendario::find($creditoId)->documentos()->where('tipo', 'contrato')->firstOrFail();
+    $documento = Credito::find($creditoId)->documentos()->where('tipo', 'contrato')->firstOrFail();
     expect($documento->getAttributes())->not->toHaveKey('pdf_path');
 
     $response = $this->get("/api/creditos-prendarios/{$creditoId}/documentos/{$documento->id}/ver");
@@ -216,7 +216,7 @@ it('denies the asesor from viewing documentos while the crédito is pendiente or
         'monto_prestamo' => 500, 'tipo_cuota' => 'mensual',
     ])->assertCreated()->json('data.id');
 
-    $documento = CreditoPrendario::find($creditoId)->documentos()->where('tipo', 'contrato')->firstOrFail();
+    $documento = Credito::find($creditoId)->documentos()->where('tipo', 'contrato')->firstOrFail();
 
     $this->get("/api/creditos-prendarios/{$creditoId}/documentos/{$documento->id}/ver")
         ->assertForbidden();
@@ -237,7 +237,7 @@ it('allows the asesor to view documentos once aprobado, and revokes it again if 
         'monto_prestamo' => 500, 'tipo_cuota' => 'mensual',
     ])->assertCreated()->json('data.id');
 
-    $documento = CreditoPrendario::find($creditoId)->documentos()->where('tipo', 'contrato')->firstOrFail();
+    $documento = Credito::find($creditoId)->documentos()->where('tipo', 'contrato')->firstOrFail();
 
     Sanctum::actingAs($this->adminAgencia, ['*']);
     $this->postJson("/api/creditos-prendarios/{$creditoId}/aprobar")->assertSuccessful();
@@ -261,7 +261,7 @@ it('allows administrador_agencia to view documentos while the crédito is still 
         'monto_prestamo' => 500, 'tipo_cuota' => 'mensual',
     ])->assertCreated()->json('data.id');
 
-    $documento = CreditoPrendario::find($creditoId)->documentos()->where('tipo', 'contrato')->firstOrFail();
+    $documento = Credito::find($creditoId)->documentos()->where('tipo', 'contrato')->firstOrFail();
 
     Sanctum::actingAs($this->adminAgencia, ['*']);
     $this->get("/api/creditos-prendarios/{$creditoId}/documentos/{$documento->id}/ver")
@@ -285,7 +285,7 @@ it('returns 404 when the documento does not belong to the given crédito', funct
     Sanctum::actingAs($this->adminAgencia, ['*']);
     $this->postJson("/api/creditos-prendarios/{$otroCreditoId}/aprobar")->assertSuccessful();
 
-    $documentoDeOtroCredito = CreditoPrendario::find($otroCreditoId)->documentos()->firstOrFail();
+    $documentoDeOtroCredito = Credito::find($otroCreditoId)->documentos()->firstOrFail();
 
     $this->get("/api/creditos-prendarios/{$creditoId}/documentos/{$documentoDeOtroCredito->id}/ver")
         ->assertNotFound();

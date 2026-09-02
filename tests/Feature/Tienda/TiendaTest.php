@@ -3,7 +3,7 @@
 use App\Modules\CreditoPrendario\Models\Bien;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
-use App\Modules\Tienda\Models\InteresBien;
+use App\Modules\Tienda\Models\InteresArticulo;
 use App\Modules\Usuario\Models\User;
 use Database\Seeders\PermissionSeeder;
 use Database\Seeders\RoleSeeder;
@@ -69,7 +69,7 @@ it('creates an interes and notifies the administrador_agencia', function () {
         'mensaje' => 'Me interesa, ¿sigue disponible?',
     ])->assertCreated();
 
-    expect(InteresBien::where('bien_id', $bien->id)->where('nombre', 'Juan Pérez')->exists())->toBeTrue();
+    expect(InteresArticulo::where('articulo_type', 'bien')->where('articulo_id', $bien->id)->where('nombre', 'Juan Pérez')->exists())->toBeTrue();
 
     $this->assertDatabaseCount('notifications', 1);
     expect($this->adminAgencia->notifications()->count())->toBe(1);

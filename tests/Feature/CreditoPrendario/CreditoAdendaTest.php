@@ -3,9 +3,9 @@
 use App\Modules\Caja\Models\Caja;
 use App\Modules\Caja\Models\CajaCiclo;
 use App\Modules\Cliente\Models\Cliente;
+use App\Modules\Credito\Models\ConfiguracionCredito;
+use App\Modules\Credito\Models\Credito;
 use App\Modules\CreditoPrendario\Models\Bien;
-use App\Modules\CreditoPrendario\Models\ConfiguracionCreditoPrendario;
-use App\Modules\CreditoPrendario\Models\CreditoPrendario;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Usuario\Models\User;
@@ -29,7 +29,7 @@ beforeEach(function () {
     $this->seed([RoleSeeder::class, PermissionSeeder::class]);
     $this->empresa = Empresa::factory()->create();
     $this->agencia = Agencia::factory()->for($this->empresa)->create();
-    ConfiguracionCreditoPrendario::factory()->deEmpresa($this->empresa)->create([
+    ConfiguracionCredito::factory()->deEmpresa($this->empresa)->create([
         'plazo_dias' => 30, 'dias_espera_mora' => 15, 'dias_minimo_interes' => 15, 'tasa_mora_diaria' => 1, 'max_refrendos' => null,
     ]);
 
@@ -48,7 +48,7 @@ beforeEach(function () {
 function firmarDocumentos(TestCase $test, User $asesor, int $creditoId): void
 {
     Sanctum::actingAs($asesor, ['*']);
-    foreach (CreditoPrendario::find($creditoId)->documentos as $documento) {
+    foreach (Credito::find($creditoId)->documentos as $documento) {
         $test->postJson("/api/creditos-prendarios/{$creditoId}/documentos/{$documento->id}/subir-firmado", [
             'archivo' => UploadedFile::fake()->create('firmado.pdf', 100, 'application/pdf'),
         ])->assertSuccessful();
@@ -58,7 +58,7 @@ function firmarDocumentos(TestCase $test, User $asesor, int $creditoId): void
 it('lets an admin create a pendiente successor with new condiciones, closing the original as adendado', function () {
     Storage::fake('public');
 
-    $original = CreditoPrendario::factory()->paraBien($this->bien)
+    $original = Credito::factory()->paraBien($this->bien)
         ->activo()
         ->create(['registrado_por' => $this->asesor->id, 'monto_prestamo' => 1000, 'interes' => 20, 'tipo_cuota' => 'mensual']);
 
@@ -82,14 +82,14 @@ it('lets an admin create a pendiente successor with new condiciones, closing the
     expect($original->fresh()->estado)->toBe('adendado');
 
     $nuevoId = $response->json('data.id');
-    $tipos = CreditoPrendario::find($nuevoId)->documentos()->pluck('tipo')->all();
+    $tipos = Credito::find($nuevoId)->documentos()->pluck('tipo')->all();
     expect($tipos)->toEqualCanonicalizing(['contrato', 'declaracion', 'fotos']);
 });
 
 it('lets an asesor adendar collecting only the interest, keeping the current tasa/tipo_cuota on the successor', function () {
     Storage::fake('public');
 
-    $original = CreditoPrendario::factory()->paraBien($this->bien)
+    $original = Credito::factory()->paraBien($this->bien)
         ->activo()
         ->create(['registrado_por' => $this->asesor->id, 'monto_prestamo' => 1000, 'interes' => 20, 'tipo_cuota' => 'mensual']);
 
@@ -107,7 +107,7 @@ it('lets an asesor adendar collecting only the interest, keeping the current tas
 });
 
 it('denies an asesor from setting a nueva tasa/tipo_cuota at adendar time (needs creditos_prendarios.editar)', function () {
-    $original = CreditoPrendario::factory()->paraBien($this->bien)
+    $original = Credito::factory()->paraBien($this->bien)
         ->activo()
         ->create(['registrado_por' => $this->asesor->id, 'monto_prestamo' => 1000, 'interes' => 20]);
 
@@ -122,7 +122,7 @@ it('denies an asesor from setting a nueva tasa/tipo_cuota at adendar time (needs
 it('registers the cobro as an ingreso in the actor\'s own caja, with medio', function () {
     Storage::fake('public');
 
-    $original = CreditoPrendario::factory()->paraBien($this->bien)
+    $original = Credito::factory()->paraBien($this->bien)
         ->activo()
         ->create(['registrado_por' => $this->asesor->id, 'monto_prestamo' => 1000, 'interes' => 20]);
 
@@ -144,7 +144,7 @@ it('registers the cobro as an ingreso in the actor\'s own caja, with medio', fun
 });
 
 it('rejects a non-efectivo medio without a comprobante', function () {
-    $original = CreditoPrendario::factory()->paraBien($this->bien)
+    $original = Credito::factory()->paraBien($this->bien)
         ->activo()
         ->create(['registrado_por' => $this->asesor->id, 'monto_prestamo' => 1000, 'interes' => 20]);
 
@@ -160,7 +160,7 @@ it('requires the actor to have an open caja before adendar', function () {
     $sinCaja = User::factory()->forAgencia($this->agencia)->create();
     $sinCaja->assignRole('asesor');
 
-    $original = CreditoPrendario::factory()->paraBien($this->bien)
+    $original = Credito::factory()->paraBien($this->bien)
         ->activo()
         ->create(['registrado_por' => $sinCaja->id, 'monto_prestamo' => 1000, 'interes' => 20]);
 
@@ -176,7 +176,7 @@ it('requires the actor to have an open caja before adendar', function () {
 it('runs the successor through aprobar/firmar/desembolsar without touching caja at all', function () {
     Storage::fake('public');
 
-    $original = CreditoPrendario::factory()->paraBien($this->bien)
+    $original = Credito::factory()->paraBien($this->bien)
         ->activo()
         ->create(['registrado_por' => $this->asesor->id, 'monto_prestamo' => 1000, 'interes' => 20, 'tipo_cuota' => 'mensual']);
 
@@ -198,11 +198,11 @@ it('runs the successor through aprobar/firmar/desembolsar without touching caja 
     $response = $this->postJson("/api/creditos-prendarios/{$nuevoId}/desembolsar")->assertSuccessful();
 
     expect($response->json('data.estado'))->toBe('activo');
-    expect(CreditoPrendario::find($nuevoId)->cuotas)->toHaveCount(1);
+    expect(Credito::find($nuevoId)->cuotas)->toHaveCount(1);
 });
 
 it('rejects adendar with a monto_pagado below the calculated interest', function () {
-    $activo = CreditoPrendario::factory()->paraBien($this->bien)
+    $activo = Credito::factory()->paraBien($this->bien)
         ->activo()
         ->create(['registrado_por' => $this->asesor->id, 'monto_prestamo' => 1000, 'interes' => 20]);
 
@@ -213,7 +213,7 @@ it('rejects adendar with a monto_pagado below the calculated interest', function
 });
 
 it('rejects adendar when monto_pagado covers the full total, suggesting Liquidar instead', function () {
-    $activo = CreditoPrendario::factory()->paraBien($this->bien)
+    $activo = Credito::factory()->paraBien($this->bien)
         ->activo()
         ->create(['registrado_por' => $this->asesor->id, 'monto_prestamo' => 1000, 'interes' => 20]);
 
@@ -225,7 +225,7 @@ it('rejects adendar when monto_pagado covers the full total, suggesting Liquidar
 
 it('abona a capital cuando el monto pagado supera el interés, same as refrendar', function () {
     // interés = 1000 x 20% x 15 / 3000 = 100.00; paga 300 -> abono 200 -> sucesor con 800.
-    $activo = CreditoPrendario::factory()->paraBien($this->bien)
+    $activo = Credito::factory()->paraBien($this->bien)
         ->activo()
         ->create(['registrado_por' => $this->asesor->id, 'monto_prestamo' => 1000, 'interes' => 20]);
 
@@ -239,7 +239,7 @@ it('abona a capital cuando el monto pagado supera el interés, same as refrendar
 });
 
 it('rejects adendar on a crédito still pendiente', function () {
-    $pendiente = CreditoPrendario::factory()->paraBien($this->bien)
+    $pendiente = Credito::factory()->paraBien($this->bien)
         ->create(['registrado_por' => $this->asesor->id, 'estado' => 'pendiente']);
 
     Sanctum::actingAs($this->adminAgencia, ['*']);

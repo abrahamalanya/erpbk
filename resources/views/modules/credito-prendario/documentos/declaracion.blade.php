@@ -39,7 +39,7 @@
         <tr>
             <th>N&deg;</th><th>Cant.</th><th>Art&iacute;culo</th><th>Marca</th><th>Modelo</th><th>Serie</th>
         </tr>
-        @foreach ($credito->bienes as $i => $bien)
+        @foreach ($garantias as $i => $bien)
         <tr>
             <td>{{ $i + 1 }}</td>
             <td>1</td>

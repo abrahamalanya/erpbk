@@ -5,9 +5,13 @@ use App\Modules\Caja\Http\Controllers\BovedaController;
 use App\Modules\Caja\Http\Controllers\CajaController;
 use App\Modules\Caja\Http\Controllers\CuentaBancariaController;
 use App\Modules\Cliente\Http\Controllers\ClienteController;
+use App\Modules\Credito\Http\Controllers\ConfiguracionCreditoController;
+use App\Modules\Credito\Http\Controllers\CreditoController;
+use App\Modules\CreditoHipotecario\Http\Controllers\CreditoHipotecarioController;
+use App\Modules\CreditoHipotecario\Http\Controllers\InmuebleController;
 use App\Modules\CreditoPrendario\Http\Controllers\BienController;
-use App\Modules\CreditoPrendario\Http\Controllers\ConfiguracionCreditoPrendarioController;
-use App\Modules\CreditoPrendario\Http\Controllers\CreditoPrendarioController;
+use App\Modules\CreditoVehicular\Http\Controllers\CreditoVehicularController;
+use App\Modules\CreditoVehicular\Http\Controllers\VehiculoController;
 use App\Modules\Empresa\Http\Controllers\AgenciaController;
 use App\Modules\Empresa\Http\Controllers\EmpresaController;
 use App\Modules\Reportes\Http\Controllers\ReporteMovimientosController;
@@ -17,6 +21,7 @@ use App\Modules\Sistemas\Http\Controllers\ConfiguracionSistemaController;
 use App\Modules\Sistemas\Http\Controllers\NotificacionController;
 use App\Modules\Sistemas\Http\Controllers\PermissionController;
 use App\Modules\Sistemas\Http\Controllers\RoleController;
+use App\Modules\Tienda\Http\Controllers\TiendaArticuloController;
 use App\Modules\Tienda\Http\Controllers\TiendaController;
 use App\Modules\Usuario\Http\Controllers\UserController;
 use App\Nucleo\Http\Controllers\BancoController;
@@ -30,6 +35,12 @@ Route::get('/configuracion', [ConfiguracionSistemaController::class, 'show'])->n
 
 // ===== TIENDA VIRTUAL (públicas, sin auth) =====
 Route::prefix('tienda')->group(function () {
+    // Unificada: bienes + vehículos (+ inmuebles a futuro) en venta.
+    Route::get('articulos', [TiendaArticuloController::class, 'index'])->name('tienda.articulos.index');
+    Route::get('articulos/{tipo}/{id}', [TiendaArticuloController::class, 'show'])->name('tienda.articulos.show')->whereIn('tipo', ['bien', 'vehiculo', 'inmueble'])->whereNumber('id');
+    Route::post('articulos/{tipo}/{id}/interes', [TiendaArticuloController::class, 'interes'])->name('tienda.articulos.interes')->whereIn('tipo', ['bien', 'vehiculo', 'inmueble'])->whereNumber('id');
+
+    // Legacy solo-bienes (se mantiene por compatibilidad).
     Route::get('bienes', [TiendaController::class, 'index'])->name('tienda.bienes.index');
     Route::get('bienes/{bien}', [TiendaController::class, 'show'])->name('tienda.bienes.show');
     Route::post('bienes/{bien}/interes', [TiendaController::class, 'interes'])->name('tienda.bienes.interes');
@@ -96,24 +107,31 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::apiResource('bienes', BienController::class)->only(['index', 'store', 'show', 'update'])->parameters(['bienes' => 'bien']);
 
-    Route::apiResource('creditos-prendarios', CreditoPrendarioController::class)->only(['index', 'store', 'show'])->parameters(['creditos-prendarios' => 'credito']);
-    Route::post('creditos-prendarios/{credito}/aprobar', [CreditoPrendarioController::class, 'aprobar'])->name('creditos-prendarios.aprobar');
-    Route::post('creditos-prendarios/{credito}/rechazar', [CreditoPrendarioController::class, 'rechazar'])->name('creditos-prendarios.rechazar');
-    Route::post('creditos-prendarios/{credito}/subsanar', [CreditoPrendarioController::class, 'subsanar'])->name('creditos-prendarios.subsanar');
-    Route::post('creditos-prendarios/{credito}/desembolsar', [CreditoPrendarioController::class, 'desembolsar'])->name('creditos-prendarios.desembolsar');
-    Route::post('creditos-prendarios/{credito}/refrendar', [CreditoPrendarioController::class, 'refrendar'])->name('creditos-prendarios.refrendar');
-    Route::post('creditos-prendarios/{credito}/liquidar', [CreditoPrendarioController::class, 'liquidar'])->name('creditos-prendarios.liquidar');
-    Route::post('creditos-prendarios/{credito}/adendar', [CreditoPrendarioController::class, 'adendar'])->name('creditos-prendarios.adendar');
-    Route::post('creditos-prendarios/{credito}/actualizar-interes', [CreditoPrendarioController::class, 'actualizarInteres'])->name('creditos-prendarios.actualizar-interes');
-    Route::post('creditos-prendarios/{credito}/revertir-aprobacion', [CreditoPrendarioController::class, 'revertirAprobacion'])->name('creditos-prendarios.revertir-aprobacion');
-    Route::post('creditos-prendarios/{credito}/enviar-tienda', [CreditoPrendarioController::class, 'enviarATienda'])->name('creditos-prendarios.enviar-tienda');
-    Route::get('creditos-prendarios/{credito}/cronograma/ver', [CreditoPrendarioController::class, 'verCronograma'])->name('creditos-prendarios.cronograma.ver');
-    Route::get('creditos-prendarios/{credito}/documentos/{documento}/ver', [CreditoPrendarioController::class, 'verDocumento'])->name('creditos-prendarios.documentos.ver');
-    Route::post('creditos-prendarios/{credito}/documentos/{documento}/marcar-impreso', [CreditoPrendarioController::class, 'marcarImpreso'])->name('creditos-prendarios.documentos.marcar-impreso');
-    Route::post('creditos-prendarios/{credito}/documentos/{documento}/subir-firmado', [CreditoPrendarioController::class, 'subirDocumentoFirmado'])->name('creditos-prendarios.documentos.subir-firmado');
+    Route::apiResource('vehiculos', VehiculoController::class)->only(['index', 'store', 'show', 'update'])->parameters(['vehiculos' => 'vehiculo']);
+    Route::post('creditos-vehiculares', [CreditoVehicularController::class, 'store'])->name('creditos-vehiculares.store');
 
-    Route::get('configuraciones-credito-prendario', [ConfiguracionCreditoPrendarioController::class, 'index'])->name('configuraciones-credito-prendario.index');
-    Route::put('configuraciones-credito-prendario', [ConfiguracionCreditoPrendarioController::class, 'update'])->name('configuraciones-credito-prendario.update');
+    Route::apiResource('inmuebles', InmuebleController::class)->only(['index', 'store', 'show', 'update'])->parameters(['inmuebles' => 'inmueble']);
+    Route::post('creditos-hipotecarios', [CreditoHipotecarioController::class, 'store'])->name('creditos-hipotecarios.store');
+
+    Route::apiResource('creditos-prendarios', CreditoController::class)->only(['index', 'store', 'show'])->parameters(['creditos-prendarios' => 'credito']);
+    Route::post('creditos-prendarios/{credito}/aprobar', [CreditoController::class, 'aprobar'])->name('creditos-prendarios.aprobar');
+    Route::post('creditos-prendarios/{credito}/rechazar', [CreditoController::class, 'rechazar'])->name('creditos-prendarios.rechazar');
+    Route::post('creditos-prendarios/{credito}/subsanar', [CreditoController::class, 'subsanar'])->name('creditos-prendarios.subsanar');
+    Route::post('creditos-prendarios/{credito}/desembolsar', [CreditoController::class, 'desembolsar'])->name('creditos-prendarios.desembolsar');
+    Route::post('creditos-prendarios/{credito}/refrendar', [CreditoController::class, 'refrendar'])->name('creditos-prendarios.refrendar');
+    Route::post('creditos-prendarios/{credito}/liquidar', [CreditoController::class, 'liquidar'])->name('creditos-prendarios.liquidar');
+    Route::post('creditos-prendarios/{credito}/adendar', [CreditoController::class, 'adendar'])->name('creditos-prendarios.adendar');
+    Route::post('creditos-prendarios/{credito}/actualizar-interes', [CreditoController::class, 'actualizarInteres'])->name('creditos-prendarios.actualizar-interes');
+    Route::post('creditos-prendarios/{credito}/revertir-aprobacion', [CreditoController::class, 'revertirAprobacion'])->name('creditos-prendarios.revertir-aprobacion');
+    Route::post('creditos-prendarios/{credito}/enviar-tienda', [CreditoController::class, 'enviarATienda'])->name('creditos-prendarios.enviar-tienda');
+    Route::post('creditos-prendarios/{credito}/conformidad', [CreditoController::class, 'confirmarConformidad'])->name('creditos-prendarios.conformidad');
+    Route::get('creditos-prendarios/{credito}/cronograma/ver', [CreditoController::class, 'verCronograma'])->name('creditos-prendarios.cronograma.ver');
+    Route::get('creditos-prendarios/{credito}/documentos/{documento}/ver', [CreditoController::class, 'verDocumento'])->name('creditos-prendarios.documentos.ver');
+    Route::post('creditos-prendarios/{credito}/documentos/{documento}/marcar-impreso', [CreditoController::class, 'marcarImpreso'])->name('creditos-prendarios.documentos.marcar-impreso');
+    Route::post('creditos-prendarios/{credito}/documentos/{documento}/subir-firmado', [CreditoController::class, 'subirDocumentoFirmado'])->name('creditos-prendarios.documentos.subir-firmado');
+
+    Route::get('configuraciones-credito-prendario', [ConfiguracionCreditoController::class, 'index'])->name('configuraciones-credito-prendario.index');
+    Route::put('configuraciones-credito-prendario', [ConfiguracionCreditoController::class, 'update'])->name('configuraciones-credito-prendario.update');
 
     Route::get('reportes/movimientos-dinero', [ReporteMovimientosController::class, 'movimientosDinero'])->name('reportes.movimientos-dinero');
 });

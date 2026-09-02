@@ -81,7 +81,7 @@ class AgenciaController extends Controller
             'bienes' => 'bienes',
             'creditosPrendarios' => 'créditos prendarios',
             'configuracionesCreditoPrendario' => 'configuraciones de crédito prendario',
-            'interesesBien' => 'intereses de bien',
+            'intereses' => 'intereses de la tienda',
         ];
 
         $motivos = [];

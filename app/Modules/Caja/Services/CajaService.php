@@ -194,7 +194,7 @@ final class CajaService
      * always 'ingreso' or 'egreso' here (never 'billetaje'), so this never
      * surfaces billetaje hand-off movimientos; a 'egreso' row with no
      * concepto_id/billetaje_id is a credito prendario desembolso (see
-     * CreditoPrendarioService::desembolsar()), which the frontend labels
+     * CreditoService::desembolsar()), which the frontend labels
      * accordingly.
      *
      * @return LengthAwarePaginator<int, CajaMovimiento>

@@ -23,7 +23,7 @@
 
     <h1>CONSTANCIA FOTOGR&Aacute;FICA DEL(LOS) BIEN(ES) EN GARANT&Iacute;A</h1>
 
-    @foreach ($credito->bienes as $bien)
+    @foreach ($garantias as $bien)
         @php
             $bienTitulo = strtoupper($bien->nombre);
             if ($bien->marca) {

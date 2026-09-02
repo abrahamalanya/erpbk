@@ -3,8 +3,8 @@
 use App\Modules\Caja\Models\Caja;
 use App\Modules\Caja\Models\CajaCiclo;
 use App\Modules\Cliente\Models\Cliente;
+use App\Modules\Credito\Models\ConfiguracionCredito;
 use App\Modules\CreditoPrendario\Models\Bien;
-use App\Modules\CreditoPrendario\Models\ConfiguracionCreditoPrendario;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Usuario\Models\User;
@@ -78,8 +78,8 @@ it('denies administrador_agencia from setting an override for another agencia', 
 });
 
 it('resolves the agencia override over the empresa default when registering a crédito', function () {
-    ConfiguracionCreditoPrendario::factory()->deEmpresa($this->empresa)->create(['plazo_dias' => 30]);
-    ConfiguracionCreditoPrendario::factory()->deAgencia($this->agencia)->create(['plazo_dias' => 15]);
+    ConfiguracionCredito::factory()->deEmpresa($this->empresa)->create(['plazo_dias' => 30]);
+    ConfiguracionCredito::factory()->deAgencia($this->agencia)->create(['plazo_dias' => 15]);
 
     $asesor = User::factory()->forAgencia($this->agencia)->create();
     $asesor->assignRole('asesor');
@@ -103,7 +103,7 @@ it('resolves the agencia override over the empresa default when registering a cr
 });
 
 it('falls back to the empresa default when no agencia override exists', function () {
-    ConfiguracionCreditoPrendario::factory()->deEmpresa($this->empresa)->create(['plazo_dias' => 30]);
+    ConfiguracionCredito::factory()->deEmpresa($this->empresa)->create(['plazo_dias' => 30]);
 
     $asesor = User::factory()->forAgencia($this->agencia)->create();
     $asesor->assignRole('asesor');

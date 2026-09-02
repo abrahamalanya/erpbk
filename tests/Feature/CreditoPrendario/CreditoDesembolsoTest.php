@@ -3,9 +3,9 @@
 use App\Modules\Caja\Models\Caja;
 use App\Modules\Caja\Models\CajaCiclo;
 use App\Modules\Cliente\Models\Cliente;
+use App\Modules\Credito\Models\ConfiguracionCredito;
+use App\Modules\Credito\Models\Credito;
 use App\Modules\CreditoPrendario\Models\Bien;
-use App\Modules\CreditoPrendario\Models\ConfiguracionCreditoPrendario;
-use App\Modules\CreditoPrendario\Models\CreditoPrendario;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Usuario\Models\User;
@@ -20,7 +20,7 @@ beforeEach(function () {
     $this->seed([RoleSeeder::class, PermissionSeeder::class]);
     $this->empresa = Empresa::factory()->create();
     $this->agencia = Agencia::factory()->for($this->empresa)->create();
-    ConfiguracionCreditoPrendario::factory()->deEmpresa($this->empresa)->create([
+    ConfiguracionCredito::factory()->deEmpresa($this->empresa)->create([
         'interes_default' => 10, 'plazo_dias' => 30, 'dias_espera_mora' => 15,
         'dias_minimo_interes' => 15, 'tasa_mora_diaria' => 1,
     ]);
@@ -45,7 +45,7 @@ function aprobarYFirmarDocumentos(TestCase $test, int $creditoId): void
     $test->postJson("/api/creditos-prendarios/{$creditoId}/aprobar")->assertSuccessful();
 
     Sanctum::actingAs($test->asesor, ['*']);
-    foreach (CreditoPrendario::find($creditoId)->documentos as $documento) {
+    foreach (Credito::find($creditoId)->documentos as $documento) {
         $test->postJson("/api/creditos-prendarios/{$creditoId}/documentos/{$documento->id}/subir-firmado", [
             'archivo' => UploadedFile::fake()->create('firmado.pdf', 100, 'application/pdf'),
         ])->assertSuccessful();
@@ -66,7 +66,7 @@ it('defaults numero_cuotas from the fixed table per tipo_cuota (semanal -> 4)', 
     Sanctum::actingAs($this->asesor, ['*']);
     $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar")->assertSuccessful();
 
-    $cuotas = CreditoPrendario::find($creditoId)->cuotas;
+    $cuotas = Credito::find($creditoId)->cuotas;
     expect($cuotas)->toHaveCount(4);
 
     // Capital amortizado en 4 partes iguales (100 c/u); interés fijo en
@@ -126,7 +126,7 @@ it('allows an admin to override numero_cuotas and interes at desembolso time', f
     // semanal -> periodo fijo de 7 días; 8 cuotas = 56 días reales, no los
     // mismos 30 días originales repartidos en 8 (confirmado explícitamente:
     // cada cuota es un periodo completo, el plazo se extiende).
-    $credito = CreditoPrendario::find($creditoId);
+    $credito = Credito::find($creditoId);
     expect($credito->plazo_dias)->toBe(56)
         ->and($credito->fecha_vencimiento->toDateString())->toBe($credito->fecha_desembolso->copy()->addDays(56)->toDateString());
 
@@ -157,7 +157,7 @@ it('denies a non-admin (asesor) from overriding numero_cuotas/interes at desembo
 it('exposes monto_liquidacion_sugerido on show() and rejects liquidar with an insufficient monto_pagado', function () {
     Storage::fake('public');
 
-    ConfiguracionCreditoPrendario::query()->where('empresa_id', $this->empresa->id)->update(['interes_default' => 20]);
+    ConfiguracionCredito::query()->where('empresa_id', $this->empresa->id)->update(['interes_default' => 20]);
 
     Sanctum::actingAs($this->asesor, ['*']);
     $creditoId = $this->postJson('/api/creditos-prendarios', [

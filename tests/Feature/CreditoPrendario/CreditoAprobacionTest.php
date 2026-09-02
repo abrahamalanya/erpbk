@@ -3,9 +3,9 @@
 use App\Modules\Caja\Models\Caja;
 use App\Modules\Caja\Models\CajaCiclo;
 use App\Modules\Cliente\Models\Cliente;
+use App\Modules\Credito\Models\ConfiguracionCredito;
+use App\Modules\Credito\Models\Credito;
 use App\Modules\CreditoPrendario\Models\Bien;
-use App\Modules\CreditoPrendario\Models\ConfiguracionCreditoPrendario;
-use App\Modules\CreditoPrendario\Models\CreditoPrendario;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Usuario\Models\User;
@@ -19,7 +19,7 @@ beforeEach(function () {
     $this->seed([RoleSeeder::class, PermissionSeeder::class]);
     $this->empresa = Empresa::factory()->create();
     $this->agencia = Agencia::factory()->for($this->empresa)->create();
-    ConfiguracionCreditoPrendario::factory()->deEmpresa($this->empresa)->create([
+    ConfiguracionCredito::factory()->deEmpresa($this->empresa)->create([
         'interes_default' => 10, 'plazo_dias' => 30, 'dias_espera_mora' => 15, 'tasa_mora_diaria' => 1,
     ]);
 
@@ -66,7 +66,7 @@ it('generates contrato + declaracion + fotos as soon as the crédito is register
         'monto_prestamo' => 500, 'tipo_cuota' => 'mensual',
     ])->assertCreated()->json('data.id');
 
-    $tipos = CreditoPrendario::find($creditoId)
+    $tipos = Credito::find($creditoId)
         ->documentos()->pluck('tipo')->sort()->values()->all();
     expect($tipos)->toBe(['contrato', 'declaracion', 'fotos']);
 });
@@ -86,7 +86,7 @@ it('allows administrador_agencia to approve without generating duplicate documen
 
     expect($response->json('data.estado'))->toBe('aprobado');
 
-    $tipos = CreditoPrendario::find($creditoId)
+    $tipos = Credito::find($creditoId)
         ->documentos()->pluck('tipo')->sort()->values()->all();
     expect($tipos)->toBe(['contrato', 'declaracion', 'fotos']);
 });
@@ -134,7 +134,7 @@ it('activates the crédito once desembolsado, setting fecha_desembolso, fecha_ve
 
     Sanctum::actingAs($this->asesor, ['*']);
 
-    foreach (CreditoPrendario::find($creditoId)->documentos as $documento) {
+    foreach (Credito::find($creditoId)->documentos as $documento) {
         $this->postJson("/api/creditos-prendarios/{$creditoId}/documentos/{$documento->id}/subir-firmado", [
             'archivo' => UploadedFile::fake()->create('firmado.pdf', 100, 'application/pdf'),
         ])->assertSuccessful();
@@ -148,12 +148,12 @@ it('activates the crédito once desembolsado, setting fecha_desembolso, fecha_ve
         ->and($response->json('data.fecha_desembolso'))->not->toBeNull()
         ->and($response->json('data.fecha_vencimiento'))->not->toBeNull();
 
-    $pendientesDeFirma = CreditoPrendario::find($creditoId)
+    $pendientesDeFirma = Credito::find($creditoId)
         ->documentos()->whereNull('firmado_at')->count();
     expect($pendientesDeFirma)->toBe(0);
 
     // mensual -> 1 cuota (tabla fija); capital amortizado + interés sobre saldo insoluto
-    $cuotas = CreditoPrendario::find($creditoId)->cuotas;
+    $cuotas = Credito::find($creditoId)->cuotas;
     expect($cuotas)->toHaveCount(1)
         ->and((string) $cuotas->first()->monto_capital)->toBe('500.00')
         ->and((string) $cuotas->first()->monto_total)->toBe('550.00');
@@ -203,7 +203,7 @@ it('rejects desembolsar when the actor caja does not have enough saldo', functio
 
     Sanctum::actingAs($this->asesor, ['*']);
 
-    foreach (CreditoPrendario::find($creditoId)->documentos as $documento) {
+    foreach (Credito::find($creditoId)->documentos as $documento) {
         $this->postJson("/api/creditos-prendarios/{$creditoId}/documentos/{$documento->id}/subir-firmado", [
             'archivo' => UploadedFile::fake()->create('firmado.pdf', 100, 'application/pdf'),
         ])->assertSuccessful();

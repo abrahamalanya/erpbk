@@ -25,7 +25,7 @@
 
     <table>
         <tr><td class="label">Cliente</td><td>{{ $credito->cliente->nombre }} {{ $credito->cliente->apellido }}</td></tr>
-        <tr><td class="label">Bienes en garantía</td><td>{{ $credito->bienes->map(fn ($bien) => "{$bien->nombre} (".ucfirst($bien->tipo).')')->implode(', ') }}</td></tr>
+        <tr><td class="label">Garantías</td><td>{{ $garantias->map(fn ($g) => $g->tipo ? "{$g->nombre} (".ucfirst($g->tipo).')' : $g->nombre)->implode(', ') }}</td></tr>
         <tr><td class="label">Nuevo crédito</td><td>#{{ $credito->id }}</td></tr>
         <tr><td class="label">Monto (capital)</td><td>{{ number_format($credito->monto_prestamo, 2) }}</td></tr>
         <tr><td class="label">Interés</td><td>{{ number_format($credito->interes, 2) }}%</td></tr>

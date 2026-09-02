@@ -1,0 +1,145 @@
+<?php
+
+namespace App\Modules\Credito\Policies;
+
+use App\Modules\Credito\Models\Credito;
+use App\Modules\Credito\Services\CreditoHierarchyService;
+use App\Modules\Usuario\Models\User;
+
+class CreditoPolicy
+{
+    public function __construct(private readonly CreditoHierarchyService $hierarchy) {}
+
+    /**
+     * Perform pre-authorization checks.
+     */
+    public function before(User $user, string $ability): ?bool
+    {
+        return $user->hasRole('sistemas') ? true : null;
+    }
+
+    public function viewAny(User $user): bool
+    {
+        return $user->can('creditos_prendarios.ver');
+    }
+
+    public function view(User $user, Credito $credito): bool
+    {
+        return $user->can('creditos_prendarios.ver') && $this->hierarchy->puedeVer($user, $credito);
+    }
+
+    public function create(User $user): bool
+    {
+        return $user->can('creditos_prendarios.crear');
+    }
+
+    /**
+     * Same visibility as view(), but an asesor additionally can't open the
+     * generated contrato/declaración until an admin has aprobado the
+     * crédito — reviewing draft paperwork before approval isn't meant to
+     * feel final to the asesor. Purely state-based (not a one-time flag), so
+     * revertirAprobacion() sending it back to pendiente hides them again
+     * automatically. Every other role that can see the crédito (admins,
+     * supervisor) keeps seeing documentos regardless of estado.
+     */
+    public function verDocumento(User $user, Credito $credito): bool
+    {
+        if (! $this->view($user, $credito)) {
+            return false;
+        }
+
+        return ! $user->hasRole('asesor') || ! in_array($credito->estado, ['pendiente', 'rechazado'], true);
+    }
+
+    public function aprobar(User $user, Credito $credito): bool
+    {
+        return $user->can('creditos_prendarios.aprobar') && $this->hierarchy->puedeAprobar($user, $credito);
+    }
+
+    public function rechazar(User $user, Credito $credito): bool
+    {
+        return $user->can('creditos_prendarios.rechazar') && $this->hierarchy->puedeAprobar($user, $credito);
+    }
+
+    /**
+     * Only the asesor who registered the crédito can subsanar it — NOT the
+     * admin who rejected it (confirmed explicitly: they're the ones who
+     * asked for the fix, they don't perform it). Deliberately stricter than
+     * puedeVer()'s broader visibility scope (which would also let a
+     * supervisor or admin trigger this on someone else's behalf).
+     */
+    public function subsanar(User $user, Credito $credito): bool
+    {
+        return $user->can('creditos_prendarios.subsanar') && $credito->registrado_por === $user->id;
+    }
+
+    public function desembolsar(User $user, Credito $credito): bool
+    {
+        return $user->can('creditos_prendarios.desembolsar') && $this->hierarchy->puedeVer($user, $credito);
+    }
+
+    public function refrendar(User $user, Credito $credito): bool
+    {
+        return $user->can('creditos_prendarios.refrendar') && $this->hierarchy->puedeVer($user, $credito);
+    }
+
+    public function liquidar(User $user, Credito $credito): bool
+    {
+        return $user->can('creditos_prendarios.liquidar') && $this->hierarchy->puedeVer($user, $credito);
+    }
+
+    /**
+     * Same broad authority as refrendar() — an asesor/supervisor can trigger
+     * an adenda (collect the interest, generate the pendiente successor),
+     * they just can't set a new tasa de interés/tipo_cuota themselves
+     * (CreditoService::adendar() defaults both to the current
+     * crédito's values when omitted); that's left for an admin to edit
+     * afterward via editar()/actualizarInteres() while it's pendiente/aprobado.
+     */
+    public function adendar(User $user, Credito $credito): bool
+    {
+        return $user->can('creditos_prendarios.adendar') && $this->hierarchy->puedeVer($user, $credito);
+    }
+
+    /**
+     * Same authority as aprobar/rechazar — editing terms (e.g. a custom
+     * interest rate for an exclusive client) is an admin decision, not tied
+     * to a specific actor the way subsanar() is.
+     */
+    public function editar(User $user, Credito $credito): bool
+    {
+        return $user->can('creditos_prendarios.editar') && $this->hierarchy->puedeAprobar($user, $credito);
+    }
+
+    /**
+     * Undoes an accidental aprobar(). Deliberately the same broad authority
+     * as aprobar/rechazar (any admin who could approve this crédito can also
+     * fix a mistaken approval), not restricted to whoever specifically
+     * approved it — confirmed explicitly, unlike subsanar()'s ownership check.
+     */
+    public function revertirAprobacion(User $user, Credito $credito): bool
+    {
+        return $user->can('creditos_prendarios.revertir_aprobacion') && $this->hierarchy->puedeAprobar($user, $credito);
+    }
+
+    /**
+     * Same admin-level authority as aprobar/rechazar/editar — deciding to
+     * escalate a vencido crédito to the public tienda early (once it's past
+     * the configured período de espera) is an admin call, not something the
+     * asesor who registered it triggers.
+     */
+    public function enviarATienda(User $user, Credito $credito): bool
+    {
+        return $user->can('creditos_prendarios.enviar_tienda') && $this->hierarchy->puedeAprobar($user, $credito);
+    }
+
+    /**
+     * Registrar la conformidad del notario/abogado sobre un crédito
+     * (vehicular / hipotecario) en pendiente_conformidad. Misma autoridad
+     * de nivel admin que enviarATienda — es el paso previo a la tienda.
+     */
+    public function confirmarConformidad(User $user, Credito $credito): bool
+    {
+        return $user->can('creditos_prendarios.enviar_tienda') && $this->hierarchy->puedeAprobar($user, $credito);
+    }
+}

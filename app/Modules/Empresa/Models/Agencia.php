@@ -5,10 +5,10 @@ namespace App\Modules\Empresa\Models;
 use App\Modules\Caja\Models\Boveda;
 use App\Modules\Caja\Models\Caja;
 use App\Modules\Cliente\Models\Cliente;
+use App\Modules\Credito\Models\ConfiguracionCredito;
+use App\Modules\Credito\Models\Credito;
 use App\Modules\CreditoPrendario\Models\Bien;
-use App\Modules\CreditoPrendario\Models\ConfiguracionCreditoPrendario;
-use App\Modules\CreditoPrendario\Models\CreditoPrendario;
-use App\Modules\Tienda\Models\InteresBien;
+use App\Modules\Tienda\Models\InteresArticulo;
 use App\Modules\Usuario\Models\User;
 use App\Nucleo\Concerns\BelongsToTenant;
 use Database\Factories\AgenciaFactory;
@@ -66,17 +66,17 @@ class Agencia extends Model
 
     public function creditosPrendarios(): HasMany
     {
-        return $this->hasMany(CreditoPrendario::class);
+        return $this->hasMany(Credito::class);
     }
 
     public function configuracionesCreditoPrendario(): HasMany
     {
-        return $this->hasMany(ConfiguracionCreditoPrendario::class);
+        return $this->hasMany(ConfiguracionCredito::class);
     }
 
-    public function interesesBien(): HasMany
+    public function intereses(): HasMany
     {
-        return $this->hasMany(InteresBien::class);
+        return $this->hasMany(InteresArticulo::class);
     }
 
     protected static function newFactory(): AgenciaFactory

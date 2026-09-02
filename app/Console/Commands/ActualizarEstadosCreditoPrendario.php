@@ -2,7 +2,7 @@
 
 namespace App\Console\Commands;
 
-use App\Modules\CreditoPrendario\Services\CreditoPrendarioService;
+use App\Modules\Credito\Services\CreditoService;
 use Illuminate\Console\Command;
 
 class ActualizarEstadosCreditoPrendario extends Command
@@ -24,7 +24,7 @@ class ActualizarEstadosCreditoPrendario extends Command
     /**
      * Execute the console command.
      */
-    public function handle(CreditoPrendarioService $creditoService): int
+    public function handle(CreditoService $creditoService): int
     {
         $creditoService->actualizarEstadosVencidos();
 
