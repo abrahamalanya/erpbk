@@ -36,6 +36,8 @@ class VehiculoFactory extends Factory
             'clase' => fake()->randomElement(['Automóvil', 'Camioneta', 'Motocicleta']),
             'propietario' => fake()->name(),
             'tiene_soat' => fake()->boolean(),
+            'dejo_llave' => fake()->boolean(),
+            'dejo_tarjeta_propiedad' => fake()->boolean(),
             'observacion' => fake()->sentence(),
             'valorizacion' => fake()->randomFloat(2, 3000, 40000),
             'puntaje' => fake()->numberBetween(1, 10),

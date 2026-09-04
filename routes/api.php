@@ -113,6 +113,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('inmuebles', InmuebleController::class)->only(['index', 'store', 'show', 'update'])->parameters(['inmuebles' => 'inmueble']);
     Route::post('creditos-hipotecarios', [CreditoHipotecarioController::class, 'store'])->name('creditos-hipotecarios.store');
 
+    Route::get('creditos-prendarios/supervisores', [CreditoController::class, 'supervisores'])->name('creditos-prendarios.supervisores');
     Route::apiResource('creditos-prendarios', CreditoController::class)->only(['index', 'store', 'show'])->parameters(['creditos-prendarios' => 'credito']);
     Route::post('creditos-prendarios/{credito}/aprobar', [CreditoController::class, 'aprobar'])->name('creditos-prendarios.aprobar');
     Route::post('creditos-prendarios/{credito}/rechazar', [CreditoController::class, 'rechazar'])->name('creditos-prendarios.rechazar');
@@ -122,6 +123,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('creditos-prendarios/{credito}/liquidar', [CreditoController::class, 'liquidar'])->name('creditos-prendarios.liquidar');
     Route::post('creditos-prendarios/{credito}/adendar', [CreditoController::class, 'adendar'])->name('creditos-prendarios.adendar');
     Route::post('creditos-prendarios/{credito}/actualizar-interes', [CreditoController::class, 'actualizarInteres'])->name('creditos-prendarios.actualizar-interes');
+    Route::post('creditos-prendarios/{credito}/actualizar-fecha-desembolso', [CreditoController::class, 'actualizarFechaDesembolso'])->name('creditos-prendarios.actualizar-fecha-desembolso');
     Route::post('creditos-prendarios/{credito}/revertir-aprobacion', [CreditoController::class, 'revertirAprobacion'])->name('creditos-prendarios.revertir-aprobacion');
     Route::post('creditos-prendarios/{credito}/enviar-tienda', [CreditoController::class, 'enviarATienda'])->name('creditos-prendarios.enviar-tienda');
     Route::post('creditos-prendarios/{credito}/conformidad', [CreditoController::class, 'confirmarConformidad'])->name('creditos-prendarios.conformidad');

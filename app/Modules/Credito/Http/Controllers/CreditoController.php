@@ -2,6 +2,7 @@
 
 namespace App\Modules\Credito\Http\Controllers;
 
+use App\Modules\Credito\Http\Requests\ActualizarFechaDesembolsoCreditoRequest;
 use App\Modules\Credito\Http\Requests\ActualizarInteresCreditoRequest;
 use App\Modules\Credito\Http\Requests\AdendarCreditoRequest;
 use App\Modules\Credito\Http\Requests\ConfirmarConformidadRequest;
@@ -18,6 +19,7 @@ use App\Modules\Credito\Services\CreditoHierarchyService;
 use App\Modules\Credito\Services\CreditoService;
 use App\Modules\Credito\Services\DocumentoCreditoService;
 use App\Modules\CreditoPrendario\Models\Bien;
+use App\Modules\Usuario\Models\User;
 use App\Nucleo\Http\Controllers\Controller;
 use App\Nucleo\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
@@ -49,6 +51,30 @@ class CreditoController extends Controller
         });
 
         return $this->successResponse($creditos);
+    }
+
+    /**
+     * Usuarios elegibles como "supervisado por" al registrar un crédito
+     * vehicular o hipotecario: administradores de agencia y supervisores.
+     * Se restringe a la agencia del actor cuando este pertenece a una;
+     * los roles de empresa (administrador general) ven a los de toda la
+     * empresa. El TenantScope ya limita el resultado a la empresa.
+     */
+    public function supervisores(): JsonResponse
+    {
+        Gate::authorize('create', Credito::class);
+
+        $actor = request()->user();
+
+        $supervisores = User::query()
+            ->where('estado', 'activo')
+            ->when($actor->agencia_id !== null, fn ($query) => $query->where('agencia_id', $actor->agencia_id))
+            ->whereHas('roles', fn ($query) => $query->whereIn('name', ['administrador_agencia', 'supervisor']))
+            ->orderBy('nombre')
+            ->orderBy('apellido')
+            ->get(['id', 'nombre', 'apellido', 'agencia_id']);
+
+        return $this->successResponse($supervisores);
     }
 
     public function store(StoreCreditoRequest $request): JsonResponse
@@ -197,6 +223,15 @@ class CreditoController extends Controller
         $credito = $this->creditoService->actualizarInteres($credito, $request->user(), (string) $request->validated('interes'));
 
         return $this->successResponse($credito, 'Tasa de interés actualizada');
+    }
+
+    public function actualizarFechaDesembolso(ActualizarFechaDesembolsoCreditoRequest $request, Credito $credito): JsonResponse
+    {
+        Gate::authorize('editar', $credito);
+
+        $credito = $this->creditoService->actualizarFechaDesembolso($credito, $request->user(), (string) $request->validated('fecha_desembolso'));
+
+        return $this->successResponse($credito, 'Fecha de desembolso actualizada');
     }
 
     public function revertirAprobacion(Credito $credito): JsonResponse

@@ -66,6 +66,31 @@ it('registers a vehicular crédito over several vehículos with a supervisor', f
         ->and($this->vehiculo->fresh()->estado)->toBe('en_garantia');
 });
 
+it('lists admin de agencia y supervisores of the actor agencia as supervisado_por options', function () {
+    $supervisor = User::factory()->forAgencia($this->agencia)->create();
+    $supervisor->assignRole('supervisor');
+
+    $otraAgencia = Agencia::factory()->for($this->empresa)->create();
+    $adminOtraAgencia = User::factory()->forAgencia($otraAgencia)->create();
+    $adminOtraAgencia->assignRole('administrador_agencia');
+
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $response = $this->getJson('/api/creditos-prendarios/supervisores')->assertOk();
+
+    expect(collect($response->json('data'))->pluck('id')->sort()->values()->all())
+        ->toBe(collect([$this->adminAgencia->id, $supervisor->id])->sort()->values()->all());
+});
+
+it('forbids listing supervisado_por options without creditos_prendarios.crear', function () {
+    $secretaria = User::factory()->forAgencia($this->agencia)->create();
+    $secretaria->assignRole('secretaria');
+
+    Sanctum::actingAs($secretaria, ['*']);
+
+    $this->getJson('/api/creditos-prendarios/supervisores')->assertForbidden();
+});
+
 it('rejects a vehicular crédito when the cliente has no dirección/referencia', function () {
     $this->cliente->update(['direccion' => null, 'referencia' => null]);
     Sanctum::actingAs($this->asesor, ['*']);

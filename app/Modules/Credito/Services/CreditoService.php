@@ -16,6 +16,7 @@ use App\Modules\Credito\Notifications\CreditoAprobadoNotification;
 use App\Modules\Credito\Notifications\CreditoConformidadRegistradaNotification;
 use App\Modules\Credito\Notifications\CreditoDesembolsadoNotification;
 use App\Modules\Credito\Notifications\CreditoEnVentaNotification;
+use App\Modules\Credito\Notifications\CreditoFechaDesembolsoActualizadaNotification;
 use App\Modules\Credito\Notifications\CreditoInteresActualizadoNotification;
 use App\Modules\Credito\Notifications\CreditoLiquidadoNotification;
 use App\Modules\Credito\Notifications\CreditoPendienteConformidadNotification;
@@ -27,6 +28,7 @@ use App\Modules\Credito\Notifications\CreditoVencidoNotification;
 use App\Modules\Credito\Tipos\CreditoTipoManager;
 use App\Modules\Sistemas\Services\NotificacionService;
 use App\Modules\Usuario\Models\User;
+use Carbon\Carbon;
 use DomainException;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\MorphToMany;
@@ -278,6 +280,56 @@ final class CreditoService
         $this->notificaciones->enviar(collect([$credito->registradoPor]), new CreditoInteresActualizadoNotification($credito));
 
         return $credito;
+    }
+
+    /**
+     * Corrige la fecha de desembolso de un crédito ya desembolsado —
+     * pensado para regularizar créditos migrados de otro sistema (el
+     * desembolso "real" fue en el pasado, pero se registra hoy en umax).
+     *
+     * Solo desplaza fechas: plazo_dias y tipo_cuota no cambian, así que
+     * fecha_vencimiento y cada cuotas.fecha_vencimiento se recalculan con
+     * la misma fórmula que generarCronograma() usó, sin tocar los montos
+     * de capital/interés/total de ninguna cuota.
+     *
+     * Restringido a estado activo/vencido — el mismo guard que
+     * refrendar()/adendar()/liquidar() usan para "aún no se hizo nada
+     * después del desembolso": en cuanto cualquiera de esas operaciones
+     * corre, el crédito sale de ['activo', 'vencido'] y esta edición deja
+     * de estar disponible (evita dejar un refrendo/liquidación ya
+     * calculado sobre el cronograma viejo inconsistente con el nuevo).
+     *
+     * El movimiento de caja del desembolso NO se re-fecha (confirmado
+     * explícitamente con el usuario): queda con la fecha real en que se
+     * registró en el sistema, para no alterar cierres de caja ya cuadrados.
+     */
+    public function actualizarFechaDesembolso(Credito $credito, User $actor, string $fecha): Credito
+    {
+        if (! in_array($credito->estado, ['activo', 'vencido'], true)) {
+            throw new DomainException('Solo se puede editar la fecha de desembolso de un crédito activo o vencido.');
+        }
+
+        $nuevaFecha = Carbon::parse($fecha)->startOfDay();
+        $diasPorCuota = self::DIAS_POR_PERIODO[$credito->tipo_cuota];
+
+        return DB::transaction(function () use ($credito, $nuevaFecha, $diasPorCuota): Credito {
+            $credito->update([
+                'fecha_desembolso' => $nuevaFecha->toDateString(),
+                'fecha_vencimiento' => $nuevaFecha->copy()->addDays($credito->plazo_dias)->toDateString(),
+            ]);
+
+            foreach ($credito->cuotas as $cuota) {
+                $cuota->update([
+                    'fecha_vencimiento' => $nuevaFecha->copy()->addDays($diasPorCuota * $cuota->numero_cuota)->toDateString(),
+                ]);
+            }
+
+            $credito = $credito->fresh(['cuotas']);
+            $this->notificar($credito);
+            $this->notificaciones->enviar(collect([$credito->registradoPor]), new CreditoFechaDesembolsoActualizadaNotification($credito));
+
+            return $credito;
+        });
     }
 
     /**

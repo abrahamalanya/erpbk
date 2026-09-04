@@ -39,6 +39,8 @@ class Vehiculo extends Model
         'clase',
         'propietario',
         'tiene_soat',
+        'dejo_llave',
+        'dejo_tarjeta_propiedad',
         'observacion',
         'valorizacion',
         'precio_venta',
@@ -60,6 +62,8 @@ class Vehiculo extends Model
     {
         return [
             'tiene_soat' => 'boolean',
+            'dejo_llave' => 'boolean',
+            'dejo_tarjeta_propiedad' => 'boolean',
             'anio' => 'integer',
             'valorizacion' => 'decimal:2',
             'precio_venta' => 'decimal:2',
