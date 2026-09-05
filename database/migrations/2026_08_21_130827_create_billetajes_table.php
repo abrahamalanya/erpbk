@@ -18,11 +18,19 @@ return new class extends Migration
             $table->foreignId('empresa_id')->constrained()->restrictOnDelete();
 
             $table->decimal('monto', 12, 2);
+            $table->string('motivo')->nullable();
+            $table->string('medio_recepcion')->nullable();
+            $table->string('datos_recepcion')->nullable();
+            $table->foreignId('cliente_id')->nullable()->constrained('clientes')->nullOnDelete();
             $table->string('estado')->default('pendiente');
 
             $table->foreignId('solicitado_por')->nullable()->constrained('users')->nullOnDelete();
             $table->foreignId('aprobado_por')->nullable()->constrained('users')->nullOnDelete();
             $table->string('motivo_rechazo')->nullable();
+
+            $table->string('medio_egreso')->nullable();
+            $table->string('canal_egreso')->nullable();
+            $table->foreignId('cuenta_bancaria_id')->nullable()->constrained('cuentas_bancarias')->nullOnDelete();
 
             $table->timestamp('fecha_resolucion')->nullable();
 

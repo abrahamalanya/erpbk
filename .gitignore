@@ -22,3 +22,7 @@
 Homestead.json
 Homestead.yaml
 Thumbs.db
+
+# Datos reales de clientes/usuarios (PII) usados por los seeders de
+# producción — solo deben existir en el servidor, nunca en el repositorio.
+/database/seeders/data

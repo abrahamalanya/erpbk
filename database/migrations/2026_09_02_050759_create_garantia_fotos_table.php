@@ -7,24 +7,24 @@ use Illuminate\Support\Facades\Schema;
 return new class extends Migration
 {
     /**
-     * Run the migrations.
+     * Fotos polimórficas de una garantía (bien, vehículo, inmueble, ...).
      */
     public function up(): void
     {
-        Schema::create('bien_fotos', function (Blueprint $table) {
+        Schema::create('garantia_fotos', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('bien_id')->constrained('bienes')->cascadeOnDelete();
+            $table->string('garantia_type');
+            $table->unsignedBigInteger('garantia_id');
             $table->string('path');
             $table->unsignedInteger('orden')->default(0);
             $table->timestamps();
+
+            $table->index(['garantia_type', 'garantia_id']);
         });
     }
 
-    /**
-     * Reverse the migrations.
-     */
     public function down(): void
     {
-        Schema::dropIfExists('bien_fotos');
+        Schema::dropIfExists('garantia_fotos');
     }
 };

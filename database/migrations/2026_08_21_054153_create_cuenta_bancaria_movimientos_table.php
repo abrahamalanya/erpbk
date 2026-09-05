@@ -19,6 +19,8 @@ return new class extends Migration
             $table->string('tipo');
             $table->decimal('monto', 12, 2);
             $table->string('concepto')->nullable();
+            $table->string('origen')->nullable();
+            $table->string('grupo_id')->nullable();
 
             $table->foreignId('registrado_por')->nullable()->constrained('users')->nullOnDelete();
 
@@ -27,6 +29,7 @@ return new class extends Migration
             $table->timestamps();
 
             $table->index(['cuenta_bancaria_id', 'fecha']);
+            $table->index('grupo_id');
         });
     }
 

@@ -23,6 +23,10 @@ return new class extends Migration
             $table->string('moneda')->default('PEN');
             $table->string('alias')->nullable();
             $table->boolean('activa')->default(true);
+            $table->boolean('acepta_yape')->default(false);
+            $table->string('numero_yape')->nullable();
+            $table->boolean('acepta_plin')->default(false);
+            $table->string('numero_plin')->nullable();
             $table->decimal('saldo_inicial', 12, 2)->default(0);
 
             $table->foreignId('creada_por')->nullable()->constrained('users')->nullOnDelete();

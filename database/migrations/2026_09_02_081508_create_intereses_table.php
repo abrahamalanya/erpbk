@@ -7,13 +7,15 @@ use Illuminate\Support\Facades\Schema;
 return new class extends Migration
 {
     /**
-     * Run the migrations.
+     * "Me interesa" del storefront público sobre cualquier garantía en venta
+     * (bien, vehículo, ...); articulo_type/articulo_id es polimórfico.
      */
     public function up(): void
     {
-        Schema::create('intereses_bien', function (Blueprint $table) {
+        Schema::create('intereses', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('bien_id')->constrained('bienes')->cascadeOnDelete();
+            $table->string('articulo_type');
+            $table->unsignedBigInteger('articulo_id');
             $table->foreignId('empresa_id')->constrained()->restrictOnDelete();
             $table->foreignId('agencia_id')->constrained()->restrictOnDelete();
 
@@ -25,15 +27,12 @@ return new class extends Migration
 
             $table->timestamps();
 
-            $table->index('bien_id');
+            $table->index(['articulo_type', 'articulo_id']);
         });
     }
 
-    /**
-     * Reverse the migrations.
-     */
     public function down(): void
     {
-        Schema::dropIfExists('intereses_bien');
+        Schema::dropIfExists('intereses');
     }
 };

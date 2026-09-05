@@ -25,6 +25,7 @@ return new class extends Migration
             $table->string('serie')->nullable();
             $table->text('observacion')->nullable();
             $table->decimal('valorizacion', 12, 2);
+            $table->decimal('precio_venta', 12, 2)->nullable();
             $table->unsignedTinyInteger('puntaje');
 
             $table->string('foto_cliente_producto_path')->nullable();

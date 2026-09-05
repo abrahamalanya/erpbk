@@ -23,6 +23,10 @@ return new class extends Migration
             $table->string('estado')->default('activo');
             $table->rememberToken();
             $table->timestamps();
+
+            $table->foreignId('empresa_id')->nullable()->constrained()->nullOnDelete();
+            $table->foreignId('agencia_id')->nullable()->constrained()->nullOnDelete();
+            $table->foreignId('supervisor_id')->nullable()->constrained('users')->nullOnDelete();
         });
 
         Schema::create('password_reset_tokens', function (Blueprint $table) {

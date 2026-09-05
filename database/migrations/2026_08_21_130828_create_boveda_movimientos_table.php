@@ -19,6 +19,8 @@ return new class extends Migration
             $table->string('tipo');
             $table->decimal('monto', 12, 2);
             $table->string('concepto')->nullable();
+            $table->string('origen')->nullable();
+            $table->string('grupo_id')->nullable();
 
             $table->foreignId('billetaje_id')->nullable()->constrained()->nullOnDelete();
             $table->foreignId('caja_ciclo_id')->nullable()->constrained()->nullOnDelete();
@@ -30,6 +32,7 @@ return new class extends Migration
 
             $table->index('boveda_ciclo_id');
             $table->index('fecha_boveda');
+            $table->index('grupo_id');
         });
     }
 

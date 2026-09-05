@@ -15,17 +15,18 @@ return new class extends Migration
             $table->id();
             $table->foreignId('empresa_id')->constrained()->restrictOnDelete();
             $table->foreignId('agencia_id')->nullable()->constrained()->restrictOnDelete();
-            $table->string('tipo');
+            $table->string('tipo_credito')->default('prendario');
 
             $table->decimal('interes_default', 5, 2);
             $table->unsignedInteger('plazo_dias');
             $table->unsignedInteger('dias_espera_mora');
+            $table->unsignedInteger('dias_minimo_interes')->default(15);
             $table->decimal('tasa_mora_diaria', 5, 2);
             $table->unsignedInteger('max_refrendos')->nullable();
 
             $table->timestamps();
 
-            $table->unique(['empresa_id', 'agencia_id', 'tipo'], 'config_credito_prendario_empresa_agencia_tipo_unique');
+            $table->unique(['empresa_id', 'agencia_id'], 'config_credito_prendario_empresa_agencia_unique');
         });
     }
 

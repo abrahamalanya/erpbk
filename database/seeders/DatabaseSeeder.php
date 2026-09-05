@@ -25,6 +25,19 @@ class DatabaseSeeder extends Seeder
             ConfiguracionCreditoPrendarioSeeder::class,
         ]);
 
+        // Usuarios/clientes/bienes REALES ya registrados en producción (ver
+        // database/seeders/data/): solo producción, para que un
+        // migrate:fresh --seed no los pierda. Nunca junto al bloque local de
+        // abajo — comparten el mismo usuario "sistemas" (mismo email) y
+        // UserSeeder no es idempotente.
+        if (app()->environment('production')) {
+            $this->call([
+                ProduccionUsuariosSeeder::class,
+                ProduccionClientesSeeder::class,
+                ProduccionBienesSeeder::class,
+            ]);
+        }
+
         // Datos de demostración (usuarios/clientes/créditos ficticios): solo local.
         if (app()->environment('local')) {
             $this->call([

@@ -17,7 +17,7 @@ return new class extends Migration
             $table->foreignId('empresa_id')->constrained()->restrictOnDelete();
 
             $table->string('tipo');
-            $table->string('pdf_path');
+            $table->string('archivo_firmado_path')->nullable();
 
             $table->foreignId('generado_por')->nullable()->constrained('users')->nullOnDelete();
             $table->timestamp('generado_at');

@@ -15,7 +15,7 @@ class AgenciaSeeder extends Seeder
     {
         $principal = Empresa::where('nombre', 'CREDIMAS')->firstOrFail();
 
-        foreach (['Agencia Pucallpa', 'Agencia Juanjui', 'Agencia Tocache'] as $nombre) {
+        foreach (['Agencia Alameda'] as $nombre) {
             Agencia::firstOrCreate([
                 'empresa_id' => $principal->id,
                 'nombre' => $nombre,

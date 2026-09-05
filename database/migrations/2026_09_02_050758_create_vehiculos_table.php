@@ -31,6 +31,8 @@ return new class extends Migration
             $table->string('clase')->nullable();
             $table->string('propietario');
             $table->boolean('tiene_soat')->default(false);
+            $table->boolean('dejo_llave')->default(false);
+            $table->boolean('dejo_tarjeta_propiedad')->default(false);
             $table->text('observacion')->nullable();
 
             $table->decimal('valorizacion', 12, 2);

@@ -21,6 +21,7 @@ return new class extends Migration
             $table->string('medio')->default('efectivo');
             $table->string('canal')->nullable();
             $table->string('concepto')->nullable();
+            $table->foreignId('concepto_id')->nullable()->constrained()->nullOnDelete();
             $table->text('descripcion')->nullable();
 
             $table->foreignId('billetaje_id')->nullable()->constrained()->nullOnDelete();

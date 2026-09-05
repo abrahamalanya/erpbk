@@ -18,11 +18,11 @@ class ConfiguracionCreditoPrendarioSeeder extends Seeder
         ConfiguracionCredito::query()->firstOrCreate(
             ['empresa_id' => $credimas->id, 'agencia_id' => null, 'tipo_credito' => 'prendario'],
             [
-                'interes_default' => 20,
+                'interes_default' => 15,
                 'plazo_dias' => 30,
                 'dias_espera_mora' => 15,
                 'dias_minimo_interes' => 15,
-                'tasa_mora_diaria' => 1,
+                'tasa_mora_diaria' => 0.05,
                 'max_refrendos' => null,
             ]
         );
@@ -34,7 +34,7 @@ class ConfiguracionCreditoPrendarioSeeder extends Seeder
                 'plazo_dias' => 30,
                 'dias_espera_mora' => 15,
                 'dias_minimo_interes' => 15,
-                'tasa_mora_diaria' => 1,
+                'tasa_mora_diaria' => 0.05,
                 'max_refrendos' => null,
             ]
         );
@@ -42,11 +42,11 @@ class ConfiguracionCreditoPrendarioSeeder extends Seeder
         ConfiguracionCredito::query()->firstOrCreate(
             ['empresa_id' => $credimas->id, 'agencia_id' => null, 'tipo_credito' => 'hipotecario'],
             [
-                'interes_default' => 10,
+                'interes_default' => 8,
                 'plazo_dias' => 30,
                 'dias_espera_mora' => 30,
                 'dias_minimo_interes' => 15,
-                'tasa_mora_diaria' => 1,
+                'tasa_mora_diaria' => 0.05,
                 'max_refrendos' => null,
             ]
         );

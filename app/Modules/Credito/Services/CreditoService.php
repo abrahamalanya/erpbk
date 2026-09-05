@@ -728,16 +728,20 @@ final class CreditoService
     }
 
     /**
-     * @return array{capital: string, interes: string, total: string, dias_transcurridos: int, dias_minimo: int, dias_cobrados: int, tasa_interes: string}
+     * @return array{capital: string, interes: string, mora: string, dias_mora: int, total: string, dias_transcurridos: int, dias_minimo: int, dias_cobrados: int, tasa_interes: string}
      */
     public function calcularMontoLiquidacion(Credito $credito): array
     {
         $prorateo = $this->calcularInteresProrateado($credito);
+        $mora = $this->calcularMora($credito);
+        $total = bcadd(bcadd((string) $credito->monto_prestamo, $prorateo['interes'], 2), $mora, 2);
 
         return [
             'capital' => (string) $credito->monto_prestamo,
             'interes' => $prorateo['interes'],
-            'total' => bcadd((string) $credito->monto_prestamo, $prorateo['interes'], 2),
+            'mora' => $mora,
+            'dias_mora' => $credito->dias_en_mora,
+            'total' => $total,
             'dias_transcurridos' => $prorateo['dias_transcurridos'],
             'dias_minimo' => $prorateo['dias_minimo'],
             'dias_cobrados' => $prorateo['dias_cobrados'],
