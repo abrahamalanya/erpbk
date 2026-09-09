@@ -83,7 +83,7 @@ it('lets an admin create a pendiente successor with new condiciones, closing the
 
     $nuevoId = $response->json('data.id');
     $tipos = Credito::find($nuevoId)->documentos()->pluck('tipo')->all();
-    expect($tipos)->toEqualCanonicalizing(['contrato', 'declaracion', 'fotos']);
+    expect($tipos)->toEqualCanonicalizing(['contrato', 'declaracion', 'fotos', 'sticker']);
 });
 
 it('lets an asesor adendar collecting only the interest, keeping the current tasa/tipo_cuota on the successor', function () {

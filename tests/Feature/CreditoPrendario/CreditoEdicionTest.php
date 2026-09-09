@@ -174,6 +174,80 @@ it('denies asesor from setting a custom interes when registering a crédito', fu
     expect($response->json('data.interes'))->toBe('10.00');
 });
 
+it('exposes the resolved interés por defecto to a user who can register créditos', function () {
+    ConfiguracionCredito::factory()->deAgencia($this->agencia)->create([
+        'tipo_credito' => 'prendario', 'interes_default' => 7,
+        'plazo_dias' => 30, 'dias_espera_mora' => 15, 'tasa_mora_diaria' => 1,
+    ]);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $this->getJson('/api/creditos-prendarios/configuracion')
+        ->assertOk()
+        ->assertJsonPath('data.interes_default.prendario', '7.00')
+        ->assertJsonPath('data.interes_default.vehicular', null);
+});
+
+it('still denies asesor from overriding the interes without flagging it as a solicitud especial', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+    $this->postJson('/api/creditos-prendarios', [
+        'bien_ids' => [$this->bien->id],
+        'monto_prestamo' => 500, 'interes' => 3, 'motivo_interes' => 'Cliente exclusivo',
+        'interes_solicitud_especial' => false, 'tipo_cuota' => 'mensual',
+    ])->assertForbidden();
+});
+
+it('lets an asesor override the interes when it is flagged as a solicitud especial with a motivo', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+    $response = $this->postJson('/api/creditos-prendarios', [
+        'bien_ids' => [$this->bien->id],
+        'monto_prestamo' => 500, 'interes' => 3, 'tipo_cuota' => 'mensual',
+        'interes_solicitud_especial' => true,
+        'motivo_interes' => 'Cliente exclusivo con historial impecable',
+    ])->assertCreated();
+
+    expect($response->json('data.interes'))->toBe('3.00')
+        ->and($response->json('data.interes_solicitud_especial'))->toBeTrue()
+        ->and($response->json('data.motivo_interes'))->toBe('Cliente exclusivo con historial impecable');
+});
+
+it('requires a motivo when a solicitud especial interes differs from the configured default', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+    $this->postJson('/api/creditos-prendarios', [
+        'bien_ids' => [$this->bien->id],
+        'monto_prestamo' => 500, 'interes' => 3, 'tipo_cuota' => 'mensual',
+        'interes_solicitud_especial' => true,
+    ])->assertUnprocessable();
+});
+
+it('does not require a motivo when the flagged interes equals the configured default', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+    $response = $this->postJson('/api/creditos-prendarios', [
+        'bien_ids' => [$this->bien->id],
+        'monto_prestamo' => 500, 'interes' => 10, 'tipo_cuota' => 'mensual',
+        'interes_solicitud_especial' => true,
+    ])->assertCreated();
+
+    expect($response->json('data.interes'))->toBe('10.00')
+        ->and($response->json('data.motivo_interes'))->toBeNull();
+});
+
+it('exposes the motivo del interés and the solicitud especial flag in the crédito detail', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+    $creditoId = $this->postJson('/api/creditos-prendarios', [
+        'bien_ids' => [$this->bien->id],
+        'monto_prestamo' => 500, 'interes' => 4, 'tipo_cuota' => 'mensual',
+        'interes_solicitud_especial' => true,
+        'motivo_interes' => 'Tasa preferente aprobada por gerencia',
+    ])->assertCreated()->json('data.id');
+
+    $this->getJson("/api/creditos-prendarios/{$creditoId}")
+        ->assertOk()
+        ->assertJsonPath('data.interes', '4.00')
+        ->assertJsonPath('data.interes_solicitud_especial', true)
+        ->assertJsonPath('data.motivo_interes', 'Tasa preferente aprobada por gerencia');
+});
+
 it('allows administrador_agencia to set a custom interes when registering a crédito', function () {
     $cajaAdmin = Caja::factory()->create(['user_id' => $this->adminAgencia->id, 'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id]);
     CajaCiclo::query()->create([
@@ -185,9 +259,11 @@ it('allows administrador_agencia to set a custom interes when registering a cré
     $response = $this->postJson('/api/creditos-prendarios', [
         'bien_ids' => [$this->bien->id],
         'monto_prestamo' => 500, 'interes' => 3, 'tipo_cuota' => 'mensual',
+        'motivo_interes' => 'Tasa negociada con el cliente',
     ])->assertCreated();
 
-    expect($response->json('data.interes'))->toBe('3.00');
+    expect($response->json('data.interes'))->toBe('3.00')
+        ->and($response->json('data.motivo_interes'))->toBe('Tasa negociada con el cliente');
 });
 
 it('streams a freshly rendered PDF for a generated documento, without persisting a pdf_path', function () {

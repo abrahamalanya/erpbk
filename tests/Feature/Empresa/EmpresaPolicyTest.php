@@ -48,13 +48,34 @@ it('denies administrador_general from viewing another empresa', function () {
     $this->getJson("/api/empresas/{$this->empresaB->id}")->assertForbidden();
 });
 
-it('denies administrador_general from creating, updating or deleting empresas', function () {
+it('allows administrador_general to update their own empresa', function () {
+    $admin = User::factory()->forEmpresa($this->empresaA)->create();
+    $admin->assignRole('administrador_general');
+    Sanctum::actingAs($admin, ['*']);
+
+    $this->putJson("/api/empresas/{$this->empresaA->id}", [
+        'nombre' => 'razon actualizada',
+        'ruc' => '20999999999',
+    ])
+        ->assertSuccessful()
+        ->assertJsonPath('data.nombre', 'razon actualizada')
+        ->assertJsonPath('data.ruc', '20999999999');
+});
+
+it('denies administrador_general from updating another empresa', function () {
+    $admin = User::factory()->forEmpresa($this->empresaA)->create();
+    $admin->assignRole('administrador_general');
+    Sanctum::actingAs($admin, ['*']);
+
+    $this->putJson("/api/empresas/{$this->empresaB->id}", ['nombre' => 'X'])->assertForbidden();
+});
+
+it('denies administrador_general from creating or deleting empresas', function () {
     $admin = User::factory()->forEmpresa($this->empresaA)->create();
     $admin->assignRole('administrador_general');
     Sanctum::actingAs($admin, ['*']);
 
     $this->postJson('/api/empresas', ['nombre' => 'Nueva'])->assertForbidden();
-    $this->putJson("/api/empresas/{$this->empresaA->id}", ['nombre' => 'X'])->assertForbidden();
     $this->deleteJson("/api/empresas/{$this->empresaA->id}")->assertForbidden();
 });
 

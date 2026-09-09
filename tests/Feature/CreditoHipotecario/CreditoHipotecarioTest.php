@@ -41,6 +41,26 @@ beforeEach(function () {
     $this->inmueble = Inmueble::factory()->paraCliente($this->cliente)->create(['valorizacion' => 150000]);
 });
 
+it('registers a hipotecario crédito with an aval, persisted and returned in the detail', function () {
+    $aval = Cliente::factory()->forAgencia($this->agencia)->create(['nombre' => 'Marta', 'apellido' => 'Garante']);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $creditoId = $this->postJson('/api/creditos-hipotecarios', [
+        'inmueble_ids' => [$this->inmueble->id],
+        'supervisado_por' => $this->adminAgencia->id,
+        'aval_id' => $aval->id,
+        'monto_prestamo' => 90000,
+        'tipo_cuota' => 'mensual',
+    ])->assertCreated()->assertJsonPath('data.aval.id', $aval->id)->json('data.id');
+
+    expect(Credito::find($creditoId)->aval_id)->toBe($aval->id);
+
+    $this->getJson("/api/creditos-prendarios/{$creditoId}")
+        ->assertOk()
+        ->assertJsonPath('data.aval.nombre', 'Marta');
+});
+
 it('registers a hipotecario crédito with a supervisor', function () {
     Sanctum::actingAs($this->asesor, ['*']);
 

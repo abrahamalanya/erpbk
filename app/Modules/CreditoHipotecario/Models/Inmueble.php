@@ -21,6 +21,9 @@ class Inmueble extends Model
 
     protected $table = 'inmuebles';
 
+    /** Prefijo del código único de la garantía (ver EsGarantia::bootEsGarantia()). */
+    public const CODIGO_PREFIJO = 'I';
+
     /**
      * @var list<string>
      */

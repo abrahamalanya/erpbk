@@ -54,7 +54,7 @@ it('creates a new chained crédito on refrendo and marks the original as refrend
 
     $nuevoId = $response->json('data.id');
     $tipos = Credito::find($nuevoId)->documentos()->pluck('tipo')->all();
-    expect($tipos)->toEqualCanonicalizing(['contrato', 'declaracion', 'fotos']);
+    expect($tipos)->toEqualCanonicalizing(['contrato', 'declaracion', 'fotos', 'sticker']);
 });
 
 it('rejects refrendo once max_refrendos is reached', function () {

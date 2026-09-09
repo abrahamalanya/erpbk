@@ -30,7 +30,7 @@ class CreditoVehicularController extends Controller
 
         $data = $request->validated();
 
-        if (($data['interes'] ?? null) !== null) {
+        if (($data['interes'] ?? null) !== null && ! ($data['interes_solicitud_especial'] ?? false)) {
             Gate::authorize('creditos_prendarios.editar');
         }
 

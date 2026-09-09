@@ -66,6 +66,36 @@ it('registers a vehicular crédito over several vehículos with a supervisor', f
         ->and($this->vehiculo->fresh()->estado)->toBe('en_garantia');
 });
 
+it('generates an acta de recepción de vehículos on registration, only for vehicular créditos', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $vehicularId = $this->postJson('/api/creditos-vehiculares', [
+        'vehiculo_ids' => [$this->vehiculo->id],
+        'supervisado_por' => $this->adminAgencia->id,
+        'monto_prestamo' => 8000,
+        'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+
+    $recepcion = Credito::find($vehicularId)->documentos()->where('tipo', 'recepcion_vehiculos')->first();
+    expect($recepcion)->not->toBeNull();
+
+    // El admin puede abrir el documento (renderiza en PDF).
+    Sanctum::actingAs($this->adminAgencia, ['*']);
+    $pdf = $this->get("/api/creditos-prendarios/{$vehicularId}/documentos/{$recepcion->id}/ver")->assertOk();
+    expect($pdf->headers->get('content-type'))->toContain('application/pdf');
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    // Un crédito prendario NO genera este documento.
+    $bien = Bien::factory()->paraCliente($this->cliente)->create(['valorizacion' => 1000]);
+    $prendarioId = $this->postJson('/api/creditos-prendarios', [
+        'bien_ids' => [$bien->id],
+        'monto_prestamo' => 500,
+        'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+
+    expect(Credito::find($prendarioId)->documentos()->where('tipo', 'recepcion_vehiculos')->exists())->toBeFalse();
+});
+
 it('lists admin de agencia y supervisores of the actor agencia as supervisado_por options', function () {
     $supervisor = User::factory()->forAgencia($this->agencia)->create();
     $supervisor->assignRole('supervisor');
@@ -102,6 +132,37 @@ it('rejects a vehicular crédito when the cliente has no dirección/referencia',
         'tipo_cuota' => 'mensual',
     ])->assertStatus(422)
         ->assertJsonPath('message', 'Para un crédito vehicular el cliente debe tener dirección y referencia registradas.');
+});
+
+it('lets an asesor override the interes on a vehicular crédito via a solicitud especial with a motivo', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $response = $this->postJson('/api/creditos-vehiculares', [
+        'vehiculo_ids' => [$this->vehiculo->id],
+        'supervisado_por' => $this->adminAgencia->id,
+        'monto_prestamo' => 5000,
+        'tipo_cuota' => 'mensual',
+        'interes' => 6,
+        'interes_solicitud_especial' => true,
+        'motivo_interes' => 'Cliente recurrente con garantía sólida',
+    ])->assertCreated();
+
+    expect($response->json('data.interes'))->toBe('6.00')
+        ->and($response->json('data.interes_solicitud_especial'))->toBeTrue()
+        ->and($response->json('data.motivo_interes'))->toBe('Cliente recurrente con garantía sólida');
+});
+
+it('rejects a vehicular solicitud especial interes distinct from the default without a motivo', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $this->postJson('/api/creditos-vehiculares', [
+        'vehiculo_ids' => [$this->vehiculo->id],
+        'supervisado_por' => $this->adminAgencia->id,
+        'monto_prestamo' => 5000,
+        'tipo_cuota' => 'mensual',
+        'interes' => 6,
+        'interes_solicitud_especial' => true,
+    ])->assertStatus(422);
 });
 
 it('requires a supervisado_por on a vehicular crédito', function () {

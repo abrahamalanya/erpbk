@@ -33,6 +33,7 @@ class DocumentoCredito extends Model
         'empresa_id',
         'tipo',
         'archivo_firmado_path',
+        'datos',
         'generado_por',
         'generado_at',
         'impreso_at',
@@ -52,6 +53,7 @@ class DocumentoCredito extends Model
     protected function casts(): array
     {
         return [
+            'datos' => 'array',
             'generado_at' => 'datetime',
             'impreso_at' => 'datetime',
             'firmado_at' => 'datetime',

@@ -114,6 +114,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('creditos-hipotecarios', [CreditoHipotecarioController::class, 'store'])->name('creditos-hipotecarios.store');
 
     Route::get('creditos-prendarios/supervisores', [CreditoController::class, 'supervisores'])->name('creditos-prendarios.supervisores');
+    Route::get('creditos-prendarios/configuracion', [CreditoController::class, 'configuracion'])->name('creditos-prendarios.configuracion');
+    Route::post('creditos-prendarios/cronograma-preview', [CreditoController::class, 'cronogramaPreview'])->name('creditos-prendarios.cronograma-preview');
     Route::apiResource('creditos-prendarios', CreditoController::class)->only(['index', 'store', 'show'])->parameters(['creditos-prendarios' => 'credito']);
     Route::post('creditos-prendarios/{credito}/aprobar', [CreditoController::class, 'aprobar'])->name('creditos-prendarios.aprobar');
     Route::post('creditos-prendarios/{credito}/rechazar', [CreditoController::class, 'rechazar'])->name('creditos-prendarios.rechazar');

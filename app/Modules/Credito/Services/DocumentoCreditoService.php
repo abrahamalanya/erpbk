@@ -3,12 +3,14 @@
 namespace App\Modules\Credito\Services;
 
 use App\Modules\Credito\Models\Credito;
+use App\Modules\Credito\Models\CuotaCredito;
 use App\Modules\Credito\Models\DocumentoCredito;
 use App\Modules\Credito\Tipos\CreditoTipoManager;
 use App\Modules\Usuario\Models\User;
 use App\Nucleo\Services\PdfGeneratorService;
 use DomainException;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -17,7 +19,11 @@ final class DocumentoCreditoService
     /**
      * @var list<string>
      */
-    private const TIPOS_DOCUMENTO = ['contrato', 'declaracion', 'adenda', 'fotos', 'devolucion'];
+    private const TIPOS_DOCUMENTO = [
+        'contrato', 'declaracion', 'adenda', 'fotos', 'devolucion',
+        'voucher_desembolso', 'voucher_pago', 'sticker',
+        'carta_no_adeudo', 'recepcion_vehiculos',
+    ];
 
     public function __construct(
         private readonly PdfGeneratorService $pdfGenerator,
@@ -62,6 +68,61 @@ final class DocumentoCreditoService
     }
 
     /**
+     * Acta de recepción de vehículos — solo para créditos vehiculares, se
+     * genera al registrar el crédito y el cliente la firma al entregar el
+     * vehículo (mismo ciclo firma-escaneo que contrato/declaración).
+     */
+    public function generarRecepcionVehiculos(Credito $credito, User $actor): DocumentoCredito
+    {
+        return $this->generar($credito, $actor, 'recepcion_vehiculos');
+    }
+
+    /**
+     * Carta de no adeudo — se genera cuando el crédito queda liquidado por
+     * completo (acta de devolución firmada); certifica que el cliente ya no
+     * mantiene deuda con la empresa.
+     */
+    public function generarCartaNoAdeudo(Credito $credito, User $actor): DocumentoCredito
+    {
+        return $this->generar($credito, $actor, 'carta_no_adeudo');
+    }
+
+    /**
+     * Etiqueta sticker del producto (una por garantía del crédito): nombre
+     * del producto, cliente, monto, fechas de ingreso y vencimiento y el
+     * código único de la garantía. Se genera al registrar el crédito y se
+     * renderiza en vivo, así que las fechas/monto de desembolso aparecen en
+     * cuanto el crédito se desembolsa.
+     */
+    public function generarSticker(Credito $credito, User $actor): DocumentoCredito
+    {
+        return $this->generar($credito, $actor, 'sticker');
+    }
+
+    /**
+     * Voucher de desembolso — snapshot del monto entregado, medio, fechas y
+     * cronograma resultante en el momento del desembolso.
+     *
+     * @param  array<string, mixed>  $datos
+     */
+    public function generarVoucherDesembolso(Credito $credito, User $actor, array $datos): DocumentoCredito
+    {
+        return $this->generar($credito, $actor, 'voucher_desembolso', $datos);
+    }
+
+    /**
+     * Voucher detallado de un cobro (refrendo / adenda / liquidación) —
+     * snapshot del monto pagado y su desglose (interés, capital, mora,
+     * vuelto) que no se puede re-derivar del crédito después.
+     *
+     * @param  array<string, mixed>  $datos
+     */
+    public function generarVoucherPago(Credito $credito, User $actor, array $datos): DocumentoCredito
+    {
+        return $this->generar($credito, $actor, 'voucher_pago', $datos);
+    }
+
+    /**
      * Renders the PDF fresh from the crédito's current data — nothing is
      * kept on disk, so this runs again on every "ver documento" request.
      */
@@ -71,7 +132,7 @@ final class DocumentoCreditoService
             throw new DomainException("Tipo de documento desconocido: {$documento->tipo}");
         }
 
-        $credito = $documento->credito()->with(['cliente', 'agencia', 'empresa'])->firstOrFail();
+        $credito = $documento->credito()->with(['cliente', 'aval', 'agencia', 'empresa'])->firstOrFail();
 
         $tipo = $this->tipos->paraCredito($credito);
         $garantias = $credito->garantiasComo($tipo->garantiaModelo())->with('fotos')->get();
@@ -80,6 +141,7 @@ final class DocumentoCreditoService
             'credito' => $credito,
             'documento' => $documento,
             'garantias' => $garantias,
+            'datos' => $documento->datos ?? [],
             'fotoDataUri' => fn (?string $path, int $maxAncho = 900): ?string => $this->fotoDataUri($path, $maxAncho),
         ];
 
@@ -147,7 +209,41 @@ final class DocumentoCreditoService
 
         $tipo = $this->tipos->paraCredito($credito);
 
-        return $this->pdfGenerator->renderizarDesdeVista($tipo->vistaDocumento('cronograma'), ['credito' => $credito]);
+        return $this->pdfGenerator->renderizarDesdeVista($tipo->vistaDocumento('cronograma'), [
+            'credito' => $credito,
+            'tentativo' => false,
+        ]);
+    }
+
+    /**
+     * Cronograma tentativo en PDF para un crédito que aún no tiene cuotas
+     * persistidas (antes del desembolso): las filas proyectadas se envían a
+     * la misma vista como instancias NO guardadas de CuotaCredito, así que
+     * la plantilla no cambia salvo por la nota de "tentativo".
+     *
+     * @param  array{fecha_base: string, plazo_dias: int, cuotas: list<array{numero_cuota: int, fecha_vencimiento: string, monto_capital: string, monto_interes: string, monto_total: string}>}  $preview
+     */
+    public function renderizarCronogramaTentativo(Credito $credito, array $preview): Response
+    {
+        $credito->load(['cliente', 'agencia', 'empresa']);
+
+        /** @var Collection<int, CuotaCredito> $cuotas */
+        $cuotas = collect($preview['cuotas'])->map(fn (array $fila): CuotaCredito => new CuotaCredito([
+            'numero_cuota' => $fila['numero_cuota'],
+            'fecha_vencimiento' => $fila['fecha_vencimiento'],
+            'monto_capital' => $fila['monto_capital'],
+            'monto_interes' => $fila['monto_interes'],
+            'monto_total' => $fila['monto_total'],
+        ]));
+
+        $credito->setRelation('cuotas', $cuotas);
+
+        $tipo = $this->tipos->paraCredito($credito);
+
+        return $this->pdfGenerator->renderizarDesdeVista($tipo->vistaDocumento('cronograma'), [
+            'credito' => $credito,
+            'tentativo' => true,
+        ]);
     }
 
     public function marcarImpreso(DocumentoCredito $documento): DocumentoCredito
@@ -178,12 +274,16 @@ final class DocumentoCreditoService
         return $documento->fresh();
     }
 
-    private function generar(Credito $credito, User $actor, string $tipo): DocumentoCredito
+    /**
+     * @param  array<string, mixed>  $datos
+     */
+    private function generar(Credito $credito, User $actor, string $tipo, array $datos = []): DocumentoCredito
     {
         return DocumentoCredito::query()->create([
             'credito_id' => $credito->id,
             'empresa_id' => $credito->empresa_id,
             'tipo' => $tipo,
+            'datos' => $datos !== [] ? $datos : null,
             'generado_por' => $actor->id,
             'generado_at' => now(),
         ]);

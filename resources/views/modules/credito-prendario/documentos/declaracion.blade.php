@@ -4,6 +4,7 @@
     <meta charset="utf-8">
     <title>Declaración Jurada #{{ $credito->id }}</title>
     <style>
+        @page { margin: 3cm 1cm 3cm 3cm; }
         body { font-family: DejaVu Sans, sans-serif; font-size: 11px; color: #1a1a1a; line-height: 1.5; }
         h1 { font-size: 16px; text-align: center; margin-bottom: 24px; }
         p { text-align: justify; margin: 6px 0; }

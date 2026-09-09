@@ -9,12 +9,14 @@ use App\Modules\Credito\Http\Requests\ConfirmarConformidadRequest;
 use App\Modules\Credito\Http\Requests\DesembolsarCreditoRequest;
 use App\Modules\Credito\Http\Requests\EnviarATiendaRequest;
 use App\Modules\Credito\Http\Requests\LiquidarCreditoRequest;
+use App\Modules\Credito\Http\Requests\PreviewCronogramaRequest;
 use App\Modules\Credito\Http\Requests\RechazarCreditoRequest;
 use App\Modules\Credito\Http\Requests\RefrendarCreditoRequest;
 use App\Modules\Credito\Http\Requests\StoreCreditoRequest;
 use App\Modules\Credito\Http\Requests\SubirDocumentoFirmadoRequest;
 use App\Modules\Credito\Models\Credito;
 use App\Modules\Credito\Models\DocumentoCredito;
+use App\Modules\Credito\Services\ConfiguracionCreditoService;
 use App\Modules\Credito\Services\CreditoHierarchyService;
 use App\Modules\Credito\Services\CreditoService;
 use App\Modules\Credito\Services\DocumentoCreditoService;
@@ -22,6 +24,7 @@ use App\Modules\CreditoPrendario\Models\Bien;
 use App\Modules\Usuario\Models\User;
 use App\Nucleo\Http\Controllers\Controller;
 use App\Nucleo\Traits\ApiResponse;
+use DomainException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Gate;
 use Symfony\Component\HttpFoundation\Response;
@@ -34,7 +37,59 @@ class CreditoController extends Controller
         private readonly CreditoService $creditoService,
         private readonly DocumentoCreditoService $documentoService,
         private readonly CreditoHierarchyService $hierarchy,
+        private readonly ConfiguracionCreditoService $configuracionService,
     ) {}
+
+    /**
+     * Interés por defecto ya resuelto (override de agencia o default de
+     * empresa) por tipo de crédito, según la agencia del usuario. Lo consume
+     * el formulario de registro para precargar el input de interés: el
+     * asesor no tiene permiso para leer la configuración completa
+     * (configuraciones_credito_prendario.ver).
+     */
+    public function configuracion(): JsonResponse
+    {
+        Gate::authorize('create', Credito::class);
+
+        $agencia = request()->user()->agencia;
+
+        $interesPorTipo = collect(['prendario', 'vehicular', 'hipotecario'])
+            ->mapWithKeys(function (string $tipo) use ($agencia): array {
+                if ($agencia === null) {
+                    return [$tipo => null];
+                }
+
+                try {
+                    return [$tipo => $this->configuracionService->resolverPara($agencia, $tipo)->interes_default];
+                } catch (DomainException) {
+                    return [$tipo => null];
+                }
+            })
+            ->all();
+
+        return $this->successResponse(['interes_default' => $interesPorTipo]);
+    }
+
+    /**
+     * Cronograma tentativo (fecha de desembolso = hoy) para mostrar en el
+     * formulario de registro antes de que el crédito exista. No persiste
+     * nada; las cuotas reales se generan al desembolsar.
+     */
+    public function cronogramaPreview(PreviewCronogramaRequest $request): JsonResponse
+    {
+        Gate::authorize('create', Credito::class);
+
+        $data = $request->validated();
+
+        $preview = $this->creditoService->previsualizarCronograma(
+            (string) $data['monto_prestamo'],
+            (string) $data['interes'],
+            $data['tipo_cuota'],
+            isset($data['numero_cuotas']) ? (int) $data['numero_cuotas'] : null,
+        );
+
+        return $this->successResponse($preview);
+    }
 
     public function index(): JsonResponse
     {
@@ -83,7 +138,7 @@ class CreditoController extends Controller
 
         $data = $request->validated();
 
-        if (($data['interes'] ?? null) !== null) {
+        if (($data['interes'] ?? null) !== null && ! ($data['interes_solicitud_especial'] ?? false)) {
             Gate::authorize('creditos_prendarios.editar');
         }
 
@@ -98,7 +153,7 @@ class CreditoController extends Controller
     {
         Gate::authorize('view', $credito);
 
-        $credito->load(['bienes.fotos', 'vehiculos.fotos', 'cliente', 'registradoPor', 'supervisadoPor', 'aprobadoPor', 'documentos', 'cuotas']);
+        $credito->load(['bienes.fotos', 'vehiculos.fotos', 'cliente', 'aval', 'registradoPor', 'supervisadoPor', 'aprobadoPor', 'documentos', 'cuotas']);
 
         if (in_array($credito->estado, ['activo', 'vencido'], true)) {
             $credito->setAttribute('monto_liquidacion_sugerido', $this->creditoService->calcularMontoLiquidacion($credito));
@@ -268,7 +323,14 @@ class CreditoController extends Controller
 
     public function verDocumento(Credito $credito, DocumentoCredito $documento): Response
     {
-        Gate::authorize('verDocumento', $credito);
+        // El sticker y los vouchers son documentos de salida (no se firman):
+        // el asesor puede imprimirlos apenas existe el crédito. El resto
+        // (contrato / declaración / ...) sigue la regla más estricta que
+        // oculta el papeleo firmable al asesor mientras está pendiente.
+        Gate::authorize(
+            in_array($documento->tipo, ['sticker', 'voucher_desembolso', 'voucher_pago'], true) ? 'view' : 'verDocumento',
+            $credito,
+        );
 
         abort_unless($documento->credito_id === $credito->id, 404);
 
@@ -279,7 +341,19 @@ class CreditoController extends Controller
     {
         Gate::authorize('view', $credito);
 
-        return $this->documentoService->renderizarCronograma($credito);
+        if ($credito->cuotas()->exists()) {
+            return $this->documentoService->renderizarCronograma($credito);
+        }
+
+        // Aún sin cuotas persistidas (antes del desembolso): cronograma
+        // tentativo con la misma fórmula, tomando hoy como fecha de desembolso.
+        $preview = $this->creditoService->previsualizarCronograma(
+            (string) $credito->monto_prestamo,
+            (string) $credito->interes,
+            $credito->tipo_cuota,
+        );
+
+        return $this->documentoService->renderizarCronogramaTentativo($credito, $preview);
     }
 
     public function marcarImpreso(Credito $credito, DocumentoCredito $documento): JsonResponse
@@ -298,7 +372,7 @@ class CreditoController extends Controller
         abort_unless($documento->credito_id === $credito->id, 404);
 
         $documento = $this->documentoService->subirFirmado($documento, $request->file('archivo'));
-        $this->creditoService->confirmarLiquidacionSiCorresponde($credito, $documento);
+        $this->creditoService->confirmarLiquidacionSiCorresponde($credito, $documento, $request->user());
 
         return $this->successResponse($documento, 'Documento firmado subido');
     }

@@ -20,6 +20,9 @@ class Bien extends Model
      */
     protected $table = 'bienes';
 
+    /** Prefijo del código único de la garantía (ver EsGarantia::bootEsGarantia()). */
+    public const CODIGO_PREFIJO = 'B';
+
     /**
      * The attributes that are mass assignable.
      *

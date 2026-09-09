@@ -104,6 +104,62 @@ it('denies an administrador_agencia from another agencia from approving', functi
     $this->postJson("/api/billetajes/{$billetajeId}/aprobar")->assertForbidden();
 });
 
+it('lets the administrador_general approve a billetaje raised against any agencia boveda of the empresa', function () {
+    $administradorGeneral = User::factory()->forEmpresa($this->empresa)->create();
+    $administradorGeneral->assignRole('administrador_general');
+    Sanctum::actingAs($administradorGeneral, ['*']);
+    $this->getJson('/api/bovedas')->assertSuccessful();
+    $bovedaPrincipalId = Boveda::query()->where('empresa_id', $this->empresa->id)->where('tipo', 'principal')->firstOrFail()->id;
+    $bovedaAgenciaId = Boveda::query()->where('agencia_id', $this->agencia->id)->firstOrFail()->id;
+    $this->postJson("/api/bovedas/{$bovedaPrincipalId}/aperturar", ['saldo_inicial' => 1000])->assertCreated();
+    $this->postJson("/api/bovedas/{$bovedaAgenciaId}/inyectar", ['monto' => 500])->assertCreated();
+
+    $asesor = User::factory()->forAgencia($this->agencia)->create();
+    $asesor->assignRole('asesor');
+    Sanctum::actingAs($asesor, ['*']);
+    $this->postJson('/api/caja/aperturar')->assertCreated();
+    $billetajeId = $this->postJson('/api/billetajes', ['monto' => 200, 'motivo' => 'Gastos operativos', 'medio_recepcion' => 'efectivo'])->json('data.id');
+
+    Sanctum::actingAs($administradorGeneral, ['*']);
+    $this->postJson("/api/billetajes/{$billetajeId}/aprobar")
+        ->assertSuccessful()
+        ->assertJsonPath('data.estado', 'aprobado')
+        ->assertJsonPath('data.aprobado_por', $administradorGeneral->id);
+});
+
+it('lets the administrador_general reject a billetaje from any agencia of the empresa', function () {
+    $administradorGeneral = User::factory()->forEmpresa($this->empresa)->create();
+    $administradorGeneral->assignRole('administrador_general');
+    Sanctum::actingAs($administradorGeneral, ['*']);
+    $this->getJson('/api/bovedas')->assertSuccessful();
+
+    $asesor = User::factory()->forAgencia($this->agencia)->create();
+    $asesor->assignRole('asesor');
+    Sanctum::actingAs($asesor, ['*']);
+    $this->postJson('/api/caja/aperturar')->assertCreated();
+    $billetajeId = $this->postJson('/api/billetajes', ['monto' => 90, 'motivo' => 'Gastos operativos', 'medio_recepcion' => 'efectivo'])->json('data.id');
+
+    Sanctum::actingAs($administradorGeneral, ['*']);
+    $this->postJson("/api/billetajes/{$billetajeId}/rechazar", ['motivo' => 'No corresponde'])
+        ->assertSuccessful()
+        ->assertJsonPath('data.estado', 'rechazado');
+});
+
+it('keeps the administrador_general scoped to their own empresa (billetaje of another empresa is not found)', function () {
+    $asesor = User::factory()->forAgencia($this->agencia)->create();
+    $asesor->assignRole('asesor');
+    Sanctum::actingAs($asesor, ['*']);
+    $this->postJson('/api/caja/aperturar')->assertCreated();
+    $billetajeId = $this->postJson('/api/billetajes', ['monto' => 80, 'motivo' => 'Gastos operativos', 'medio_recepcion' => 'efectivo'])->json('data.id');
+
+    $otraEmpresa = Empresa::factory()->create();
+    $adminOtraEmpresa = User::factory()->forEmpresa($otraEmpresa)->create();
+    $adminOtraEmpresa->assignRole('administrador_general');
+    Sanctum::actingAs($adminOtraEmpresa, ['*']);
+
+    $this->postJson("/api/billetajes/{$billetajeId}/aprobar")->assertNotFound();
+});
+
 it('denies approving a billetaje when the funding boveda does not have enough saldo', function () {
     $asesor = User::factory()->forAgencia($this->agencia)->create();
     $asesor->assignRole('asesor');

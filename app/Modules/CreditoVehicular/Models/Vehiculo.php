@@ -21,6 +21,9 @@ class Vehiculo extends Model
 
     protected $table = 'vehiculos';
 
+    /** Prefijo del código único de la garantía (ver EsGarantia::bootEsGarantia()). */
+    public const CODIGO_PREFIJO = 'V';
+
     /**
      * @var list<string>
      */

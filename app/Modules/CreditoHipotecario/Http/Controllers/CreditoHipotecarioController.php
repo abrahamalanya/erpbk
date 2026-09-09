@@ -30,7 +30,7 @@ class CreditoHipotecarioController extends Controller
 
         $data = $request->validated();
 
-        if (($data['interes'] ?? null) !== null) {
+        if (($data['interes'] ?? null) !== null && ! ($data['interes_solicitud_especial'] ?? false)) {
             Gate::authorize('creditos_prendarios.editar');
         }
 
@@ -38,6 +38,6 @@ class CreditoHipotecarioController extends Controller
 
         $credito = $this->creditoService->registrar($request->user(), $inmuebles, $data, 'hipotecario');
 
-        return $this->successResponse($credito->load(['inmuebles', 'cliente', 'supervisadoPor']), 'Crédito hipotecario registrado', 201);
+        return $this->successResponse($credito->load(['inmuebles', 'cliente', 'aval', 'supervisadoPor']), 'Crédito hipotecario registrado', 201);
     }
 }

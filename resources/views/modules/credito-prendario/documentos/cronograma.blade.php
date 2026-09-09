@@ -4,6 +4,7 @@
     <meta charset="utf-8">
     <title>Cronograma de cuotas — Crédito #{{ $credito->id }}</title>
     <style>
+        @page { margin: 3cm 1cm 3cm 3cm; }
         body { font-family: DejaVu Sans, sans-serif; font-size: 11px; color: #1a1a1a; }
         h1 { font-size: 16px; text-align: center; margin-bottom: 4px; }
         h2 { font-size: 13px; margin-top: 18px; margin-bottom: 6px; border-bottom: 1px solid #999; }
@@ -14,11 +15,16 @@
         .cuotas td { border-bottom: 1px solid #ddd; }
         .cuotas .totales td { border-top: 2px solid #999; border-bottom: none; font-weight: bold; }
         .num { text-align: right; }
+        .tentativo { text-align: center; color: #b45309; font-weight: bold; margin: 4px 0 0; }
     </style>
 </head>
 <body>
+    @php($tentativo = $tentativo ?? false)
     <h1>CRONOGRAMA DE CUOTAS</h1>
     <p style="text-align: center;">{{ $credito->empresa->nombre }} — {{ $credito->agencia->nombre }}</p>
+    @if ($tentativo)
+        <p class="tentativo">CRONOGRAMA TENTATIVO — estimado con desembolso hoy; las fechas y montos definitivos se fijan al desembolsar.</p>
+    @endif
 
     <h2>Datos del crédito</h2>
     <table>

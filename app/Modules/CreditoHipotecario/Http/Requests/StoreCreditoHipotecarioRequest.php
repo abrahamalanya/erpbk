@@ -22,8 +22,11 @@ class StoreCreditoHipotecarioRequest extends FormRequest
             'inmueble_ids' => ['required', 'array', 'min:1'],
             'inmueble_ids.*' => ['integer', 'distinct', 'exists:inmuebles,id'],
             'supervisado_por' => ['required', 'integer', 'exists:users,id'],
+            'aval_id' => ['nullable', 'integer', 'exists:clientes,id'],
             'monto_prestamo' => ['required', 'numeric', 'min:0.01'],
             'interes' => ['nullable', 'numeric', 'min:0'],
+            'interes_solicitud_especial' => ['sometimes', 'boolean'],
+            'motivo_interes' => ['nullable', 'string', 'max:255'],
             'tipo_cuota' => ['required', Rule::in(['diario', 'semanal', 'quincenal', 'mensual'])],
         ];
     }

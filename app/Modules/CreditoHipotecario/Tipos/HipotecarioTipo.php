@@ -32,4 +32,19 @@ final class HipotecarioTipo extends CreditoTipoSupervisado
     {
         return 'credito-hipotecario';
     }
+
+    /**
+     * Además del supervisado_por que comparte con vehicular, el crédito
+     * hipotecario persiste el aval (garante).
+     *
+     * @param  array<string, mixed>  $datos
+     * @return array<string, mixed>
+     */
+    public function atributosExtra(array $datos): array
+    {
+        return [
+            ...parent::atributosExtra($datos),
+            'aval_id' => $datos['aval_id'] ?? null,
+        ];
+    }
 }

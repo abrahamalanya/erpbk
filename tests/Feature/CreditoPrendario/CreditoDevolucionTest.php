@@ -120,6 +120,11 @@ it('recién queda liquidado y libera los bienes al subir el acta de devolución 
     expect($credito->estado)->toBe('liquidado')
         ->and($this->bien->fresh()->estado)->toBe('recuperado');
 
+    // Al quedar liquidado se genera la carta de no adeudo, renderizable en PDF.
+    $carta = $credito->documentos()->where('tipo', 'carta_no_adeudo')->firstOrFail();
+    $pdf = $this->get("/api/creditos-prendarios/{$creditoId}/documentos/{$carta->id}/ver")->assertOk();
+    expect($pdf->headers->get('content-type'))->toContain('application/pdf');
+
     // El bien vuelve a estar disponible para un nuevo crédito.
     $this->postJson('/api/creditos-prendarios', [
         'bien_ids' => [$this->bien->id], 'monto_prestamo' => 300, 'tipo_cuota' => 'mensual',

@@ -44,32 +44,34 @@ class CuentaBancariaPolicy
     /**
      * Managing a bóveda's cuentas bancarias — creating, editing, deleting,
      * registering movimientos, conciliando — is restricted to whoever
-     * controls that bóveda, same authority as BovedaPolicy::cerrar()/reabrir().
+     * controls that bóveda: the administrador_agencia for an agencia bóveda,
+     * plus the administrador_general for ANY bóveda of the empresa (same
+     * empresa-wide authority they already have to view them).
      * Authorized via Gate::authorize('crear', [CuentaBancaria::class, $boveda])
      * since there's no CuentaBancaria instance yet at creation time.
      */
     public function crear(User $user, Boveda $boveda): bool
     {
-        return $user->can('cuentas_bancarias.crear') && $this->hierarchy->puedeControlarBoveda($user, $boveda);
+        return $user->can('cuentas_bancarias.crear') && $this->hierarchy->puedeGestionarCuentaBancaria($user, $boveda);
     }
 
     public function editar(User $user, CuentaBancaria $cuentaBancaria): bool
     {
-        return $user->can('cuentas_bancarias.editar') && $this->hierarchy->puedeControlarBoveda($user, $cuentaBancaria->boveda);
+        return $user->can('cuentas_bancarias.editar') && $this->hierarchy->puedeGestionarCuentaBancaria($user, $cuentaBancaria->boveda);
     }
 
     public function eliminar(User $user, CuentaBancaria $cuentaBancaria): bool
     {
-        return $user->can('cuentas_bancarias.eliminar') && $this->hierarchy->puedeControlarBoveda($user, $cuentaBancaria->boveda);
+        return $user->can('cuentas_bancarias.eliminar') && $this->hierarchy->puedeGestionarCuentaBancaria($user, $cuentaBancaria->boveda);
     }
 
     public function movimiento(User $user, CuentaBancaria $cuentaBancaria): bool
     {
-        return $user->can('cuentas_bancarias.movimiento') && $this->hierarchy->puedeControlarBoveda($user, $cuentaBancaria->boveda);
+        return $user->can('cuentas_bancarias.movimiento') && $this->hierarchy->puedeGestionarCuentaBancaria($user, $cuentaBancaria->boveda);
     }
 
     public function conciliar(User $user, CuentaBancaria $cuentaBancaria): bool
     {
-        return $user->can('cuentas_bancarias.conciliar') && $this->hierarchy->puedeControlarBoveda($user, $cuentaBancaria->boveda);
+        return $user->can('cuentas_bancarias.conciliar') && $this->hierarchy->puedeGestionarCuentaBancaria($user, $cuentaBancaria->boveda);
     }
 }

@@ -10,6 +10,7 @@ use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Usuario\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Casts\Attribute;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
 use Illuminate\Database\Eloquent\Relations\MorphToMany;
@@ -26,6 +27,26 @@ use Illuminate\Support\Facades\Storage;
  */
 trait EsGarantia
 {
+    /**
+     * Asigna un código único legible (prefijo del tipo + id con ceros a la
+     * izquierda) apenas se crea la garantía — es el que se imprime en el
+     * sticker del producto. saveQuietly() para no re-disparar eventos.
+     */
+    public static function bootEsGarantia(): void
+    {
+        static::created(function (Model $garantia): void {
+            if (filled($garantia->codigo)) {
+                return;
+            }
+
+            $prefijo = defined($garantia::class.'::CODIGO_PREFIJO') ? $garantia::CODIGO_PREFIJO : 'G';
+
+            $garantia->forceFill([
+                'codigo' => $prefijo.'-'.str_pad((string) $garantia->getKey(), 6, '0', STR_PAD_LEFT),
+            ])->saveQuietly();
+        });
+    }
+
     public function empresa(): BelongsTo
     {
         return $this->belongsTo(Empresa::class);

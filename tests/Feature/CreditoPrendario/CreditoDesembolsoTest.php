@@ -78,6 +78,21 @@ it('defaults numero_cuotas from the fixed table per tipo_cuota (semanal -> 4)', 
         ->and($sumaInteres)->toBe('37.32');
 });
 
+it('streams a tentative cronograma PDF for a crédito that has no cuotas yet', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+    $creditoId = $this->postJson('/api/creditos-prendarios', [
+        'bien_ids' => [$this->bien->id],
+        'monto_prestamo' => 400, 'tipo_cuota' => 'semanal',
+    ])->assertCreated()->json('data.id');
+
+    expect(Credito::find($creditoId)->cuotas()->exists())->toBeFalse();
+
+    $response = $this->get("/api/creditos-prendarios/{$creditoId}/cronograma/ver");
+
+    $response->assertSuccessful();
+    expect($response->headers->get('content-type'))->toContain('application/pdf');
+});
+
 it('streams a freshly rendered cronograma PDF for a desembolsado crédito', function () {
     Storage::fake('public');
 

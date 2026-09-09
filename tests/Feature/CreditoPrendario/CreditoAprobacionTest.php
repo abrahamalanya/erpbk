@@ -59,7 +59,7 @@ it('registers a crédito as pendiente with the config default interest', functio
         ->and($response->json('data.interes'))->toBe('10.00');
 });
 
-it('generates contrato + declaracion + fotos as soon as the crédito is registered, before any approval', function () {
+it('generates contrato + declaracion + fotos + sticker as soon as the crédito is registered, before any approval', function () {
     Sanctum::actingAs($this->asesor, ['*']);
     $creditoId = $this->postJson('/api/creditos-prendarios', [
         'bien_ids' => [$this->bien->id],
@@ -68,7 +68,7 @@ it('generates contrato + declaracion + fotos as soon as the crédito is register
 
     $tipos = Credito::find($creditoId)
         ->documentos()->pluck('tipo')->sort()->values()->all();
-    expect($tipos)->toBe(['contrato', 'declaracion', 'fotos']);
+    expect($tipos)->toBe(['contrato', 'declaracion', 'fotos', 'sticker']);
 });
 
 it('allows administrador_agencia to approve without generating duplicate documentos', function () {
@@ -88,7 +88,7 @@ it('allows administrador_agencia to approve without generating duplicate documen
 
     $tipos = Credito::find($creditoId)
         ->documentos()->pluck('tipo')->sort()->values()->all();
-    expect($tipos)->toBe(['contrato', 'declaracion', 'fotos']);
+    expect($tipos)->toBe(['contrato', 'declaracion', 'fotos', 'sticker']);
 });
 
 it('allows administrador_general to reject with a motivo', function () {
@@ -149,7 +149,7 @@ it('activates the crédito once desembolsado, setting fecha_desembolso, fecha_ve
         ->and($response->json('data.fecha_vencimiento'))->not->toBeNull();
 
     $pendientesDeFirma = Credito::find($creditoId)
-        ->documentos()->whereNull('firmado_at')->count();
+        ->documentos()->whereIn('tipo', ['contrato', 'declaracion', 'fotos'])->whereNull('firmado_at')->count();
     expect($pendientesDeFirma)->toBe(0);
 
     // mensual -> 1 cuota (tabla fija); capital amortizado + interés sobre saldo insoluto
@@ -169,7 +169,7 @@ it('rejects desembolsar when the crédito is not yet aprobado', function () {
     $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar")->assertUnprocessable();
 });
 
-it('rejects desembolsar when a documento is not yet firmado', function () {
+it('allows desembolsar even when documentos are not yet firmado (signed scans are uploaded afterwards)', function () {
     Sanctum::actingAs($this->asesor, ['*']);
     $creditoId = $this->postJson('/api/creditos-prendarios', [
         'bien_ids' => [$this->bien->id],
@@ -184,7 +184,11 @@ it('rejects desembolsar when a documento is not yet firmado', function () {
     Sanctum::actingAs($this->asesor, ['*']);
     Caja::query()->where('user_id', $this->asesor->id)->first()->cicloAbierto->update(['saldo_apertura' => 10000]);
 
-    $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar")->assertUnprocessable();
+    expect(Credito::find($creditoId)->documentos()->whereNull('firmado_at')->count())->toBeGreaterThan(0);
+
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar")
+        ->assertSuccessful()
+        ->assertJsonPath('data.estado', 'activo');
 });
 
 it('rejects desembolsar when the actor caja does not have enough saldo', function () {

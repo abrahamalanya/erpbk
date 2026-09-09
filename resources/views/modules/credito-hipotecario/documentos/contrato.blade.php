@@ -4,21 +4,21 @@
     <meta charset="utf-8">
     <title>Contrato de Préstamo con Garantía Hipotecaria #{{ $credito->id }}</title>
     <style>
-        @page { margin: 11mm 13mm; }
-        body { font-family: DejaVu Sans, sans-serif; font-size: 9.3px; color: #1a1a1a; line-height: 1.28; }
-        h1 { font-size: 13px; text-align: center; margin: 0; }
-        h2 { font-size: 9.8px; margin-top: 7px; margin-bottom: 2px; }
-        p { text-align: justify; margin: 4px 0; }
+        @page { margin: 3cm 1cm 3cm 3cm; }
+        body { font-family: DejaVu Sans, sans-serif; font-size: 8.3px; color: #1a1a1a; line-height: 1.2; }
+        h1 { font-size: 12px; text-align: center; margin: 0; }
+        h2 { font-size: 8.6px; margin-top: 4px; margin-bottom: 1px; }
+        p { text-align: justify; margin: 2.5px 0; }
         .numero { display: inline-block; border: 1px solid #000; padding: 3px 8px; font-weight: bold; font-size: 10px; }
         .logo { max-height: 42px; max-width: 100px; }
         table.bienes { width: 100%; border-collapse: collapse; margin: 5px 0; }
         table.bienes th, table.bienes td { border: 1px solid #999; padding: 2px 4px; font-size: 8px; }
         table.bienes th { background: #eee; }
-        table.firmas { width: 100%; margin-top: 16px; }
+        table.firmas { width: 100%; margin-top: 10px; }
         table.firmas td { width: 50%; text-align: center; vertical-align: bottom; }
-        .firma-imagen { max-height: 50px; max-width: 160px; }
+        .firma-imagen { max-height: 80px; max-width: 240px; }
         .firma-linea { margin-top: 6px; border-top: 1px solid #000; padding-top: 3px; }
-        .firma-espacio { height: 40px; }
+        .firma-espacio { height: 72px; }
     </style>
 </head>
 <body>
@@ -162,7 +162,7 @@
         <tr>
             <td>
                 @if ($credito->empresa->firma_path)
-                    <img class="firma-imagen" src="{{ $fotoDataUri($credito->empresa->firma_path, 400) }}">
+                    <img class="firma-imagen" src="{{ $fotoDataUri($credito->empresa->firma_path, 600) }}">
                 @else
                     <div class="firma-espacio"></div>
                 @endif

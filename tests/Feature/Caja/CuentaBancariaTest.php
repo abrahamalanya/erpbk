@@ -48,6 +48,39 @@ it('lets administrador_general create a cuenta bancaria on the principal boveda'
     expect(CuentaBancaria::query()->where('boveda_id', $this->bovedaPrincipal->id)->exists())->toBeTrue();
 });
 
+it('lets administrador_general manage cuentas bancarias of any agencia boveda of the empresa', function () {
+    Sanctum::actingAs($this->administradorGeneral, ['*']);
+
+    $cuentaId = $this->postJson("/api/bovedas/{$this->bovedaAgencia->id}/cuentas-bancarias", [
+        'banco_id' => $this->banco->id,
+        'numero_cuenta' => '888-1',
+        'titular' => 'Agencia Norte SAC',
+        'tipo_cuenta' => 'corriente',
+        'moneda' => 'PEN',
+        'saldo_inicial' => 500,
+    ])->assertCreated()->json('data.id');
+
+    $this->putJson("/api/cuentas-bancarias/{$cuentaId}", [
+        'banco_id' => $this->banco->id,
+        'numero_cuenta' => '888-1',
+        'titular' => 'Agencia Norte SAC (editada)',
+    ])->assertSuccessful()->assertJsonPath('data.titular', 'Agencia Norte SAC (editada)');
+
+    $this->postJson("/api/cuentas-bancarias/{$cuentaId}/conciliar", ['saldo_banco' => 500])
+        ->assertCreated();
+
+    // Una segunda cuenta sin movimientos/conciliaciones: el admin general
+    // también puede eliminarla.
+    $otraId = $this->postJson("/api/bovedas/{$this->bovedaAgencia->id}/cuentas-bancarias", [
+        'banco_id' => $this->banco->id,
+        'numero_cuenta' => '888-2',
+        'titular' => 'Agencia Norte SAC 2',
+    ])->assertCreated()->json('data.id');
+
+    $this->deleteJson("/api/cuentas-bancarias/{$otraId}")->assertSuccessful();
+    expect(CuentaBancaria::query()->whereKey($otraId)->exists())->toBeFalse();
+});
+
 it('lets administrador_agencia create a cuenta bancaria only on their own agencia boveda', function () {
     Sanctum::actingAs($this->administradorAgencia, ['*']);
 

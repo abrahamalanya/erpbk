@@ -33,7 +33,7 @@ class BilletajePolicy
             return true;
         }
 
-        return $this->hierarchy->puedeControlarBoveda($user, $billetaje->boveda);
+        return $this->hierarchy->puedeControlarBilletaje($user, $billetaje);
     }
 
     public function create(User $user): bool
@@ -43,11 +43,11 @@ class BilletajePolicy
 
     public function aprobar(User $user, Billetaje $billetaje): bool
     {
-        return $user->can('billetajes.aprobar') && $this->hierarchy->puedeControlarBoveda($user, $billetaje->boveda);
+        return $user->can('billetajes.aprobar') && $this->hierarchy->puedeControlarBilletaje($user, $billetaje);
     }
 
     public function rechazar(User $user, Billetaje $billetaje): bool
     {
-        return $user->can('billetajes.rechazar') && $this->hierarchy->puedeControlarBoveda($user, $billetaje->boveda);
+        return $user->can('billetajes.rechazar') && $this->hierarchy->puedeControlarBilletaje($user, $billetaje);
     }
 }

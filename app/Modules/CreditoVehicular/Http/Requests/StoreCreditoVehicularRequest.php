@@ -24,6 +24,8 @@ class StoreCreditoVehicularRequest extends FormRequest
             'supervisado_por' => ['required', 'integer', 'exists:users,id'],
             'monto_prestamo' => ['required', 'numeric', 'min:0.01'],
             'interes' => ['nullable', 'numeric', 'min:0'],
+            'interes_solicitud_especial' => ['sometimes', 'boolean'],
+            'motivo_interes' => ['nullable', 'string', 'max:255'],
             'tipo_cuota' => ['required', Rule::in(['diario', 'semanal', 'quincenal', 'mensual'])],
         ];
     }

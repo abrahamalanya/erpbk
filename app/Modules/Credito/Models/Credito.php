@@ -40,6 +40,7 @@ class Credito extends Model
         'agencia_id',
         'tipo_credito',
         'cliente_id',
+        'aval_id',
         'registrado_por',
         'supervisado_por',
         'refrendo_de_credito_id',
@@ -47,6 +48,8 @@ class Credito extends Model
         'adenda_de_credito_id',
         'monto_prestamo',
         'interes',
+        'interes_solicitud_especial',
+        'motivo_interes',
         'tipo_cuota',
         'plazo_dias',
         'estado',
@@ -69,6 +72,7 @@ class Credito extends Model
         return [
             'monto_prestamo' => 'decimal:2',
             'interes' => 'decimal:2',
+            'interes_solicitud_especial' => 'boolean',
             'fecha_aprobacion' => 'datetime',
             'fecha_desembolso' => 'date',
             'fecha_vencimiento' => 'date',
@@ -117,6 +121,15 @@ class Credito extends Model
     public function cliente(): BelongsTo
     {
         return $this->belongsTo(Cliente::class);
+    }
+
+    /**
+     * Aval (garante) del crédito — una persona registrada como cliente. Solo
+     * los créditos hipotecarios lo usan.
+     */
+    public function aval(): BelongsTo
+    {
+        return $this->belongsTo(Cliente::class, 'aval_id');
     }
 
     public function registradoPor(): BelongsTo
