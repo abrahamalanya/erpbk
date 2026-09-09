@@ -10,6 +10,7 @@ use App\Modules\CreditoHipotecario\Models\Inmueble;
 use App\Nucleo\Http\Controllers\Controller;
 use App\Nucleo\Traits\ApiResponse;
 use DomainException;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Storage;
@@ -35,6 +36,34 @@ class InmuebleController extends Controller
 
         if (request()->boolean('disponibles')) {
             $query->disponibles();
+        }
+
+        if (request()->filled('q')) {
+            $termino = trim((string) request()->string('q'));
+            $query->where(function (Builder $sub) use ($termino): void {
+                $sub->where('partida_registral', 'like', "%{$termino}%")
+                    ->orWhere('direccion', 'like', "%{$termino}%")
+                    ->orWhere('distrito', 'like', "%{$termino}%")
+                    ->orWhere('provincia', 'like', "%{$termino}%")
+                    ->orWhere('departamento', 'like', "%{$termino}%")
+                    ->orWhere('codigo', 'like', "%{$termino}%");
+            });
+        }
+
+        if (request()->filled('tipo_inmueble')) {
+            $query->where('tipo_inmueble', 'like', '%'.trim((string) request()->string('tipo_inmueble')).'%');
+        }
+
+        if (request()->filled('estado')) {
+            $query->where('estado', (string) request()->string('estado'));
+        }
+
+        if (request()->filled('con_gravamen')) {
+            $query->where('con_gravamen', request()->boolean('con_gravamen'));
+        }
+
+        if (request()->filled('agencia_id')) {
+            $query->where('agencia_id', request()->integer('agencia_id'));
         }
 
         return $this->successResponse($query->paginate(15));

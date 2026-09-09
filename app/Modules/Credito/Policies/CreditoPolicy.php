@@ -123,6 +123,16 @@ class CreditoPolicy
     }
 
     /**
+     * Borra un crédito registrado por error. Misma autoridad de nivel admin
+     * que aprobar/rechazar/editar; que solo se permita mientras está
+     * pendiente o rechazado lo verifica CreditoService::eliminar(), no aquí.
+     */
+    public function delete(User $user, Credito $credito): bool
+    {
+        return $user->can('creditos_prendarios.eliminar') && $this->hierarchy->puedeAprobar($user, $credito);
+    }
+
+    /**
      * Same admin-level authority as aprobar/rechazar/editar — deciding to
      * escalate a vencido crédito to the public tienda early (once it's past
      * the configured período de espera) is an admin call, not something the

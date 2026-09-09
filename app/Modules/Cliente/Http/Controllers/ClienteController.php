@@ -48,6 +48,18 @@ class ClienteController extends Controller
             });
         }
 
+        if (request()->filled('estado')) {
+            $query->where('estado', (string) request()->string('estado'));
+        }
+
+        if (request()->filled('tipo_documento')) {
+            $query->where('tipo_documento', (string) request()->string('tipo_documento'));
+        }
+
+        if (request()->filled('agencia_id')) {
+            $query->where('agencia_id', request()->integer('agencia_id'));
+        }
+
         $porPagina = max(1, min(request()->integer('per_page', 15), 100));
 
         return $this->successResponse($query->paginate($porPagina));

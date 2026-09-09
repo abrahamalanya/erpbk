@@ -167,6 +167,15 @@ class CreditoController extends Controller
         return $this->successResponse($credito);
     }
 
+    public function destroy(Credito $credito): JsonResponse
+    {
+        Gate::authorize('delete', $credito);
+
+        $this->creditoService->eliminar($credito);
+
+        return $this->successResponse(null, 'Crédito eliminado');
+    }
+
     public function aprobar(Credito $credito): JsonResponse
     {
         Gate::authorize('aprobar', $credito);

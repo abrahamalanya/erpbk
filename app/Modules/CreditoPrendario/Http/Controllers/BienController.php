@@ -10,6 +10,7 @@ use App\Modules\CreditoPrendario\Models\Bien;
 use App\Nucleo\Http\Controllers\Controller;
 use App\Nucleo\Traits\ApiResponse;
 use DomainException;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Storage;
@@ -36,6 +37,29 @@ class BienController extends Controller
 
         if (request()->boolean('disponibles')) {
             $query->disponibles();
+        }
+
+        if (request()->filled('q')) {
+            $termino = trim((string) request()->string('q'));
+            $query->where(function (Builder $sub) use ($termino): void {
+                $sub->where('nombre', 'like', "%{$termino}%")
+                    ->orWhere('marca', 'like', "%{$termino}%")
+                    ->orWhere('modelo', 'like', "%{$termino}%")
+                    ->orWhere('serie', 'like', "%{$termino}%")
+                    ->orWhere('codigo', 'like', "%{$termino}%");
+            });
+        }
+
+        if (request()->filled('tipo')) {
+            $query->where('tipo', (string) request()->string('tipo'));
+        }
+
+        if (request()->filled('estado')) {
+            $query->where('estado', (string) request()->string('estado'));
+        }
+
+        if (request()->filled('agencia_id')) {
+            $query->where('agencia_id', request()->integer('agencia_id'));
         }
 
         return $this->successResponse($query->paginate(15));

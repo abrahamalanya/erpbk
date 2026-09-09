@@ -278,6 +278,44 @@ final class CreditoService
     }
 
     /**
+     * Borra un crédito registrado por error. Solo mientras está pendiente o
+     * rechazado: en cuanto se aprueba/desembolsa entran en juego documentos
+     * firmables, movimiento de caja y cronograma, y la vía correcta pasa a
+     * ser revertirAprobacion() o la liquidación, no un borrado.
+     *
+     * Libera las garantías quitando el vínculo del pivot credito_garantia
+     * (su estado 'en_garantia' es el normal de una garantía libre, no hay
+     * nada que restaurar) y elimina los documentos del crédito junto con
+     * cualquier escaneo firmado que se hubiera subido.
+     */
+    public function eliminar(Credito $credito): void
+    {
+        if (! in_array($credito->estado, ['pendiente', 'rechazado'], true)) {
+            throw new DomainException('Solo se puede eliminar un crédito mientras está pendiente o rechazado.');
+        }
+
+        DB::transaction(function () use ($credito): void {
+            $this->garantiasDe($credito)->detach();
+
+            foreach ($credito->documentos as $documento) {
+                if ($documento->archivo_firmado_path) {
+                    Storage::disk('public')->delete($documento->archivo_firmado_path);
+                }
+
+                $documento->delete();
+            }
+
+            $credito->cuotas()->delete();
+
+            if ($credito->conformidad_path) {
+                Storage::disk('public')->delete($credito->conformidad_path);
+            }
+
+            $credito->delete();
+        });
+    }
+
+    /**
      * Lets an admin override the interest rate for exceptional cases (e.g.
      * an exclusive client on a custom rate) — only before the crédito is
      * firmado, since fecha_desembolso/fecha_vencimiento and any disbursed
