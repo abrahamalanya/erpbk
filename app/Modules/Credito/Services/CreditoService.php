@@ -404,8 +404,17 @@ final class CreditoService
      * cash moves at all — the client isn't receiving new money, this is
      * only restructuring the terms of a debt that was already desembolsado
      * under the original crédito. Confirmed explicitly with the user.
+     *
+     * $fecha (opcional, solo admin) permite un desembolso retroactivo:
+     * regularizar en umax un préstamo cuyo dinero se entregó en el pasado.
+     * Solo desplaza el cronograma (fecha_desembolso, fecha_vencimiento y
+     * cada cuota se calculan desde esa fecha); el movimiento de caja se
+     * fecha igual con el día real del ciclo, no con la fecha retroactiva,
+     * para no descuadrar cierres de caja. Si con la fecha retroactiva el
+     * crédito ya nace vencido, se transiciona a 'vencido' en el acto en
+     * lugar de esperar al job diario.
      */
-    public function desembolsar(Credito $credito, User $actor, ?int $numeroCuotas, ?string $interes): Credito
+    public function desembolsar(Credito $credito, User $actor, ?int $numeroCuotas, ?string $interes, ?string $fecha = null): Credito
     {
         $this->asegurarEstado($credito, 'aprobado');
 
@@ -428,7 +437,7 @@ final class CreditoService
             }
         }
 
-        return DB::transaction(function () use ($credito, $actor, $ciclo, $esAdenda, $numeroCuotas, $interes): Credito {
+        return DB::transaction(function () use ($credito, $actor, $ciclo, $esAdenda, $numeroCuotas, $interes, $fecha): Credito {
             if ($interes !== null) {
                 $credito->update(['interes' => $interes]);
             }
@@ -437,7 +446,7 @@ final class CreditoService
             $diasPorCuota = self::DIAS_POR_PERIODO[$credito->tipo_cuota];
             $plazoTotal = $diasPorCuota * $n;
 
-            $fechaDesembolso = now()->startOfDay();
+            $fechaDesembolso = $fecha !== null ? Carbon::parse($fecha)->startOfDay() : now()->startOfDay();
 
             $credito->update([
                 'estado' => 'activo',
@@ -477,6 +486,10 @@ final class CreditoService
 
             $this->notificar($credito);
             $this->notificaciones->enviar(collect([$credito->registradoPor]), new CreditoDesembolsadoNotification($credito));
+
+            if ($credito->fecha_vencimiento->copy()->startOfDay()->lt(now()->startOfDay())) {
+                $credito = $this->transicionarAVencido($credito);
+            }
 
             return $credito;
         });
@@ -959,13 +972,7 @@ final class CreditoService
             ->where('estado', 'activo')
             ->whereDate('fecha_vencimiento', '<', $hoy)
             ->get()
-            ->each(function (Credito $credito): void {
-                $credito->update(['estado' => 'vencido']);
-
-                $credito = $credito->fresh();
-                $this->notificar($credito);
-                $this->notificaciones->enviar($this->hierarchy->controladoresDe($credito)->push($credito->registradoPor), new CreditoVencidoNotification($credito));
-            });
+            ->each(fn (Credito $credito) => $this->transicionarAVencido($credito));
 
         Credito::query()
             ->where('estado', 'vencido')
@@ -1052,6 +1059,20 @@ final class CreditoService
         $this->notificaciones->enviar(
             $this->hierarchy->controladoresDe($credito)->push($credito->registradoPor),
             new CreditoConformidadRegistradaNotification($credito),
+        );
+
+        return $credito;
+    }
+
+    private function transicionarAVencido(Credito $credito): Credito
+    {
+        $credito->update(['estado' => 'vencido']);
+
+        $credito = $credito->fresh();
+        $this->notificar($credito);
+        $this->notificaciones->enviar(
+            $this->hierarchy->controladoresDe($credito)->push($credito->registradoPor),
+            new CreditoVencidoNotification($credito),
         );
 
         return $credito;

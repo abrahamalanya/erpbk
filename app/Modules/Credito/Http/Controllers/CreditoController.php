@@ -209,7 +209,7 @@ class CreditoController extends Controller
 
         $data = $request->validated();
 
-        if (($data['numero_cuotas'] ?? null) !== null || ($data['interes'] ?? null) !== null) {
+        if (($data['numero_cuotas'] ?? null) !== null || ($data['interes'] ?? null) !== null || ($data['fecha_desembolso'] ?? null) !== null) {
             Gate::authorize('editar', $credito);
         }
 
@@ -218,6 +218,7 @@ class CreditoController extends Controller
             $request->user(),
             $data['numero_cuotas'] ?? null,
             isset($data['interes']) ? (string) $data['interes'] : null,
+            $data['fecha_desembolso'] ?? null,
         );
 
         return $this->successResponse($credito, 'Crédito desembolsado y cronograma generado');

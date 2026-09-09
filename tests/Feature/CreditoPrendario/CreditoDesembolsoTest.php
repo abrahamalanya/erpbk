@@ -2,6 +2,7 @@
 
 use App\Modules\Caja\Models\Caja;
 use App\Modules\Caja\Models\CajaCiclo;
+use App\Modules\Caja\Models\CajaMovimiento;
 use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Credito\Models\ConfiguracionCredito;
 use App\Modules\Credito\Models\Credito;
@@ -195,4 +196,119 @@ it('exposes monto_liquidacion_sugerido on show() and rejects liquidar with an in
     $this->postJson("/api/creditos-prendarios/{$creditoId}/liquidar", ['monto_pagado' => 1100, 'medio' => 'efectivo'])
         ->assertSuccessful()
         ->assertJsonPath('data.estado', 'liquidado_pendiente');
+});
+
+it('defaults fecha_desembolso to today when the admin does not backdate it', function () {
+    Storage::fake('public');
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $creditoId = $this->postJson('/api/creditos-prendarios', [
+        'bien_ids' => [$this->bien->id],
+        'monto_prestamo' => 400, 'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+
+    aprobarYFirmarDocumentos($this, $creditoId);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar")->assertSuccessful();
+
+    expect(Credito::find($creditoId)->fecha_desembolso->toDateString())->toBe(now()->toDateString());
+});
+
+it('lets an admin backdate fecha_desembolso and derives the whole cronograma from it', function () {
+    Storage::fake('public');
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $creditoId = $this->postJson('/api/creditos-prendarios', [
+        'bien_ids' => [$this->bien->id],
+        'monto_prestamo' => 400, 'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+
+    aprobarYFirmarDocumentos($this, $creditoId);
+
+    $cajaAdmin = Caja::factory()->create(['user_id' => $this->adminAgencia->id, 'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id]);
+    CajaCiclo::query()->create([
+        'caja_id' => $cajaAdmin->id, 'empresa_id' => $cajaAdmin->empresa_id, 'fecha' => now()->toDateString(),
+        'estado' => 'abierta', 'saldo_apertura' => 10000, 'abierta_at' => now(),
+    ]);
+
+    $fecha = now()->subDays(10)->toDateString();
+
+    Sanctum::actingAs($this->adminAgencia, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar", [
+        'fecha_desembolso' => $fecha,
+    ])->assertSuccessful()->assertJsonPath('data.estado', 'activo');
+
+    $credito = Credito::find($creditoId);
+    expect($credito->fecha_desembolso->toDateString())->toBe($fecha)
+        ->and($credito->fecha_vencimiento->toDateString())->toBe($credito->fecha_desembolso->copy()->addDays($credito->plazo_dias)->toDateString())
+        ->and($credito->cuotas->first()->fecha_vencimiento->toDateString())
+        ->toBe($credito->fecha_desembolso->copy()->addDays(30)->toDateString());
+
+    // El movimiento de caja se registra con el día real del ciclo, no con la
+    // fecha retroactiva — para no descuadrar cierres de caja ya cuadrados.
+    $movimiento = CajaMovimiento::query()->where('concepto', "Desembolso de crédito prendario #{$creditoId}")->firstOrFail();
+    expect($movimiento->fecha_caja->toDateString())->toBe(now()->toDateString());
+});
+
+it('marks a backdated crédito vencido on the spot when its vencimiento is already past', function () {
+    Storage::fake('public');
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $creditoId = $this->postJson('/api/creditos-prendarios', [
+        'bien_ids' => [$this->bien->id],
+        'monto_prestamo' => 400, 'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+
+    aprobarYFirmarDocumentos($this, $creditoId);
+
+    $cajaAdmin = Caja::factory()->create(['user_id' => $this->adminAgencia->id, 'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id]);
+    CajaCiclo::query()->create([
+        'caja_id' => $cajaAdmin->id, 'empresa_id' => $cajaAdmin->empresa_id, 'fecha' => now()->toDateString(),
+        'estado' => 'abierta', 'saldo_apertura' => 10000, 'abierta_at' => now(),
+    ]);
+
+    Sanctum::actingAs($this->adminAgencia, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar", [
+        'fecha_desembolso' => now()->subDays(45)->toDateString(),
+    ])->assertSuccessful()->assertJsonPath('data.estado', 'vencido');
+});
+
+it('rejects a future fecha_desembolso at desembolso time', function () {
+    Storage::fake('public');
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $creditoId = $this->postJson('/api/creditos-prendarios', [
+        'bien_ids' => [$this->bien->id],
+        'monto_prestamo' => 400, 'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+
+    aprobarYFirmarDocumentos($this, $creditoId);
+
+    Sanctum::actingAs($this->adminAgencia, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar", [
+        'fecha_desembolso' => now()->addDay()->toDateString(),
+    ])->assertJsonValidationErrors(['fecha_desembolso']);
+
+    expect(Credito::find($creditoId)->estado)->toBe('aprobado');
+});
+
+it('denies a non-admin asesor from backdating fecha_desembolso, even though asesor can desembolsar', function () {
+    Storage::fake('public');
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $creditoId = $this->postJson('/api/creditos-prendarios', [
+        'bien_ids' => [$this->bien->id],
+        'monto_prestamo' => 400, 'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+
+    aprobarYFirmarDocumentos($this, $creditoId);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar", [
+        'fecha_desembolso' => now()->subDays(5)->toDateString(),
+    ])->assertForbidden();
+
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar")->assertSuccessful();
+    expect(Credito::find($creditoId)->fecha_desembolso->toDateString())->toBe(now()->toDateString());
 });
