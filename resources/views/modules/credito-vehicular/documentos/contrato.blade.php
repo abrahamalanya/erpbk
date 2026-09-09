@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <title>Contrato de Préstamo con Garantía Vehicular #{{ $credito->id }}</title>
     <style>
-        @page { margin: 3cm 1cm 3cm 3cm; }
+        @page { margin: 4cm 1cm 3cm 3cm; }
         body { font-family: DejaVu Sans, sans-serif; font-size: 8.3px; color: #1a1a1a; line-height: 1.2; }
         h1 { font-size: 12px; text-align: center; margin: 0; }
         h2 { font-size: 8.6px; margin-top: 4px; margin-bottom: 1px; }

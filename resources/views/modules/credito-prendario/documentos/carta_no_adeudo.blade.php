@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <title>Carta de No Adeudo #{{ $credito->id }}</title>
     <style>
-        @page { margin: 3cm 1cm 3cm 3cm; }
+        @page { margin: 4cm 1cm 3cm 3cm; }
         body { font-family: DejaVu Sans, sans-serif; font-size: 10px; color: #1a1a1a; line-height: 1.4; }
         h1 { font-size: 14px; text-align: center; margin: 6px 0 2px; letter-spacing: 1px; }
         p { text-align: justify; margin: 8px 0; }
