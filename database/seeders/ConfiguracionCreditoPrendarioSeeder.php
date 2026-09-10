@@ -24,6 +24,7 @@ class ConfiguracionCreditoPrendarioSeeder extends Seeder
                 'dias_minimo_interes' => 15,
                 'tasa_mora_diaria' => 0.05,
                 'max_refrendos' => null,
+                'max_cuotas' => 1,
             ]
         );
 
@@ -36,6 +37,7 @@ class ConfiguracionCreditoPrendarioSeeder extends Seeder
                 'dias_minimo_interes' => 15,
                 'tasa_mora_diaria' => 0.05,
                 'max_refrendos' => null,
+                'max_cuotas' => 12,
             ]
         );
 
@@ -48,6 +50,7 @@ class ConfiguracionCreditoPrendarioSeeder extends Seeder
                 'dias_minimo_interes' => 15,
                 'tasa_mora_diaria' => 0.05,
                 'max_refrendos' => null,
+                'max_cuotas' => 12,
             ]
         );
     }

@@ -9,7 +9,6 @@
         h1 { font-size: 14px; text-align: center; margin: 6px 0 2px; letter-spacing: 1px; }
         p { text-align: justify; margin: 8px 0; }
         .numero { display: inline-block; border: 1px solid #000; padding: 3px 8px; font-weight: bold; font-size: 10px; }
-        .logo { max-height: 44px; max-width: 110px; }
         table.garantias { width: 100%; border-collapse: collapse; margin: 6px 0; }
         table.garantias th, table.garantias td { border: 1px solid #999; padding: 3px 5px; font-size: 9px; }
         table.garantias th { background: #eee; }
@@ -29,11 +28,7 @@
 
     <table style="width: 100%; border-collapse: collapse;">
         <tr>
-            <td style="border: none; width: 110px; vertical-align: middle;">
-                @if ($credito->empresa->logo_path)
-                    <img class="logo" src="{{ $fotoDataUri($credito->empresa->logo_path, 300) }}">
-                @endif
-            </td>
+            <td style="border: none; width: 110px; vertical-align: middle;"></td>
             <td style="border: none; text-align: center; vertical-align: middle;">
                 <h1>CARTA DE NO ADEUDO</h1>
             </td>

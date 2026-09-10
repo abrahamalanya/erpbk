@@ -37,6 +37,7 @@ class ConfiguracionCredito extends Model
         'dias_minimo_interes',
         'tasa_mora_diaria',
         'max_refrendos',
+        'max_cuotas',
     ];
 
     /**

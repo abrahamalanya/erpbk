@@ -2,12 +2,15 @@
 
 namespace App\Modules\Credito\Http\Requests;
 
+use App\Modules\Credito\Http\Requests\Concerns\ValidaNumeroCuotas;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
 class StoreCreditoRequest extends FormRequest
 {
+    use ValidaNumeroCuotas;
+
     /**
      * Determine if the user is authorized to make this request.
      */
@@ -31,6 +34,7 @@ class StoreCreditoRequest extends FormRequest
             'interes_solicitud_especial' => ['sometimes', 'boolean'],
             'motivo_interes' => ['nullable', 'string', 'max:255'],
             'tipo_cuota' => ['required', Rule::in(['diario', 'semanal', 'quincenal', 'mensual'])],
+            'numero_cuotas' => $this->reglasNumeroCuotas('prendario'),
         ];
     }
 

@@ -41,6 +41,7 @@ class Credito extends Model
         'tipo_credito',
         'cliente_id',
         'aval_id',
+        'aval_2_id',
         'registrado_por',
         'supervisado_por',
         'refrendo_de_credito_id',
@@ -51,6 +52,7 @@ class Credito extends Model
         'interes_solicitud_especial',
         'motivo_interes',
         'tipo_cuota',
+        'numero_cuotas',
         'plazo_dias',
         'estado',
         'aprobado_por',
@@ -72,6 +74,7 @@ class Credito extends Model
         return [
             'monto_prestamo' => 'decimal:2',
             'interes' => 'decimal:2',
+            'numero_cuotas' => 'integer',
             'interes_solicitud_especial' => 'boolean',
             'fecha_aprobacion' => 'datetime',
             'fecha_desembolso' => 'date',
@@ -130,6 +133,18 @@ class Credito extends Model
     public function aval(): BelongsTo
     {
         return $this->belongsTo(Cliente::class, 'aval_id');
+    }
+
+    /** Segundo aval (garante) — opcional, solo hipotecario. */
+    public function aval2(): BelongsTo
+    {
+        return $this->belongsTo(Cliente::class, 'aval_2_id');
+    }
+
+    /** Fotos/capturas que arman el documento "expediente". */
+    public function expedienteDocumentos(): HasMany
+    {
+        return $this->hasMany(CreditoExpedienteDocumento::class, 'credito_id')->orderBy('orden')->orderBy('id');
     }
 
     public function registradoPor(): BelongsTo

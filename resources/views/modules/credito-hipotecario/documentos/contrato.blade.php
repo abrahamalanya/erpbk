@@ -10,7 +10,6 @@
         h2 { font-size: 8.6px; margin-top: 4px; margin-bottom: 1px; }
         p { text-align: justify; margin: 2.5px 0; }
         .numero { display: inline-block; border: 1px solid #000; padding: 3px 8px; font-weight: bold; font-size: 10px; }
-        .logo { max-height: 42px; max-width: 100px; }
         table.bienes { width: 100%; border-collapse: collapse; margin: 5px 0; }
         table.bienes th, table.bienes td { border: 1px solid #999; padding: 2px 4px; font-size: 8px; }
         table.bienes th { background: #eee; }
@@ -52,11 +51,7 @@
 
     <table style="width: 100%; border-collapse: collapse;">
         <tr>
-            <td style="border: none; width: 100px; vertical-align: middle;">
-                @if ($credito->empresa->logo_path)
-                    <img class="logo" src="{{ $fotoDataUri($credito->empresa->logo_path, 300) }}">
-                @endif
-            </td>
+            <td style="border: none; width: 100px; vertical-align: middle;"></td>
             <td style="border: none; text-align: center; vertical-align: middle;"><h1>CONTRATO DE PR&Eacute;STAMO CON GARANT&Iacute;A HIPOTECARIA</h1></td>
             <td style="border: none; width: 90px; text-align: right; vertical-align: middle;">
                 <span class="numero">N&deg; {{ str_pad((string) $credito->id, 6, '0', STR_PAD_LEFT) }}</span>

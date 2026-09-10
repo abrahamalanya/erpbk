@@ -41,11 +41,11 @@ class CreditoController extends Controller
     ) {}
 
     /**
-     * Interés por defecto ya resuelto (override de agencia o default de
-     * empresa) por tipo de crédito, según la agencia del usuario. Lo consume
-     * el formulario de registro para precargar el input de interés: el
-     * asesor no tiene permiso para leer la configuración completa
-     * (configuraciones_credito_prendario.ver).
+     * Interés por defecto y tope de cuotas ya resueltos (override de agencia
+     * o default de empresa) por tipo de crédito, según la agencia del
+     * usuario. Lo consume el formulario de registro para precargar el input
+     * de interés y acotar el de número de cuotas: el asesor no tiene permiso
+     * para leer la configuración completa (configuraciones_credito_prendario.ver).
      */
     public function configuracion(): JsonResponse
     {
@@ -53,21 +53,24 @@ class CreditoController extends Controller
 
         $agencia = request()->user()->agencia;
 
-        $interesPorTipo = collect(['prendario', 'vehicular', 'hipotecario'])
-            ->mapWithKeys(function (string $tipo) use ($agencia): array {
-                if ($agencia === null) {
-                    return [$tipo => null];
-                }
+        $tipos = collect(['prendario', 'vehicular', 'hipotecario']);
 
-                try {
-                    return [$tipo => $this->configuracionService->resolverPara($agencia, $tipo)->interes_default];
-                } catch (DomainException) {
-                    return [$tipo => null];
-                }
-            })
-            ->all();
+        $configPorTipo = $tipos->mapWithKeys(function (string $tipo) use ($agencia): array {
+            if ($agencia === null) {
+                return [$tipo => null];
+            }
 
-        return $this->successResponse(['interes_default' => $interesPorTipo]);
+            try {
+                return [$tipo => $this->configuracionService->resolverPara($agencia, $tipo)];
+            } catch (DomainException) {
+                return [$tipo => null];
+            }
+        });
+
+        return $this->successResponse([
+            'interes_default' => $configPorTipo->map(fn ($config) => $config?->interes_default)->all(),
+            'max_cuotas' => $configPorTipo->map(fn ($config): int => (int) ($config?->max_cuotas ?? 1))->all(),
+        ]);
     }
 
     /**
@@ -95,7 +98,7 @@ class CreditoController extends Controller
     {
         Gate::authorize('viewAny', Credito::class);
 
-        $query = Credito::query()->with(['bienes', 'vehiculos', 'cliente', 'registradoPor', 'agencia']);
+        $query = Credito::query()->with(['bienes', 'vehiculos', 'inmuebles', 'cliente', 'registradoPor', 'agencia']);
         $query = $this->hierarchy->visibleQuery($query, request()->user());
 
         $creditos = $query->latest()->paginate(15);
@@ -153,7 +156,7 @@ class CreditoController extends Controller
     {
         Gate::authorize('view', $credito);
 
-        $credito->load(['bienes.fotos', 'vehiculos.fotos', 'cliente', 'aval', 'registradoPor', 'supervisadoPor', 'aprobadoPor', 'documentos', 'cuotas']);
+        $credito->load(['bienes.fotos', 'vehiculos.fotos', 'inmuebles', 'cliente', 'aval', 'aval2', 'registradoPor', 'supervisadoPor', 'aprobadoPor', 'documentos', 'cuotas', 'expedienteDocumentos']);
 
         if (in_array($credito->estado, ['activo', 'vencido'], true)) {
             $credito->setAttribute('monto_liquidacion_sugerido', $this->creditoService->calcularMontoLiquidacion($credito));
@@ -356,11 +359,13 @@ class CreditoController extends Controller
         }
 
         // Aún sin cuotas persistidas (antes del desembolso): cronograma
-        // tentativo con la misma fórmula, tomando hoy como fecha de desembolso.
+        // tentativo con la misma fórmula, tomando hoy como fecha de desembolso
+        // y el número de cuotas elegido al registrar (si el tipo lo permite).
         $preview = $this->creditoService->previsualizarCronograma(
             (string) $credito->monto_prestamo,
             (string) $credito->interes,
             $credito->tipo_cuota,
+            $credito->numero_cuotas,
         );
 
         return $this->documentoService->renderizarCronogramaTentativo($credito, $preview);

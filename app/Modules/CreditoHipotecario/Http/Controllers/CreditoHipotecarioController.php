@@ -38,6 +38,6 @@ class CreditoHipotecarioController extends Controller
 
         $credito = $this->creditoService->registrar($request->user(), $inmuebles, $data, 'hipotecario');
 
-        return $this->successResponse($credito->load(['inmuebles', 'cliente', 'aval', 'supervisadoPor']), 'Crédito hipotecario registrado', 201);
+        return $this->successResponse($credito->load(['inmuebles', 'cliente', 'aval', 'aval2', 'supervisadoPor']), 'Crédito hipotecario registrado', 201);
     }
 }

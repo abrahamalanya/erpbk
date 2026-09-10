@@ -58,7 +58,220 @@ it('registers a hipotecario crédito with an aval, persisted and returned in the
 
     $this->getJson("/api/creditos-prendarios/{$creditoId}")
         ->assertOk()
-        ->assertJsonPath('data.aval.nombre', 'Marta');
+        ->assertJsonPath('data.aval.nombre', 'Marta')
+        ->assertJsonCount(1, 'data.inmuebles')
+        ->assertJsonPath('data.inmuebles.0.id', $this->inmueble->id)
+        ->assertJsonPath('data.inmuebles.0.partida_registral', $this->inmueble->partida_registral);
+});
+
+it('includes the inmueble garantía in the crédito listing', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $this->postJson('/api/creditos-hipotecarios', [
+        'inmueble_ids' => [$this->inmueble->id],
+        'supervisado_por' => $this->adminAgencia->id,
+        'monto_prestamo' => 90000,
+        'tipo_cuota' => 'mensual',
+    ])->assertCreated();
+
+    $this->getJson('/api/creditos-prendarios')
+        ->assertOk()
+        ->assertJsonPath('data.data.0.inmuebles.0.id', $this->inmueble->id);
+});
+
+it('generates the hipotecario-only documentos when registering (ficha + cobranza + expediente)', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $creditoId = $this->postJson('/api/creditos-hipotecarios', [
+        'inmueble_ids' => [$this->inmueble->id],
+        'supervisado_por' => $this->adminAgencia->id,
+        'monto_prestamo' => 90000,
+        'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+
+    $tipos = Credito::find($creditoId)->documentos()->pluck('tipo')->all();
+    expect($tipos)->toContain('ficha_socioeconomica')
+        ->and($tipos)->toContain('notificacion_pago')
+        ->and($tipos)->toContain('aviso_prejudicial')
+        ->and($tipos)->toContain('expediente');
+});
+
+it('persists a second aval and returns it in the detail', function () {
+    $aval1 = Cliente::factory()->forAgencia($this->agencia)->create(['nombre' => 'Ana', 'apellido' => 'Uno']);
+    $aval2 = Cliente::factory()->forAgencia($this->agencia)->create(['nombre' => 'Beto', 'apellido' => 'Dos']);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $creditoId = $this->postJson('/api/creditos-hipotecarios', [
+        'inmueble_ids' => [$this->inmueble->id],
+        'supervisado_por' => $this->adminAgencia->id,
+        'aval_id' => $aval1->id,
+        'aval_2_id' => $aval2->id,
+        'monto_prestamo' => 90000,
+        'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+
+    expect(Credito::find($creditoId)->aval_2_id)->toBe($aval2->id);
+
+    $this->getJson("/api/creditos-prendarios/{$creditoId}")
+        ->assertOk()
+        ->assertJsonPath('data.aval.id', $aval1->id)
+        ->assertJsonPath('data.aval2.id', $aval2->id);
+});
+
+it('rejects a second aval equal to the first', function () {
+    $aval = Cliente::factory()->forAgencia($this->agencia)->create();
+
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $this->postJson('/api/creditos-hipotecarios', [
+        'inmueble_ids' => [$this->inmueble->id],
+        'supervisado_por' => $this->adminAgencia->id,
+        'aval_id' => $aval->id,
+        'aval_2_id' => $aval->id,
+        'monto_prestamo' => 90000,
+        'tipo_cuota' => 'mensual',
+    ])->assertStatus(422)->assertJsonValidationErrors('aval_2_id');
+});
+
+it('uploads, lists and deletes expediente images and renders the expediente PDF', function () {
+    \Illuminate\Support\Facades\Storage::fake('public');
+
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $creditoId = $this->postJson('/api/creditos-hipotecarios', [
+        'inmueble_ids' => [$this->inmueble->id],
+        'supervisado_por' => $this->adminAgencia->id,
+        'monto_prestamo' => 90000,
+        'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+
+    // El expediente ya se generó (sin fotos) — el PDF se sirve igual.
+    $docId = Credito::find($creditoId)->documentos()->where('tipo', 'expediente')->value('id');
+    Sanctum::actingAs($this->adminAgencia, ['*']);
+    $this->get("/api/creditos-prendarios/{$creditoId}/documentos/{$docId}/ver")
+        ->assertOk()->assertHeader('content-type', 'application/pdf');
+
+    // Subir 2 imágenes a una sección del deudor.
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/expediente", [
+        'rol' => 'deudor',
+        'seccion' => 'terreno',
+        'archivos' => [
+            \Illuminate\Http\UploadedFile::fake()->image('t1.jpg', 400, 300),
+            \Illuminate\Http\UploadedFile::fake()->image('t2.jpg', 400, 300),
+        ],
+    ])->assertCreated();
+
+    $lista = $this->getJson("/api/creditos-prendarios/{$creditoId}/expediente")->assertOk()->json('data');
+    expect($lista)->toHaveCount(2)
+        ->and($lista[0]['rol'])->toBe('deudor')
+        ->and($lista[0]['seccion'])->toBe('terreno');
+
+    // Rechaza un PDF (solo imágenes).
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/expediente", [
+        'rol' => 'deudor', 'seccion' => 'copia_literal',
+        'archivos' => [\Illuminate\Http\UploadedFile::fake()->create('x.pdf', 100, 'application/pdf')],
+    ])->assertStatus(422);
+
+    // Render con fotos.
+    $this->get("/api/creditos-prendarios/{$creditoId}/documentos/{$docId}/ver")
+        ->assertOk()->assertHeader('content-type', 'application/pdf');
+
+    // Borrar una.
+    $this->deleteJson("/api/creditos-prendarios/{$creditoId}/expediente/{$lista[0]['id']}")->assertOk();
+    expect($this->getJson("/api/creditos-prendarios/{$creditoId}/expediente")->json('data'))->toHaveCount(1);
+});
+
+it('denies expediente uploads to an asesor who cannot manage the crédito', function () {
+    $otroAsesor = User::factory()->forAgencia($this->agencia)->create();
+    $otroAsesor->assignRole('asesor');
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $creditoId = $this->postJson('/api/creditos-hipotecarios', [
+        'inmueble_ids' => [$this->inmueble->id],
+        'supervisado_por' => $this->adminAgencia->id,
+        'monto_prestamo' => 90000,
+        'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+
+    Sanctum::actingAs($otroAsesor, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/expediente", [
+        'rol' => 'deudor', 'seccion' => 'terreno',
+        'archivos' => [\Illuminate\Http\UploadedFile::fake()->image('t.jpg')],
+    ])->assertForbidden();
+});
+
+it('streams the notificacion_pago and aviso_prejudicial PDFs with the overdue cuotas', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $this->empresa->update(['razon_social' => 'CREDIMAS ORIENTE E.I.R.L.', 'ruc' => '20602137903', 'apoderado_legal' => 'Norma Quispe Quicaña', 'celular_cobranzas' => '965263936']);
+
+    $creditoId = $this->postJson('/api/creditos-hipotecarios', [
+        'inmueble_ids' => [$this->inmueble->id],
+        'supervisado_por' => $this->adminAgencia->id,
+        'monto_prestamo' => 15000,
+        'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+
+    $credito = Credito::find($creditoId);
+
+    // Sin cuotas vencidas: los PDF se sirven igual (tabla vacía). El admin
+    // puede ver documentos aunque el crédito esté pendiente.
+    Sanctum::actingAs($this->adminAgencia, ['*']);
+    foreach (['notificacion_pago', 'aviso_prejudicial'] as $tipo) {
+        $docId = $credito->documentos()->where('tipo', $tipo)->value('id');
+        $this->get("/api/creditos-prendarios/{$creditoId}/documentos/{$docId}/ver")
+            ->assertOk()->assertHeader('content-type', 'application/pdf');
+    }
+
+    // Con 3 cuotas vencidas (y una futura que NO cuenta): deuda = 3 × 3,200 = 9,600.
+    \App\Modules\Credito\Models\CuotaCredito::factory()->paraCredito($credito)->createMany([
+        ['numero_cuota' => 1, 'fecha_vencimiento' => now()->subMonths(3)->toDateString(), 'monto_capital' => 3000, 'monto_interes' => 200, 'monto_total' => 3200],
+        ['numero_cuota' => 2, 'fecha_vencimiento' => now()->subMonths(2)->toDateString(), 'monto_capital' => 3000, 'monto_interes' => 200, 'monto_total' => 3200],
+        ['numero_cuota' => 3, 'fecha_vencimiento' => now()->subMonth()->toDateString(), 'monto_capital' => 3000, 'monto_interes' => 200, 'monto_total' => 3200],
+        ['numero_cuota' => 4, 'fecha_vencimiento' => now()->addMonth()->toDateString(), 'monto_capital' => 3000, 'monto_interes' => 200, 'monto_total' => 3200],
+    ]);
+
+    $credito->load(['cliente', 'agencia', 'empresa', 'cuotas']);
+    $doc = $credito->documentos()->where('tipo', 'aviso_prejudicial')->first();
+    $html = view('modules.credito-hipotecario.documentos.aviso_prejudicial', ['credito' => $credito, 'documento' => $doc])->render();
+
+    expect($html)->toContain('9,600.00')
+        ->and($html)->toContain('NUEVE MIL SEISCIENTOS CON 00/100 SOLES')
+        ->and($html)->toContain('3 CUOTA(S)')
+        ->and($html)->toContain('CREDIMAS ORIENTE E.I.R.L.')
+        ->and($html)->toContain('NORMA QUISPE QUICAÑA')
+        ->and(substr_count($html, '<tr>'))->toBeGreaterThanOrEqual(4); // encabezado + 3 vencidas
+});
+
+it('streams the ficha_socioeconomica PDF, with and without a ficha loaded on the cliente', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    // Sin ficha en el cliente: el PDF igual se genera (campos en blanco).
+    $creditoId = $this->postJson('/api/creditos-hipotecarios', [
+        'inmueble_ids' => [$this->inmueble->id],
+        'supervisado_por' => $this->adminAgencia->id,
+        'monto_prestamo' => 90000,
+        'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+
+    $docId = Credito::find($creditoId)->documentos()->where('tipo', 'ficha_socioeconomica')->value('id');
+
+    // Un asesor no puede ver documentos mientras el crédito está pendiente; el admin sí.
+    Sanctum::actingAs($this->adminAgencia, ['*']);
+    $this->get("/api/creditos-prendarios/{$creditoId}/documentos/{$docId}/ver")
+        ->assertOk()
+        ->assertHeader('content-type', 'application/pdf');
+
+    // Con ficha: se re-renderiza fresco con los datos.
+    $this->putJson("/api/clientes/{$this->cliente->id}/ficha-socioeconomica", [
+        'profesion' => 'contadora',
+        'ing_conyuge' => 1200,
+        'familiares' => [['nombres' => 'Hijo Uno', 'edad' => 10, 'parentesco' => 'hijo']],
+    ])->assertSuccessful();
+
+    $res = $this->get("/api/creditos-prendarios/{$creditoId}/documentos/{$docId}/ver")->assertOk();
+    expect($res->headers->get('content-type'))->toContain('application/pdf');
 });
 
 it('registers a hipotecario crédito with a supervisor', function () {

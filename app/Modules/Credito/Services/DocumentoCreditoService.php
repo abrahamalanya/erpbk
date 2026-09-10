@@ -22,7 +22,8 @@ final class DocumentoCreditoService
     private const TIPOS_DOCUMENTO = [
         'contrato', 'declaracion', 'adenda', 'fotos', 'devolucion',
         'voucher_desembolso', 'voucher_pago', 'sticker',
-        'carta_no_adeudo', 'recepcion_vehiculos',
+        'carta_no_adeudo', 'recepcion_vehiculos', 'ficha_socioeconomica',
+        'notificacion_pago', 'aviso_prejudicial', 'expediente',
     ];
 
     public function __construct(
@@ -75,6 +76,46 @@ final class DocumentoCreditoService
     public function generarRecepcionVehiculos(Credito $credito, User $actor): DocumentoCredito
     {
         return $this->generar($credito, $actor, 'recepcion_vehiculos');
+    }
+
+    /**
+     * Ficha socioeconómica — solo para créditos hipotecarios, se genera al
+     * registrar el crédito. Se arma desde la ficha del cliente
+     * (Cliente::fichaSocioeconomica); si el cliente aún no la tiene, el PDF
+     * sale con los campos en blanco y se regenera fresco cada vez que se ve.
+     */
+    public function generarFichaSocioeconomica(Credito $credito, User $actor): DocumentoCredito
+    {
+        return $this->generar($credito, $actor, 'ficha_socioeconomica');
+    }
+
+    /**
+     * Documentos de cobranza de créditos hipotecarios: la notificación /
+     * requerimiento de pago (plazo 72 horas) y la carta de aviso prejudicial
+     * (plazo 5 días hábiles, antesala de la ejecución de la hipoteca). Se
+     * generan al registrar el crédito y se arman en vivo desde las cuotas
+     * vencidas — sin cuotas vencidas salen con la tabla vacía.
+     */
+    public function generarNotificacionPago(Credito $credito, User $actor): DocumentoCredito
+    {
+        return $this->generar($credito, $actor, 'notificacion_pago');
+    }
+
+    public function generarAvisoPrejudicial(Credito $credito, User $actor): DocumentoCredito
+    {
+        return $this->generar($credito, $actor, 'aviso_prejudicial');
+    }
+
+    /**
+     * Expediente del crédito hipotecario — dossier completo (portada con
+     * deudor + garantes, fotos por persona, cronograma, ficha
+     * socioeconómica, copia/certificado literal, hoja de datos). Se genera
+     * al registrar el crédito y se arma en vivo desde las fotos subidas
+     * (Credito::expedienteDocumentos) + las que ya tiene el cliente.
+     */
+    public function generarExpediente(Credito $credito, User $actor): DocumentoCredito
+    {
+        return $this->generar($credito, $actor, 'expediente');
     }
 
     /**
@@ -132,16 +173,46 @@ final class DocumentoCreditoService
             throw new DomainException("Tipo de documento desconocido: {$documento->tipo}");
         }
 
-        $credito = $documento->credito()->with(['cliente', 'aval', 'agencia', 'empresa'])->firstOrFail();
+        $credito = $documento->credito()->with([
+            'cliente.fichaSocioeconomica.familiares', 'cuotas', 'aval', 'aval2',
+            'expedienteDocumentos', 'inmuebles', 'agencia', 'empresa',
+        ])->firstOrFail();
 
         $tipo = $this->tipos->paraCredito($credito);
         $garantias = $credito->garantiasComo($tipo->garantiaModelo())->with('fotos')->get();
+
+        // El expediente incluye el cronograma; si el crédito aún no tiene
+        // cuotas persistidas (antes del desembolso) se proyectan las
+        // tentativas, igual que CreditoController::verCronograma(). Se resuelve
+        // CreditoService de forma perezosa para no crear un ciclo de
+        // dependencias en el constructor.
+        $cronogramaTentativo = false;
+
+        if ($documento->tipo === 'expediente' && $credito->cuotas->isEmpty()) {
+            $preview = app(CreditoService::class)->previsualizarCronograma(
+                (string) $credito->monto_prestamo,
+                (string) $credito->interes,
+                $credito->tipo_cuota,
+                $credito->numero_cuotas,
+            );
+
+            $credito->setRelation('cuotas', collect($preview['cuotas'])->map(fn (array $fila): CuotaCredito => new CuotaCredito([
+                'numero_cuota' => $fila['numero_cuota'],
+                'fecha_vencimiento' => $fila['fecha_vencimiento'],
+                'monto_capital' => $fila['monto_capital'],
+                'monto_interes' => $fila['monto_interes'],
+                'monto_total' => $fila['monto_total'],
+            ])));
+
+            $cronogramaTentativo = true;
+        }
 
         $datos = [
             'credito' => $credito,
             'documento' => $documento,
             'garantias' => $garantias,
             'datos' => $documento->datos ?? [],
+            'tentativo' => $cronogramaTentativo,
             'fotoDataUri' => fn (?string $path, int $maxAncho = 900): ?string => $this->fotoDataUri($path, $maxAncho),
         ];
 

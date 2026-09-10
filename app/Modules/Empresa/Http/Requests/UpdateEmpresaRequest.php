@@ -35,6 +35,8 @@ class UpdateEmpresaRequest extends FormRequest
             'domicilio_legal' => ['nullable', 'string', 'max:255'],
             'actividad_economica' => ['nullable', 'string', 'max:255'],
             'representante_legal' => ['nullable', 'string', 'max:255'],
+            'apoderado_legal' => ['nullable', 'string', 'max:255'],
+            'celular_cobranzas' => ['nullable', 'string', 'max:30'],
             'logo' => ['nullable', 'image', 'max:8192', 'mimes:jpg,jpeg,png'],
             'firma' => ['nullable', 'image', 'max:8192', 'mimes:jpg,jpeg,png'],
             'estado' => ['sometimes', Rule::in(['activo', 'inactivo'])],

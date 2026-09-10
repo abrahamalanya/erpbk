@@ -28,6 +28,7 @@ class PermissionSeeder extends Seeder
         'creditos_vehiculares.ver', 'creditos_vehiculares.crear',
         'inmuebles.ver', 'inmuebles.crear', 'inmuebles.editar',
         'creditos_hipotecarios.ver', 'creditos_hipotecarios.crear',
+        'cobranzas.ver', 'cobranzas.registrar',
     ];
 
     /**
@@ -49,6 +50,20 @@ class PermissionSeeder extends Seeder
         'vehiculos.ver', 'vehiculos.crear', 'vehiculos.editar', 'creditos_vehiculares.ver', 'creditos_vehiculares.crear',
         'inmuebles.ver', 'inmuebles.crear', 'inmuebles.editar', 'creditos_hipotecarios.ver', 'creditos_hipotecarios.crear',
     ];
+
+    /**
+     * El módulo Cobranzas lo usan los mismos roles operativos que cobran
+     * (refrendar / liquidar) más los administradores que supervisan; se
+     * concede a todos ellos además de sus permisos base.
+     *
+     * @var list<string>
+     */
+    private const COBRANZAS_ROLES = ['administrador_general', 'administrador_agencia', 'supervisor', 'asesor'];
+
+    /**
+     * @var list<string>
+     */
+    private const COBRANZAS_PERMISSIONS = ['cobranzas.ver', 'cobranzas.registrar'];
 
     /**
      * @var array<string, list<string>>
@@ -78,6 +93,10 @@ class PermissionSeeder extends Seeder
                 $permissions = [...$permissions, ...self::GARANTIA_FORMAL_PERMISSIONS];
             } elseif ($roleName === 'secretaria') {
                 $permissions = [...$permissions, 'vehiculos.ver', 'creditos_vehiculares.ver', 'inmuebles.ver', 'creditos_hipotecarios.ver'];
+            }
+
+            if (in_array($roleName, self::COBRANZAS_ROLES, true)) {
+                $permissions = [...$permissions, ...self::COBRANZAS_PERMISSIONS];
             }
 
             Role::where('name', $roleName)->firstOrFail()->syncPermissions($permissions);

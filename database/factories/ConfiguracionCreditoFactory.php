@@ -31,6 +31,7 @@ class ConfiguracionCreditoFactory extends Factory
             'dias_minimo_interes' => 15,
             'tasa_mora_diaria' => fake()->randomFloat(2, 0.5, 2),
             'max_refrendos' => null,
+            'max_cuotas' => 1,
         ];
     }
 

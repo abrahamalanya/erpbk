@@ -36,6 +36,9 @@ class UpdateConfiguracionCreditoRequest extends FormRequest
             'dias_minimo_interes' => ['required', 'integer', 'min:0'],
             'tasa_mora_diaria' => ['required', 'numeric', 'min:0'],
             'max_refrendos' => ['nullable', 'integer', 'min:0'],
+            // Opcional: si no viene, la config conserva su valor actual (o el
+            // default 1 al crearse). El formulario de configuración sí lo envía.
+            'max_cuotas' => ['sometimes', 'integer', 'min:1'],
         ];
     }
 }

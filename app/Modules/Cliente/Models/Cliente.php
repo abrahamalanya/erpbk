@@ -11,6 +11,7 @@ use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Support\Facades\Storage;
 
 class Cliente extends Model
@@ -32,8 +33,15 @@ class Cliente extends Model
         'apellido',
         'tipo_documento',
         'numero_documento',
+        'fecha_nacimiento',
+        'sexo',
+        'estado_civil',
+        'email',
         'telefono',
         'direccion',
+        'distrito',
+        'provincia',
+        'departamento',
         'referencia',
         'foto_cliente_path',
         'foto_dni_path',
@@ -46,7 +54,28 @@ class Cliente extends Model
     /**
      * @var list<string>
      */
-    protected $appends = ['foto_cliente_url', 'foto_dni_url', 'foto_dni_reverso_url', 'foto_casa_url', 'foto_negocio_url'];
+    protected $appends = ['foto_cliente_url', 'foto_dni_url', 'foto_dni_reverso_url', 'foto_casa_url', 'foto_negocio_url', 'edad'];
+
+    /**
+     * @return array<string, string>
+     */
+    protected function casts(): array
+    {
+        return ['fecha_nacimiento' => 'date'];
+    }
+
+    /** Edad en años cumplidos a partir de fecha_nacimiento. */
+    protected function edad(): Attribute
+    {
+        return Attribute::get(fn (): ?int => $this->fecha_nacimiento
+            ? (int) abs($this->fecha_nacimiento->diffInYears(now()))
+            : null);
+    }
+
+    public function fichaSocioeconomica(): HasOne
+    {
+        return $this->hasOne(FichaSocioeconomica::class);
+    }
 
     public function empresa(): BelongsTo
     {

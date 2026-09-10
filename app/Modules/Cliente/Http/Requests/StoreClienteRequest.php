@@ -37,8 +37,15 @@ class StoreClienteRequest extends FormRequest
                     fn ($query) => $query->where('empresa_id', $actor->hasRole('sistemas') ? $this->input('empresa_id') : $actor->empresa_id)
                 ),
             ],
+            'fecha_nacimiento' => ['nullable', 'date'],
+            'sexo' => ['nullable', Rule::in(['m', 'f'])],
+            'estado_civil' => ['nullable', 'string', 'max:50'],
+            'email' => ['nullable', 'email', 'max:255'],
             'telefono' => ['nullable', 'string', 'max:20'],
             'direccion' => ['nullable', 'string', 'max:255'],
+            'distrito' => ['nullable', 'string', 'max:120'],
+            'provincia' => ['nullable', 'string', 'max:120'],
+            'departamento' => ['nullable', 'string', 'max:120'],
             'referencia' => ['nullable', 'string', 'max:500'],
             'empresa_id' => [
                 Rule::requiredIf(fn (): bool => $actor->hasRole('sistemas')),

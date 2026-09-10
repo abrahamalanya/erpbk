@@ -6,6 +6,7 @@ use App\Modules\Caja\Events\CajaActualizada;
 use App\Modules\Caja\Models\Caja;
 use App\Modules\Caja\Models\CajaCiclo;
 use App\Modules\Caja\Models\CajaMovimiento;
+use App\Modules\Cobranza\Models\Cobro;
 use App\Modules\Credito\Events\CreditoActualizado;
 use App\Modules\Credito\Models\Credito;
 use App\Modules\Credito\Models\CuotaCredito;
@@ -92,7 +93,7 @@ final class CreditoService
 
     /**
      * @param  Collection<int, Model>  $garantias  Bien / Vehiculo / Inmueble instances (all of the tipo's garantiaModelo)
-     * @param  array{monto_prestamo: string, interes?: string, interes_solicitud_especial?: bool, motivo_interes?: string, tipo_cuota: string, supervisado_por?: int}  $datos
+     * @param  array{monto_prestamo: string, interes?: string, interes_solicitud_especial?: bool, motivo_interes?: string, tipo_cuota: string, numero_cuotas?: int|null, supervisado_por?: int}  $datos
      */
     public function registrar(User $actor, Collection $garantias, array $datos, string $tipoClave = 'prendario'): Credito
     {
@@ -146,7 +147,28 @@ final class CreditoService
             throw new DomainException('Debes explicar el motivo cuando la tasa de interés difiere de la configurada por defecto.');
         }
 
-        return DB::transaction(function () use ($actor, $garantiaIds, $primera, $datos, $configuracion, $tipo, $tipoClave, $modeloGarantia): Credito {
+        // Número de cuotas: opcional y solo aplica cuando la config del tipo
+        // permite más de una (vehicular / hipotecario). Si el asesor no lo
+        // elige — o el tipo no lo permite — queda null: el crédito conserva el
+        // plazo de la config y al desembolsar cae al default por tipo_cuota
+        // (CUOTAS_POR_TIPO), comportamiento clásico de prendario. Si lo elige,
+        // el plazo se deriva de él (n × período) ya desde el registro para que
+        // el contrato refleje el plazo real.
+        $numeroCuotas = null;
+
+        if ($configuracion->max_cuotas > 1 && isset($datos['numero_cuotas']) && $datos['numero_cuotas'] !== null) {
+            $numeroCuotas = (int) $datos['numero_cuotas'];
+
+            if ($numeroCuotas < 1 || $numeroCuotas > $configuracion->max_cuotas) {
+                throw new DomainException("El número de cuotas debe estar entre 1 y {$configuracion->max_cuotas} para este tipo de crédito.");
+            }
+        }
+
+        $plazoDias = $numeroCuotas !== null
+            ? self::DIAS_POR_PERIODO[$datos['tipo_cuota']] * $numeroCuotas
+            : $configuracion->plazo_dias;
+
+        return DB::transaction(function () use ($actor, $garantiaIds, $primera, $datos, $configuracion, $tipo, $tipoClave, $modeloGarantia, $numeroCuotas, $plazoDias): Credito {
             $interesPersonalizado = $datos['interes'] ?? null;
 
             $credito = Credito::query()->create([
@@ -161,7 +183,8 @@ final class CreditoService
                 'interes_solicitud_especial' => $interesPersonalizado !== null && ($datos['interes_solicitud_especial'] ?? false),
                 'motivo_interes' => $interesPersonalizado !== null ? ($datos['motivo_interes'] ?? null) : null,
                 'tipo_cuota' => $datos['tipo_cuota'],
-                'plazo_dias' => $configuracion->plazo_dias,
+                'numero_cuotas' => $numeroCuotas,
+                'plazo_dias' => $plazoDias,
                 'estado' => 'pendiente',
                 ...$tipo->atributosExtra($datos),
             ]);
@@ -179,6 +202,13 @@ final class CreditoService
 
             if ($tipoClave === 'vehicular') {
                 $this->documentos->generarRecepcionVehiculos($credito, $actor);
+            }
+
+            if ($tipoClave === 'hipotecario') {
+                $this->documentos->generarFichaSocioeconomica($credito, $actor);
+                $this->documentos->generarNotificacionPago($credito, $actor);
+                $this->documentos->generarAvisoPrejudicial($credito, $actor);
+                $this->documentos->generarExpediente($credito, $actor);
             }
 
             $credito = $credito->fresh(['bienes']);
@@ -337,21 +367,19 @@ final class CreditoService
     }
 
     /**
-     * Corrige la fecha de desembolso de un crédito ya desembolsado —
-     * pensado para regularizar créditos migrados de otro sistema (el
-     * desembolso "real" fue en el pasado, pero se registra hoy en umax).
+     * Fija / corrige la fecha de desembolso de un crédito.
      *
-     * Solo desplaza fechas: plazo_dias y tipo_cuota no cambian, así que
-     * fecha_vencimiento y cada cuotas.fecha_vencimiento se recalculan con
-     * la misma fórmula que generarCronograma() usó, sin tocar los montos
-     * de capital/interés/total de ninguna cuota.
-     *
-     * Restringido a estado activo/vencido — el mismo guard que
-     * refrendar()/adendar()/liquidar() usan para "aún no se hizo nada
-     * después del desembolso": en cuanto cualquiera de esas operaciones
-     * corre, el crédito sale de ['activo', 'vencido'] y esta edición deja
-     * de estar disponible (evita dejar un refrendo/liquidación ya
-     * calculado sobre el cronograma viejo inconsistente con el nuevo).
+     * - Si el crédito **aún no se desembolsó** (pendiente / aprobado): solo
+     *   deja anotada la fecha; no hay cuotas ni fecha_vencimiento que tocar.
+     *   Al desembolsar, si no se envía una fecha explícita, desembolsar()
+     *   toma esta como fecha del cronograma (desembolso retroactivo ya
+     *   planificado).
+     * - Si el crédito **ya se desembolsó** (activo / vencido): desplaza
+     *   fecha_vencimiento y el vencimiento de cada cuota con la misma fórmula
+     *   de generarCronograma(), sin tocar los montos. En cuanto corre un
+     *   refrendo/adenda/liquidación el crédito sale de ['activo','vencido']
+     *   y esta edición deja de estar disponible (evita cronogramas
+     *   inconsistentes).
      *
      * El movimiento de caja del desembolso NO se re-fecha (confirmado
      * explícitamente con el usuario): queda con la fecha real en que se
@@ -359,23 +387,29 @@ final class CreditoService
      */
     public function actualizarFechaDesembolso(Credito $credito, User $actor, string $fecha): Credito
     {
-        if (! in_array($credito->estado, ['activo', 'vencido'], true)) {
-            throw new DomainException('Solo se puede editar la fecha de desembolso de un crédito activo o vencido.');
+        if (! in_array($credito->estado, ['pendiente', 'aprobado', 'activo', 'vencido'], true)) {
+            throw new DomainException('Solo se puede fijar la fecha de desembolso mientras el crédito está pendiente, aprobado, activo o vencido.');
         }
 
         $nuevaFecha = Carbon::parse($fecha)->startOfDay();
         $diasPorCuota = self::DIAS_POR_PERIODO[$credito->tipo_cuota];
+        $yaDesembolsado = $credito->cuotas()->exists();
 
-        return DB::transaction(function () use ($credito, $nuevaFecha, $diasPorCuota): Credito {
-            $credito->update([
-                'fecha_desembolso' => $nuevaFecha->toDateString(),
-                'fecha_vencimiento' => $nuevaFecha->copy()->addDays($credito->plazo_dias)->toDateString(),
-            ]);
-
-            foreach ($credito->cuotas as $cuota) {
-                $cuota->update([
-                    'fecha_vencimiento' => $nuevaFecha->copy()->addDays($diasPorCuota * $cuota->numero_cuota)->toDateString(),
+        return DB::transaction(function () use ($credito, $nuevaFecha, $diasPorCuota, $yaDesembolsado): Credito {
+            if (! $yaDesembolsado) {
+                // Aún sin desembolsar: solo se anota la fecha planificada.
+                $credito->update(['fecha_desembolso' => $nuevaFecha->toDateString()]);
+            } else {
+                $credito->update([
+                    'fecha_desembolso' => $nuevaFecha->toDateString(),
+                    'fecha_vencimiento' => $nuevaFecha->copy()->addDays($credito->plazo_dias)->toDateString(),
                 ]);
+
+                foreach ($credito->cuotas as $cuota) {
+                    $cuota->update([
+                        'fecha_vencimiento' => $nuevaFecha->copy()->addDays($diasPorCuota * $cuota->numero_cuota)->toDateString(),
+                    ]);
+                }
             }
 
             $credito = $credito->fresh(['cuotas']);
@@ -442,11 +476,15 @@ final class CreditoService
                 $credito->update(['interes' => $interes]);
             }
 
-            $n = $numeroCuotas ?? self::CUOTAS_POR_TIPO[$credito->tipo_cuota];
+            $n = $numeroCuotas ?? $credito->numero_cuotas ?? self::CUOTAS_POR_TIPO[$credito->tipo_cuota];
             $diasPorCuota = self::DIAS_POR_PERIODO[$credito->tipo_cuota];
             $plazoTotal = $diasPorCuota * $n;
 
-            $fechaDesembolso = $fecha !== null ? Carbon::parse($fecha)->startOfDay() : now()->startOfDay();
+            // Prioridad: fecha explícita del formulario → fecha planificada ya
+            // anotada en el crédito (actualizarFechaDesembolso en pendiente) → hoy.
+            $fechaDesembolso = $fecha !== null
+                ? Carbon::parse($fecha)->startOfDay()
+                : ($credito->fecha_desembolso?->copy()->startOfDay() ?? now()->startOfDay());
 
             $credito->update([
                 'estado' => 'activo',
@@ -672,9 +710,20 @@ final class CreditoService
             $this->documentos->generarFotos($nuevo, $actor);
             $this->documentos->generarSticker($nuevo, $actor);
 
+            if ($credito->tipo_credito === 'hipotecario') {
+                $this->documentos->generarFichaSocioeconomica($nuevo, $actor);
+                $this->documentos->generarNotificacionPago($nuevo, $actor);
+                $this->documentos->generarAvisoPrejudicial($nuevo, $actor);
+                $this->documentos->generarExpediente($nuevo, $actor);
+            }
+
             $nuevo = $nuevo->fresh(['bienes']);
             $this->generarCronograma($nuevo, $n, $diasPorCuota);
-            $this->registrarCobroEnCaja($ciclo, $actor, $montoPagado, $medio, $comprobante, "Refrendo de crédito prendario #{$credito->id}");
+            $this->registrarCobroEnCaja($ciclo, $actor, $credito, $montoPagado, $medio, $comprobante, "Refrendo de crédito prendario #{$credito->id}", [
+                'operacion' => 'refrendo',
+                'interes' => $interes,
+                'credito_sucesor_id' => $nuevo->id,
+            ]);
 
             $this->documentos->generarVoucherPago($credito, $actor, [
                 'operacion' => 'refrendo',
@@ -778,8 +827,19 @@ final class CreditoService
             $this->documentos->generarFotos($nuevo, $actor);
             $this->documentos->generarSticker($nuevo, $actor);
 
+            if ($credito->tipo_credito === 'hipotecario') {
+                $this->documentos->generarFichaSocioeconomica($nuevo, $actor);
+                $this->documentos->generarNotificacionPago($nuevo, $actor);
+                $this->documentos->generarAvisoPrejudicial($nuevo, $actor);
+                $this->documentos->generarExpediente($nuevo, $actor);
+            }
+
             $nuevo = $nuevo->fresh(['bienes']);
-            $this->registrarCobroEnCaja($ciclo, $actor, $montoPagado, $medio, $comprobante, "Adenda de crédito prendario #{$credito->id}");
+            $this->registrarCobroEnCaja($ciclo, $actor, $credito, $montoPagado, $medio, $comprobante, "Adenda de crédito prendario #{$credito->id}", [
+                'operacion' => 'adenda',
+                'interes' => $interes,
+                'credito_sucesor_id' => $nuevo->id,
+            ]);
 
             $this->documentos->generarVoucherPago($credito, $actor, [
                 'operacion' => 'adenda',
@@ -827,7 +887,12 @@ final class CreditoService
             $credito->update(['estado' => 'liquidado_pendiente']);
 
             $credito = $credito->fresh(['bienes']);
-            $this->registrarCobroEnCaja($ciclo, $actor, $montoPagado, $medio, $comprobante, "Liquidación de crédito prendario #{$credito->id}");
+            $this->registrarCobroEnCaja($ciclo, $actor, $credito, $montoPagado, $medio, $comprobante, "Liquidación de crédito prendario #{$credito->id}", [
+                'operacion' => 'liquidacion',
+                'interes' => $liquidacion['interes'],
+                'mora' => $liquidacion['mora'],
+                'vuelto' => bcsub($montoPagado, $liquidacion['total'], 2),
+            ]);
             $this->documentos->generarDevolucion($credito, $actor);
 
             $this->documentos->generarVoucherPago($credito, $actor, [
@@ -1196,14 +1261,22 @@ final class CreditoService
      * @see resolverCicloParaCobro() — crea el ingreso ya dentro de la misma
      * transacción que cambia el estado del crédito, para que ambos queden
      * atómicos (o se registra el cobro Y se actualiza el crédito, o ninguno).
+     *
+     * Además deja una fila en `cobros` (historial de auditoría que consume el
+     * módulo Cobranzas). Todo pago sobre un crédito — refrendo, adenda o
+     * liquidación — pasa por aquí, así que es el único punto de escritura.
+     *
+     * @param  array{operacion: string, interes: string, mora?: string|null, vuelto?: string, credito_sucesor_id?: int|null}  $detalleCobro
      */
     private function registrarCobroEnCaja(
         CajaCiclo $ciclo,
         User $actor,
+        Credito $credito,
         string $monto,
         string $medio,
         ?UploadedFile $comprobante,
         string $concepto,
+        array $detalleCobro,
     ): void {
         $movimiento = CajaMovimiento::query()->create([
             'caja_ciclo_id' => $ciclo->id,
@@ -1222,6 +1295,21 @@ final class CreditoService
                 'path' => $comprobante->store("caja-movimientos/{$movimiento->id}", 'public'),
             ]);
         }
+
+        Cobro::query()->create([
+            'empresa_id' => $credito->empresa_id,
+            'cliente_id' => $credito->cliente_id,
+            'credito_id' => $credito->id,
+            'credito_sucesor_id' => $detalleCobro['credito_sucesor_id'] ?? null,
+            'caja_ciclo_id' => $ciclo->id,
+            'registrado_por' => $actor->id,
+            'operacion' => $detalleCobro['operacion'],
+            'monto_pagado' => $monto,
+            'medio' => $medio,
+            'interes' => $detalleCobro['interes'],
+            'mora' => $detalleCobro['mora'] ?? null,
+            'vuelto' => $detalleCobro['vuelto'] ?? '0.00',
+        ]);
 
         CajaActualizada::dispatch($ciclo->caja, $ciclo->fresh()->saldoActual());
     }

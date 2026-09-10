@@ -5,8 +5,11 @@ use App\Modules\Caja\Http\Controllers\BovedaController;
 use App\Modules\Caja\Http\Controllers\CajaController;
 use App\Modules\Caja\Http\Controllers\CuentaBancariaController;
 use App\Modules\Cliente\Http\Controllers\ClienteController;
+use App\Modules\Cliente\Http\Controllers\FichaSocioeconomicaController;
+use App\Modules\Cobranza\Http\Controllers\CobroController;
 use App\Modules\Credito\Http\Controllers\ConfiguracionCreditoController;
 use App\Modules\Credito\Http\Controllers\CreditoController;
+use App\Modules\Credito\Http\Controllers\CreditoExpedienteController;
 use App\Modules\CreditoHipotecario\Http\Controllers\CreditoHipotecarioController;
 use App\Modules\CreditoHipotecario\Http\Controllers\InmuebleController;
 use App\Modules\CreditoPrendario\Http\Controllers\BienController;
@@ -67,6 +70,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('clientes', ClienteController::class);
     Route::post('clientes/{cliente}/asignar', [ClienteController::class, 'asignar'])->name('clientes.asignar');
     Route::get('clientes/consultar-dni/{dni}', [ClienteController::class, 'consultarDni'])->name('clientes.consultar-dni');
+    Route::get('clientes/{cliente}/ficha-socioeconomica', [FichaSocioeconomicaController::class, 'show'])->name('clientes.ficha-socioeconomica.show');
+    Route::put('clientes/{cliente}/ficha-socioeconomica', [FichaSocioeconomicaController::class, 'update'])->name('clientes.ficha-socioeconomica.update');
 
     Route::get('caja', [CajaController::class, 'miCaja'])->name('caja.mia');
     Route::post('caja/aperturar', [CajaController::class, 'aperturar'])->name('caja.aperturar');
@@ -130,12 +135,18 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('creditos-prendarios/{credito}/enviar-tienda', [CreditoController::class, 'enviarATienda'])->name('creditos-prendarios.enviar-tienda');
     Route::post('creditos-prendarios/{credito}/conformidad', [CreditoController::class, 'confirmarConformidad'])->name('creditos-prendarios.conformidad');
     Route::get('creditos-prendarios/{credito}/cronograma/ver', [CreditoController::class, 'verCronograma'])->name('creditos-prendarios.cronograma.ver');
+    Route::get('creditos-prendarios/{credito}/expediente', [CreditoExpedienteController::class, 'index'])->name('creditos-prendarios.expediente.index');
+    Route::post('creditos-prendarios/{credito}/expediente', [CreditoExpedienteController::class, 'store'])->name('creditos-prendarios.expediente.store');
+    Route::delete('creditos-prendarios/{credito}/expediente/{documento}', [CreditoExpedienteController::class, 'destroy'])->name('creditos-prendarios.expediente.destroy');
     Route::get('creditos-prendarios/{credito}/documentos/{documento}/ver', [CreditoController::class, 'verDocumento'])->name('creditos-prendarios.documentos.ver');
     Route::post('creditos-prendarios/{credito}/documentos/{documento}/marcar-impreso', [CreditoController::class, 'marcarImpreso'])->name('creditos-prendarios.documentos.marcar-impreso');
     Route::post('creditos-prendarios/{credito}/documentos/{documento}/subir-firmado', [CreditoController::class, 'subirDocumentoFirmado'])->name('creditos-prendarios.documentos.subir-firmado');
 
     Route::get('configuraciones-credito-prendario', [ConfiguracionCreditoController::class, 'index'])->name('configuraciones-credito-prendario.index');
     Route::put('configuraciones-credito-prendario', [ConfiguracionCreditoController::class, 'update'])->name('configuraciones-credito-prendario.update');
+
+    Route::get('cobros', [CobroController::class, 'index'])->name('cobros.index');
+    Route::get('cobros/creditos-pendientes/{cliente}', [CobroController::class, 'creditosPendientes'])->name('cobros.creditos-pendientes');
 
     Route::get('reportes/movimientos-dinero', [ReporteMovimientosController::class, 'movimientosDinero'])->name('reportes.movimientos-dinero');
 });

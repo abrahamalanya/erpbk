@@ -2,12 +2,15 @@
 
 namespace App\Modules\CreditoVehicular\Http\Requests;
 
+use App\Modules\Credito\Http\Requests\Concerns\ValidaNumeroCuotas;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
 class StoreCreditoVehicularRequest extends FormRequest
 {
+    use ValidaNumeroCuotas;
+
     public function authorize(): bool
     {
         return true;
@@ -27,6 +30,7 @@ class StoreCreditoVehicularRequest extends FormRequest
             'interes_solicitud_especial' => ['sometimes', 'boolean'],
             'motivo_interes' => ['nullable', 'string', 'max:255'],
             'tipo_cuota' => ['required', Rule::in(['diario', 'semanal', 'quincenal', 'mensual'])],
+            'numero_cuotas' => $this->reglasNumeroCuotas('vehicular'),
         ];
     }
 

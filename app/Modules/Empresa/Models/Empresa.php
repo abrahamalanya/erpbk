@@ -28,6 +28,8 @@ class Empresa extends Model
         'domicilio_legal',
         'actividad_economica',
         'representante_legal',
+        'apoderado_legal',
+        'celular_cobranzas',
         'logo_path',
         'firma_path',
         'estado',

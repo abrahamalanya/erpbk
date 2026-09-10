@@ -95,23 +95,56 @@ it('lets an admin correct the fecha de desembolso of an activo crédito and shif
     expect($credito->cuotas->pluck('monto_total', 'numero_cuota')->all())->toBe($montosOriginales->all());
 });
 
-it('denies editing the fecha de desembolso while pendiente or aprobado', function () {
+it('lets an admin fix the fecha de desembolso while pendiente, without touching cuotas', function () {
     Sanctum::actingAs($this->asesor, ['*']);
     $creditoId = $this->postJson('/api/creditos-prendarios', [
         'bien_ids' => [$this->bien->id],
-        'monto_prestamo' => 500, 'tipo_cuota' => 'mensual',
+        'monto_prestamo' => 500, 'tipo_cuota' => 'semanal',
     ])->assertCreated()->json('data.id');
+
+    $fecha = now()->subDays(10)->toDateString();
 
     Sanctum::actingAs($this->adminAgencia, ['*']);
     $this->postJson("/api/creditos-prendarios/{$creditoId}/actualizar-fecha-desembolso", [
-        'fecha_desembolso' => now()->subDays(10)->toDateString(),
-    ])->assertUnprocessable();
+        'fecha_desembolso' => $fecha,
+    ])->assertSuccessful();
 
+    $credito = Credito::find($creditoId);
+    expect($credito->fecha_desembolso->toDateString())->toBe($fecha)
+        ->and($credito->fecha_vencimiento)->toBeNull()
+        ->and($credito->cuotas()->exists())->toBeFalse()
+        ->and($credito->estado)->toBe('pendiente');
+});
+
+it('desembolsa using the fecha planificada set while pendiente when none is given', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+    $creditoId = $this->postJson('/api/creditos-prendarios', [
+        'bien_ids' => [$this->bien->id],
+        'monto_prestamo' => 500, 'tipo_cuota' => 'semanal',
+    ])->assertCreated()->json('data.id');
+
+    $fecha = now()->subDays(12)->toDateString();
+
+    Sanctum::actingAs($this->adminAgencia, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/actualizar-fecha-desembolso", [
+        'fecha_desembolso' => $fecha,
+    ])->assertSuccessful();
     $this->postJson("/api/creditos-prendarios/{$creditoId}/aprobar")->assertSuccessful();
 
-    $this->postJson("/api/creditos-prendarios/{$creditoId}/actualizar-fecha-desembolso", [
-        'fecha_desembolso' => now()->subDays(10)->toDateString(),
-    ])->assertUnprocessable();
+    Sanctum::actingAs($this->asesor, ['*']);
+    foreach (Credito::find($creditoId)->documentos as $documento) {
+        $this->postJson("/api/creditos-prendarios/{$creditoId}/documentos/{$documento->id}/subir-firmado", [
+            'archivo' => UploadedFile::fake()->create('firmado.pdf', 100, 'application/pdf'),
+        ])->assertSuccessful();
+    }
+
+    // Desembolso SIN enviar fecha: debe tomar la planificada.
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar")->assertSuccessful();
+
+    $credito = Credito::find($creditoId)->load('cuotas');
+    expect($credito->fecha_desembolso->toDateString())->toBe($fecha)
+        ->and($credito->cuotas->first()->fecha_vencimiento->toDateString())
+            ->toBe(now()->subDays(12)->addDays(7)->toDateString());
 });
 
 it('denies editing the fecha de desembolso once the crédito was refrendado', function () {

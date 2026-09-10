@@ -2,12 +2,15 @@
 
 namespace App\Modules\CreditoHipotecario\Http\Requests;
 
+use App\Modules\Credito\Http\Requests\Concerns\ValidaNumeroCuotas;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
 class StoreCreditoHipotecarioRequest extends FormRequest
 {
+    use ValidaNumeroCuotas;
+
     public function authorize(): bool
     {
         return true;
@@ -23,11 +26,13 @@ class StoreCreditoHipotecarioRequest extends FormRequest
             'inmueble_ids.*' => ['integer', 'distinct', 'exists:inmuebles,id'],
             'supervisado_por' => ['required', 'integer', 'exists:users,id'],
             'aval_id' => ['nullable', 'integer', 'exists:clientes,id'],
+            'aval_2_id' => ['nullable', 'integer', 'exists:clientes,id', 'different:aval_id'],
             'monto_prestamo' => ['required', 'numeric', 'min:0.01'],
             'interes' => ['nullable', 'numeric', 'min:0'],
             'interes_solicitud_especial' => ['sometimes', 'boolean'],
             'motivo_interes' => ['nullable', 'string', 'max:255'],
             'tipo_cuota' => ['required', Rule::in(['diario', 'semanal', 'quincenal', 'mensual'])],
+            'numero_cuotas' => $this->reglasNumeroCuotas('hipotecario'),
         ];
     }
 
