@@ -15,9 +15,11 @@ use App\Modules\CreditoHipotecario\Http\Controllers\InmuebleController;
 use App\Modules\CreditoPrendario\Http\Controllers\BienController;
 use App\Modules\CreditoVehicular\Http\Controllers\CreditoVehicularController;
 use App\Modules\CreditoVehicular\Http\Controllers\VehiculoController;
+use App\Modules\Dashboard\Http\Controllers\DashboardController;
 use App\Modules\Empresa\Http\Controllers\AgenciaController;
 use App\Modules\Empresa\Http\Controllers\EmpresaController;
 use App\Modules\Reportes\Http\Controllers\ReporteMovimientosController;
+use App\Modules\Simulador\Http\Controllers\SimuladorController;
 use App\Modules\Sistemas\Http\Controllers\AuthController;
 use App\Modules\Sistemas\Http\Controllers\ConceptoController;
 use App\Modules\Sistemas\Http\Controllers\ConfiguracionSistemaController;
@@ -26,6 +28,7 @@ use App\Modules\Sistemas\Http\Controllers\PermissionController;
 use App\Modules\Sistemas\Http\Controllers\RoleController;
 use App\Modules\Tienda\Http\Controllers\TiendaArticuloController;
 use App\Modules\Tienda\Http\Controllers\TiendaController;
+use App\Modules\Ubigeo\Http\Controllers\UbigeoController;
 use App\Modules\Usuario\Http\Controllers\UserController;
 use App\Nucleo\Http\Controllers\BancoController;
 use Illuminate\Support\Facades\Route;
@@ -67,6 +70,14 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('notificaciones/{notificacion}/marcar-leido', [NotificacionController::class, 'marcarLeido'])->name('notificaciones.marcar-leido');
     Route::post('notificaciones/marcar-todas-leidas', [NotificacionController::class, 'marcarTodasLeidas'])->name('notificaciones.marcar-todas-leidas');
 
+    Route::get('dashboard/mapa-clientes', [DashboardController::class, 'mapaClientes'])->name('dashboard.mapa-clientes');
+
+    Route::get('ubigeo/departamentos', [UbigeoController::class, 'departamentos'])->name('ubigeo.departamentos');
+    Route::get('ubigeo/departamentos/{departamento}/provincias', [UbigeoController::class, 'provincias'])->name('ubigeo.provincias');
+    Route::get('ubigeo/provincias/{provincia}/distritos', [UbigeoController::class, 'distritos'])->name('ubigeo.distritos');
+    Route::get('ubigeo/distritos/{distrito}', [UbigeoController::class, 'distrito'])->name('ubigeo.distrito');
+
+    Route::get('clientes/asesores', [ClienteController::class, 'asesoresParaAsignar'])->name('clientes.asesores');
     Route::apiResource('clientes', ClienteController::class);
     Route::post('clientes/{cliente}/asignar', [ClienteController::class, 'asignar'])->name('clientes.asignar');
     Route::get('clientes/consultar-dni/{dni}', [ClienteController::class, 'consultarDni'])->name('clientes.consultar-dni');
@@ -129,6 +140,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('creditos-prendarios/{credito}/refrendar', [CreditoController::class, 'refrendar'])->name('creditos-prendarios.refrendar');
     Route::post('creditos-prendarios/{credito}/liquidar', [CreditoController::class, 'liquidar'])->name('creditos-prendarios.liquidar');
     Route::post('creditos-prendarios/{credito}/adendar', [CreditoController::class, 'adendar'])->name('creditos-prendarios.adendar');
+    Route::post('creditos-prendarios/{credito}/refinanciar', [CreditoController::class, 'refinanciar'])->name('creditos-prendarios.refinanciar');
     Route::post('creditos-prendarios/{credito}/actualizar-interes', [CreditoController::class, 'actualizarInteres'])->name('creditos-prendarios.actualizar-interes');
     Route::post('creditos-prendarios/{credito}/actualizar-fecha-desembolso', [CreditoController::class, 'actualizarFechaDesembolso'])->name('creditos-prendarios.actualizar-fecha-desembolso');
     Route::post('creditos-prendarios/{credito}/revertir-aprobacion', [CreditoController::class, 'revertirAprobacion'])->name('creditos-prendarios.revertir-aprobacion');
@@ -144,6 +156,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::get('configuraciones-credito-prendario', [ConfiguracionCreditoController::class, 'index'])->name('configuraciones-credito-prendario.index');
     Route::put('configuraciones-credito-prendario', [ConfiguracionCreditoController::class, 'update'])->name('configuraciones-credito-prendario.update');
+
+    Route::apiResource('simulaciones-credito', SimuladorController::class)->only(['index', 'store', 'show', 'destroy'])->parameters(['simulaciones-credito' => 'simulacion']);
 
     Route::get('cobros', [CobroController::class, 'index'])->name('cobros.index');
     Route::get('cobros/creditos-pendientes/{cliente}', [CobroController::class, 'creditosPendientes'])->name('cobros.creditos-pendientes');

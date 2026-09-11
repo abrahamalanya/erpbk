@@ -5,6 +5,7 @@ use App\Modules\Caja\Models\CajaCiclo;
 use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Credito\Models\ConfiguracionCredito;
 use App\Modules\Credito\Models\Credito;
+use App\Modules\Credito\Models\CuotaCredito;
 use App\Modules\Credito\Services\CreditoService;
 use App\Modules\CreditoHipotecario\Models\Inmueble;
 use App\Modules\CreditoPrendario\Models\Bien;
@@ -93,7 +94,10 @@ it('generates the hipotecario-only documentos when registering (ficha + cobranza
     expect($tipos)->toContain('ficha_socioeconomica')
         ->and($tipos)->toContain('notificacion_pago')
         ->and($tipos)->toContain('aviso_prejudicial')
-        ->and($tipos)->toContain('expediente');
+        ->and($tipos)->toContain('expediente')
+        // El sticker se pega sobre un bien/vehículo físico en tienda; un
+        // hipotecario no tiene artículo que etiquetar.
+        ->and($tipos)->not->toContain('sticker');
 });
 
 it('persists a second aval and returns it in the detail', function () {
@@ -135,7 +139,7 @@ it('rejects a second aval equal to the first', function () {
 });
 
 it('uploads, lists and deletes expediente images and renders the expediente PDF', function () {
-    \Illuminate\Support\Facades\Storage::fake('public');
+    Storage::fake('public');
 
     Sanctum::actingAs($this->asesor, ['*']);
 
@@ -157,8 +161,8 @@ it('uploads, lists and deletes expediente images and renders the expediente PDF'
         'rol' => 'deudor',
         'seccion' => 'terreno',
         'archivos' => [
-            \Illuminate\Http\UploadedFile::fake()->image('t1.jpg', 400, 300),
-            \Illuminate\Http\UploadedFile::fake()->image('t2.jpg', 400, 300),
+            UploadedFile::fake()->image('t1.jpg', 400, 300),
+            UploadedFile::fake()->image('t2.jpg', 400, 300),
         ],
     ])->assertCreated();
 
@@ -170,7 +174,7 @@ it('uploads, lists and deletes expediente images and renders the expediente PDF'
     // Rechaza un PDF (solo imágenes).
     $this->postJson("/api/creditos-prendarios/{$creditoId}/expediente", [
         'rol' => 'deudor', 'seccion' => 'copia_literal',
-        'archivos' => [\Illuminate\Http\UploadedFile::fake()->create('x.pdf', 100, 'application/pdf')],
+        'archivos' => [UploadedFile::fake()->create('x.pdf', 100, 'application/pdf')],
     ])->assertStatus(422);
 
     // Render con fotos.
@@ -197,7 +201,7 @@ it('denies expediente uploads to an asesor who cannot manage the crédito', func
     Sanctum::actingAs($otroAsesor, ['*']);
     $this->postJson("/api/creditos-prendarios/{$creditoId}/expediente", [
         'rol' => 'deudor', 'seccion' => 'terreno',
-        'archivos' => [\Illuminate\Http\UploadedFile::fake()->image('t.jpg')],
+        'archivos' => [UploadedFile::fake()->image('t.jpg')],
     ])->assertForbidden();
 });
 
@@ -225,7 +229,7 @@ it('streams the notificacion_pago and aviso_prejudicial PDFs with the overdue cu
     }
 
     // Con 3 cuotas vencidas (y una futura que NO cuenta): deuda = 3 × 3,200 = 9,600.
-    \App\Modules\Credito\Models\CuotaCredito::factory()->paraCredito($credito)->createMany([
+    CuotaCredito::factory()->paraCredito($credito)->createMany([
         ['numero_cuota' => 1, 'fecha_vencimiento' => now()->subMonths(3)->toDateString(), 'monto_capital' => 3000, 'monto_interes' => 200, 'monto_total' => 3200],
         ['numero_cuota' => 2, 'fecha_vencimiento' => now()->subMonths(2)->toDateString(), 'monto_capital' => 3000, 'monto_interes' => 200, 'monto_total' => 3200],
         ['numero_cuota' => 3, 'fecha_vencimiento' => now()->subMonth()->toDateString(), 'monto_capital' => 3000, 'monto_interes' => 200, 'monto_total' => 3200],

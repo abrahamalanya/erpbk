@@ -27,7 +27,7 @@ class InmuebleController extends Controller
     {
         Gate::authorize('viewAny', Inmueble::class);
 
-        $query = Inmueble::query()->with(['agencia', 'cliente', 'registradoPor', 'fotos']);
+        $query = Inmueble::query()->with(['agencia', 'cliente', 'registradoPor', 'fotos', 'ubigeoDistrito.provincia.departamento']);
         $query = $this->hierarchy->visibleQuery($query, request()->user());
 
         if (request()->filled('cliente_id')) {
@@ -43,10 +43,14 @@ class InmuebleController extends Controller
             $query->where(function (Builder $sub) use ($termino): void {
                 $sub->where('partida_registral', 'like', "%{$termino}%")
                     ->orWhere('direccion', 'like', "%{$termino}%")
-                    ->orWhere('distrito', 'like', "%{$termino}%")
-                    ->orWhere('provincia', 'like', "%{$termino}%")
-                    ->orWhere('departamento', 'like', "%{$termino}%")
-                    ->orWhere('codigo', 'like', "%{$termino}%");
+                    ->orWhere('codigo', 'like', "%{$termino}%")
+                    ->orWhereHas('ubigeoDistrito', function (Builder $ubigeo) use ($termino): void {
+                        $ubigeo->where('nombre', 'like', "%{$termino}%")
+                            ->orWhereHas('provincia', function (Builder $provincia) use ($termino): void {
+                                $provincia->where('nombre', 'like', "%{$termino}%")
+                                    ->orWhereHas('departamento', fn (Builder $d) => $d->where('nombre', 'like', "%{$termino}%"));
+                            });
+                    });
             });
         }
 
@@ -86,9 +90,7 @@ class InmuebleController extends Controller
             'oficina_registral' => $data['oficina_registral'] ?? null,
             'tipo_inmueble' => $data['tipo_inmueble'] ?? null,
             'direccion' => $data['direccion'],
-            'distrito' => $data['distrito'] ?? null,
-            'provincia' => $data['provincia'] ?? null,
-            'departamento' => $data['departamento'] ?? null,
+            'ubigeo_distrito_id' => $data['ubigeo_distrito_id'] ?? null,
             'area_terreno' => $data['area_terreno'] ?? null,
             'area_construida' => $data['area_construida'] ?? null,
             'propietario' => $data['propietario'],
@@ -119,14 +121,14 @@ class InmuebleController extends Controller
             ]);
         }
 
-        return $this->successResponse($inmueble->fresh(['fotos']), 'Inmueble registrado', 201);
+        return $this->successResponse($inmueble->fresh(['fotos', 'ubigeoDistrito.provincia.departamento']), 'Inmueble registrado', 201);
     }
 
     public function show(Inmueble $inmueble): JsonResponse
     {
         Gate::authorize('view', $inmueble);
 
-        return $this->successResponse($inmueble->load(['agencia', 'cliente', 'registradoPor', 'fotos', 'creditos']));
+        return $this->successResponse($inmueble->load(['agencia', 'cliente', 'registradoPor', 'fotos', 'creditos', 'ubigeoDistrito.provincia.departamento']));
     }
 
     public function update(UpdateInmuebleRequest $request, Inmueble $inmueble): JsonResponse
@@ -144,9 +146,7 @@ class InmuebleController extends Controller
             'oficina_registral' => $data['oficina_registral'] ?? null,
             'tipo_inmueble' => $data['tipo_inmueble'] ?? null,
             'direccion' => $data['direccion'],
-            'distrito' => $data['distrito'] ?? null,
-            'provincia' => $data['provincia'] ?? null,
-            'departamento' => $data['departamento'] ?? null,
+            'ubigeo_distrito_id' => $data['ubigeo_distrito_id'] ?? null,
             'area_terreno' => $data['area_terreno'] ?? null,
             'area_construida' => $data['area_construida'] ?? null,
             'propietario' => $data['propietario'],
@@ -184,6 +184,6 @@ class InmuebleController extends Controller
             ]);
         }
 
-        return $this->successResponse($inmueble->fresh(['fotos']), 'Inmueble actualizado');
+        return $this->successResponse($inmueble->fresh(['fotos', 'ubigeoDistrito.provincia.departamento']), 'Inmueble actualizado');
     }
 }

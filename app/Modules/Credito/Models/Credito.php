@@ -47,6 +47,7 @@ class Credito extends Model
         'refrendo_de_credito_id',
         'numero_refrendo',
         'adenda_de_credito_id',
+        'refinanciamiento_de_credito_id',
         'monto_prestamo',
         'interes',
         'interes_solicitud_especial',
@@ -182,6 +183,16 @@ class Credito extends Model
         return $this->hasMany(self::class, 'adenda_de_credito_id');
     }
 
+    public function refinanciamientoDe(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'refinanciamiento_de_credito_id');
+    }
+
+    public function refinanciamientos(): HasMany
+    {
+        return $this->hasMany(self::class, 'refinanciamiento_de_credito_id');
+    }
+
     public function documentos(): HasMany
     {
         return $this->hasMany(DocumentoCredito::class, 'credito_id');
@@ -199,7 +210,18 @@ class Credito extends Model
                 return 0;
             }
 
-            return max(0, (int) $this->fecha_vencimiento->copy()->startOfDay()->diffInDays(now()->startOfDay()));
+            $vencimiento = $this->fecha_vencimiento->copy()->startOfDay();
+            $hoy = now()->startOfDay();
+
+            // diffInDays() por defecto es absoluto: si fecha_vencimiento se
+            // corrigió hacia el futuro (actualizarFechaDesembolso) sin que el
+            // estado se haya revertido todavía, un vencimiento futuro daría
+            // días de mora positivos en vez de 0.
+            if ($vencimiento->gte($hoy)) {
+                return 0;
+            }
+
+            return (int) $vencimiento->diffInDays($hoy);
         });
     }
 

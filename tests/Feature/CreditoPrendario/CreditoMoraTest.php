@@ -3,6 +3,7 @@
 use App\Modules\Caja\Models\Caja;
 use App\Modules\Caja\Models\CajaCiclo;
 use App\Modules\Cliente\Models\Cliente;
+use App\Modules\Cobranza\Models\Cobro;
 use App\Modules\Credito\Models\ConfiguracionCredito;
 use App\Modules\Credito\Models\Credito;
 use App\Modules\Credito\Services\CreditoService;
@@ -95,4 +96,115 @@ it('liquida un crédito vencido cuando el monto pagado sí cubre capital + inter
     ])->assertSuccessful();
 
     expect($credito->fresh()->estado)->toBe('liquidado_pendiente');
+});
+
+it('exige pagar también la mora al refrendar un crédito vencido, no solo el interés', function () {
+    $credito = Credito::factory()->paraBien($this->bien)->vencido(10)->create([
+        'monto_prestamo' => 1000, 'interes' => 15,
+        'registrado_por' => $this->asesor->id, 'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id,
+    ]);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $sugerido = $this->getJson("/api/creditos-prendarios/{$credito->id}")->json('data.monto_refrendo_sugerido');
+
+    expect($sugerido['mora'])->toBe('5.00')
+        ->and($sugerido['total'])->toBe(bcadd($sugerido['interes'], '5.00', 2));
+
+    // Pagar solo el interés (sin la mora) ya no alcanza.
+    $this->postJson("/api/creditos-prendarios/{$credito->id}/refrendar", [
+        'monto_pagado' => $sugerido['interes'], 'medio' => 'efectivo',
+    ])->assertUnprocessable();
+
+    $this->postJson("/api/creditos-prendarios/{$credito->id}/refrendar", [
+        'monto_pagado' => $sugerido['total'], 'medio' => 'efectivo',
+    ])->assertCreated();
+});
+
+it('exige pagar también la mora al adendar un crédito vencido, no solo el interés', function () {
+    $credito = Credito::factory()->paraBien($this->bien)->vencido(10)->create([
+        'monto_prestamo' => 1000, 'interes' => 15,
+        'registrado_por' => $this->asesor->id, 'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id,
+    ]);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $sugerido = app(CreditoService::class)->calcularMontoRefrendo($credito->fresh());
+
+    $this->postJson("/api/creditos-prendarios/{$credito->id}/adendar", [
+        'monto_pagado' => $sugerido['interes'], 'medio' => 'efectivo',
+    ])->assertUnprocessable();
+
+    $this->postJson("/api/creditos-prendarios/{$credito->id}/adendar", [
+        'monto_pagado' => $sugerido['total'], 'medio' => 'efectivo',
+    ])->assertCreated();
+});
+
+it('requiere un motivo cuando se aplica un descuento al liquidar', function () {
+    $credito = Credito::factory()->paraBien($this->bien)->vencido(10)->create([
+        'monto_prestamo' => 1000, 'interes' => 15,
+        'registrado_por' => $this->asesor->id, 'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id,
+    ]);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $total = $this->getJson("/api/creditos-prendarios/{$credito->id}")->json('data.monto_liquidacion_sugerido.total');
+
+    $this->postJson("/api/creditos-prendarios/{$credito->id}/liquidar", [
+        'monto_pagado' => bcsub($total, '5', 2), 'medio' => 'efectivo', 'descuento' => 5,
+    ])->assertUnprocessable()->assertJsonValidationErrors('motivo_descuento');
+});
+
+it('rechaza un descuento mayor al monto que se está cobrando', function () {
+    $credito = Credito::factory()->paraBien($this->bien)->vencido(10)->create([
+        'monto_prestamo' => 1000, 'interes' => 15,
+        'registrado_por' => $this->asesor->id, 'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id,
+    ]);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $this->postJson("/api/creditos-prendarios/{$credito->id}/liquidar", [
+        'monto_pagado' => 1, 'medio' => 'efectivo', 'descuento' => 99999, 'motivo_descuento' => 'cliente frecuente',
+    ])->assertUnprocessable();
+});
+
+it('aplica un descuento sobre el total a liquidar y lo deja auditado en el cobro', function () {
+    $credito = Credito::factory()->paraBien($this->bien)->vencido(10)->create([
+        'monto_prestamo' => 1000, 'interes' => 15,
+        'registrado_por' => $this->asesor->id, 'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id,
+    ]);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $total = $this->getJson("/api/creditos-prendarios/{$credito->id}")->json('data.monto_liquidacion_sugerido.total');
+    $totalConDescuento = bcsub($total, '5', 2);
+
+    $this->postJson("/api/creditos-prendarios/{$credito->id}/liquidar", [
+        'monto_pagado' => $totalConDescuento, 'medio' => 'efectivo',
+        'descuento' => 5, 'motivo_descuento' => 'cliente frecuente',
+    ])->assertSuccessful();
+
+    expect($credito->fresh()->estado)->toBe('liquidado_pendiente');
+
+    $cobro = Cobro::query()->where('credito_id', $credito->id)->latest()->first();
+    expect((string) $cobro->descuento)->toBe('5.00')
+        ->and($cobro->motivo_descuento)->toBe('cliente frecuente')
+        ->and((string) $cobro->vuelto)->toBe('0.00');
+});
+
+it('aplica un descuento al refrendar, reduciendo el mínimo exigido de interés + mora', function () {
+    $credito = Credito::factory()->paraBien($this->bien)->vencido(10)->create([
+        'monto_prestamo' => 1000, 'interes' => 15,
+        'registrado_por' => $this->asesor->id, 'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id,
+    ]);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $sugerido = $this->getJson("/api/creditos-prendarios/{$credito->id}")->json('data.monto_refrendo_sugerido');
+    $minimoConDescuento = bcsub($sugerido['total'], '5', 2);
+
+    // Sin el descuento, este monto sería insuficiente (falta cubrir la mora completa).
+    $this->postJson("/api/creditos-prendarios/{$credito->id}/refrendar", [
+        'monto_pagado' => $minimoConDescuento, 'medio' => 'efectivo',
+        'descuento' => 5, 'motivo_descuento' => 'condonación de mora',
+    ])->assertCreated();
+
+    $cobro = Cobro::query()->where('credito_id', $credito->id)->latest()->first();
+    expect((string) $cobro->descuento)->toBe('5.00')
+        ->and($cobro->motivo_descuento)->toBe('condonación de mora');
 });

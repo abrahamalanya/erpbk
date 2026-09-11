@@ -7,6 +7,7 @@ use App\Modules\Cliente\Http\Requests\StoreClienteRequest;
 use App\Modules\Cliente\Http\Requests\UpdateClienteRequest;
 use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Cliente\Services\ClienteHierarchyService;
+use App\Modules\Usuario\Models\User;
 use App\Nucleo\Http\Controllers\Controller;
 use App\Nucleo\Services\ConsultaDniService;
 use App\Nucleo\Traits\ApiResponse;
@@ -32,11 +33,45 @@ class ClienteController extends Controller
         return $this->successResponse($this->consultaDni->consultar($dni));
     }
 
+    /**
+     * Asesores elegibles para el diálogo "Asignar cliente", acotados a una
+     * agencia — administrador_general elige entre las de su empresa;
+     * administrador_agencia/supervisor quedan fijos a la suya propia
+     * (resolveAgenciaId ignora cualquier agencia_id que manden). Un
+     * supervisor además solo ve a sus propios subordinados, igual que
+     * ClientePolicy::asignar().
+     */
+    public function asesoresParaAsignar(): JsonResponse
+    {
+        $actor = request()->user();
+
+        abort_unless($actor->can('clientes.asignar'), 403);
+
+        $agenciaId = $this->hierarchy->resolveAgenciaId($actor, request()->integer('agencia_id') ?: null);
+
+        if (! $agenciaId) {
+            return $this->successResponse([]);
+        }
+
+        $query = User::role('asesor')
+            ->where('agencia_id', $agenciaId)
+            ->where('estado', 'activo');
+
+        if ($actor->hasRole('supervisor')) {
+            $query->where('supervisor_id', $actor->id);
+        }
+
+        return $this->successResponse($query->orderBy('nombre')->get(['id', 'nombre', 'apellido', 'agencia_id', 'supervisor_id']));
+    }
+
     public function index(): JsonResponse
     {
         Gate::authorize('viewAny', Cliente::class);
 
-        $query = Cliente::query()->with(['agencia', 'asesor', 'registradoPor']);
+        $query = Cliente::query()->with([
+            'agencia', 'asesor', 'registradoPor',
+            'ubigeoDistrito.provincia.departamento', 'ubigeoDistritoNegocio.provincia.departamento',
+        ]);
         $query = $this->hierarchy->visibleQuery($query, request()->user());
 
         if (request()->filled('q')) {
@@ -87,23 +122,35 @@ class ClienteController extends Controller
             'email' => $data['email'] ?? null,
             'telefono' => $data['telefono'] ?? null,
             'direccion' => $data['direccion'] ?? null,
-            'distrito' => $data['distrito'] ?? null,
-            'provincia' => $data['provincia'] ?? null,
-            'departamento' => $data['departamento'] ?? null,
+            'ubigeo_distrito_id' => $data['ubigeo_distrito_id'] ?? null,
             'referencia' => $data['referencia'] ?? null,
+            'latitud' => $data['latitud'] ?? null,
+            'longitud' => $data['longitud'] ?? null,
+            'direccion_negocio' => $data['direccion_negocio'] ?? null,
+            'ubigeo_distrito_negocio_id' => $data['ubigeo_distrito_negocio_id'] ?? null,
+            'referencia_negocio' => $data['referencia_negocio'] ?? null,
+            'latitud_negocio' => $data['latitud_negocio'] ?? null,
+            'longitud_negocio' => $data['longitud_negocio'] ?? null,
             'estado' => 'activo',
         ]);
 
         $this->storePhotos($request, $cliente);
 
-        return $this->successResponse($cliente->fresh(), 'Cliente creado', 201);
+        return $this->successResponse(
+            $cliente->fresh(['ubigeoDistrito.provincia.departamento', 'ubigeoDistritoNegocio.provincia.departamento']),
+            'Cliente creado',
+            201
+        );
     }
 
     public function show(Cliente $cliente): JsonResponse
     {
         Gate::authorize('view', $cliente);
 
-        return $this->successResponse($cliente->load(['agencia', 'asesor', 'registradoPor']));
+        return $this->successResponse($cliente->load([
+            'agencia', 'asesor', 'registradoPor',
+            'ubigeoDistrito.provincia.departamento', 'ubigeoDistritoNegocio.provincia.departamento',
+        ]));
     }
 
     public function update(UpdateClienteRequest $request, Cliente $cliente): JsonResponse
@@ -114,7 +161,10 @@ class ClienteController extends Controller
         $cliente->update($data);
         $this->storePhotos($request, $cliente);
 
-        return $this->successResponse($cliente->fresh(), 'Cliente actualizado');
+        return $this->successResponse(
+            $cliente->fresh(['ubigeoDistrito.provincia.departamento', 'ubigeoDistritoNegocio.provincia.departamento']),
+            'Cliente actualizado'
+        );
     }
 
     public function destroy(Cliente $cliente): JsonResponse

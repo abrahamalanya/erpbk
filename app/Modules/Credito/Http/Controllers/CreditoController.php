@@ -11,6 +11,7 @@ use App\Modules\Credito\Http\Requests\EnviarATiendaRequest;
 use App\Modules\Credito\Http\Requests\LiquidarCreditoRequest;
 use App\Modules\Credito\Http\Requests\PreviewCronogramaRequest;
 use App\Modules\Credito\Http\Requests\RechazarCreditoRequest;
+use App\Modules\Credito\Http\Requests\RefinanciarCreditoRequest;
 use App\Modules\Credito\Http\Requests\RefrendarCreditoRequest;
 use App\Modules\Credito\Http\Requests\StoreCreditoRequest;
 use App\Modules\Credito\Http\Requests\SubirDocumentoFirmadoRequest;
@@ -100,6 +101,18 @@ class CreditoController extends Controller
 
         $query = Credito::query()->with(['bienes', 'vehiculos', 'inmuebles', 'cliente', 'registradoPor', 'agencia']);
         $query = $this->hierarchy->visibleQuery($query, request()->user());
+
+        if (request()->filled('tipo_credito')) {
+            $query->where('tipo_credito', (string) request()->string('tipo_credito'));
+        }
+
+        if (request()->filled('cliente_id')) {
+            $query->where('cliente_id', request()->integer('cliente_id'));
+        }
+
+        if (request()->filled('estado')) {
+            $query->where('estado', (string) request()->string('estado'));
+        }
 
         $creditos = $query->latest()->paginate(15);
         $creditos->getCollection()->each(function (Credito $credito): void {
@@ -239,6 +252,8 @@ class CreditoController extends Controller
             (string) $data['monto_pagado'],
             $data['medio'],
             $request->file('comprobante'),
+            isset($data['descuento']) ? (string) $data['descuento'] : null,
+            $data['motivo_descuento'] ?? null,
         );
 
         return $this->successResponse($nuevo, 'Crédito refrendado', 201);
@@ -256,6 +271,8 @@ class CreditoController extends Controller
             (string) $data['monto_pagado'],
             $data['medio'],
             $request->file('comprobante'),
+            isset($data['descuento']) ? (string) $data['descuento'] : null,
+            $data['motivo_descuento'] ?? null,
         );
 
         return $this->successResponse($credito, 'Crédito liquidado');
@@ -279,9 +296,30 @@ class CreditoController extends Controller
             $data['tipo_cuota'] ?? null,
             $data['medio'],
             $request->file('comprobante'),
+            isset($data['descuento']) ? (string) $data['descuento'] : null,
+            $data['motivo_descuento'] ?? null,
         );
 
         return $this->successResponse($nuevo, 'Crédito adendado, pendiente de aprobación', 201);
+    }
+
+    public function refinanciar(RefinanciarCreditoRequest $request, Credito $credito): JsonResponse
+    {
+        Gate::authorize('refinanciar', $credito);
+
+        $data = $request->validated();
+
+        $nuevo = $this->creditoService->refinanciar(
+            $credito,
+            $request->user(),
+            isset($data['monto_pagado']) ? (string) $data['monto_pagado'] : null,
+            $data['medio'],
+            $request->file('comprobante'),
+            isset($data['descuento']) ? (string) $data['descuento'] : null,
+            $data['motivo_descuento'] ?? null,
+        );
+
+        return $this->successResponse($nuevo, 'Crédito refinanciado, pendiente de aprobación', 201);
     }
 
     public function actualizarInteres(ActualizarInteresCreditoRequest $request, Credito $credito): JsonResponse

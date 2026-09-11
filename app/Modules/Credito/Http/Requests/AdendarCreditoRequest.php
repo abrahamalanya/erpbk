@@ -2,12 +2,16 @@
 
 namespace App\Modules\Credito\Http\Requests;
 
+use App\Modules\Credito\Http\Requests\Concerns\ValidaMotivoDescuento;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\Validator;
 
 class AdendarCreditoRequest extends FormRequest
 {
+    use ValidaMotivoDescuento;
+
     /**
      * Determine if the user is authorized to make this request.
      */
@@ -33,7 +37,14 @@ class AdendarCreditoRequest extends FormRequest
             'tipo_cuota' => ['nullable', Rule::in(['diario', 'semanal', 'quincenal', 'mensual'])],
             'medio' => ['required', 'string', Rule::in(['efectivo', 'yape', 'plin', 'transferencia'])],
             'comprobante' => ['required_unless:medio,efectivo', 'nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:8192'],
+            'descuento' => ['nullable', 'numeric', 'min:0'],
+            'motivo_descuento' => ['nullable', 'string', 'max:255'],
         ];
+    }
+
+    public function withValidator(Validator $validator): void
+    {
+        $this->aplicarReglaMotivoDescuento($validator);
     }
 
     /**
@@ -51,6 +62,7 @@ class AdendarCreditoRequest extends FormRequest
             'medio.required' => 'El medio de cobro es requerido',
             'medio.in' => 'El medio de cobro no es válido',
             'comprobante.required_unless' => 'Debes subir un comprobante para este medio de cobro',
+            'motivo_descuento.required' => 'Debes indicar el motivo del descuento',
         ];
     }
 }

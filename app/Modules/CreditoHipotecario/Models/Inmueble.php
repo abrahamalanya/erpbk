@@ -3,11 +3,13 @@
 namespace App\Modules\CreditoHipotecario\Models;
 
 use App\Modules\Credito\Concerns\EsGarantia;
+use App\Modules\Ubigeo\Models\UbigeoDistrito;
 use App\Nucleo\Concerns\BelongsToTenant;
 use Database\Factories\InmuebleFactory;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
  * Garantía de un crédito hipotecario: los datos de la partida registral
@@ -36,9 +38,7 @@ class Inmueble extends Model
         'oficina_registral',
         'tipo_inmueble',
         'direccion',
-        'distrito',
-        'provincia',
-        'departamento',
+        'ubigeo_distrito_id',
         'area_terreno',
         'area_construida',
         'propietario',
@@ -56,7 +56,7 @@ class Inmueble extends Model
     /**
      * @var list<string>
      */
-    protected $appends = ['nombre', 'foto_cliente_producto_url', 'video_url'];
+    protected $appends = ['nombre', 'foto_cliente_producto_url', 'video_url', 'distrito', 'provincia', 'departamento'];
 
     /**
      * @return array<string, string>
@@ -79,6 +79,30 @@ class Inmueble extends Model
     protected function nombre(): Attribute
     {
         return Attribute::get(fn (): string => trim(($this->tipo_inmueble ? $this->tipo_inmueble.' · ' : '').$this->direccion));
+    }
+
+    public function ubigeoDistrito(): BelongsTo
+    {
+        return $this->belongsTo(UbigeoDistrito::class);
+    }
+
+    /**
+     * distrito/provincia/departamento como texto plano, derivados de
+     * ubigeoDistrito — ya no son columnas propias.
+     */
+    protected function distrito(): Attribute
+    {
+        return Attribute::get(fn (): ?string => $this->ubigeoDistrito?->nombre);
+    }
+
+    protected function provincia(): Attribute
+    {
+        return Attribute::get(fn (): ?string => $this->ubigeoDistrito?->provincia?->nombre);
+    }
+
+    protected function departamento(): Attribute
+    {
+        return Attribute::get(fn (): ?string => $this->ubigeoDistrito?->provincia?->departamento?->nombre);
     }
 
     protected static function newFactory(): InmuebleFactory

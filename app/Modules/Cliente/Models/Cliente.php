@@ -2,8 +2,10 @@
 
 namespace App\Modules\Cliente\Models;
 
+use App\Modules\Credito\Models\Credito;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
+use App\Modules\Ubigeo\Models\UbigeoDistrito;
 use App\Modules\Usuario\Models\User;
 use App\Nucleo\Concerns\BelongsToTenant;
 use Database\Factories\ClienteFactory;
@@ -11,6 +13,7 @@ use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Support\Facades\Storage;
 
@@ -39,10 +42,15 @@ class Cliente extends Model
         'email',
         'telefono',
         'direccion',
-        'distrito',
-        'provincia',
-        'departamento',
+        'ubigeo_distrito_id',
         'referencia',
+        'latitud',
+        'longitud',
+        'direccion_negocio',
+        'ubigeo_distrito_negocio_id',
+        'referencia_negocio',
+        'latitud_negocio',
+        'longitud_negocio',
         'foto_cliente_path',
         'foto_dni_path',
         'foto_dni_reverso_path',
@@ -54,14 +62,24 @@ class Cliente extends Model
     /**
      * @var list<string>
      */
-    protected $appends = ['foto_cliente_url', 'foto_dni_url', 'foto_dni_reverso_url', 'foto_casa_url', 'foto_negocio_url', 'edad'];
+    protected $appends = [
+        'foto_cliente_url', 'foto_dni_url', 'foto_dni_reverso_url', 'foto_casa_url', 'foto_negocio_url', 'edad',
+        'distrito', 'provincia', 'departamento',
+        'distrito_negocio', 'provincia_negocio', 'departamento_negocio',
+    ];
 
     /**
      * @return array<string, string>
      */
     protected function casts(): array
     {
-        return ['fecha_nacimiento' => 'date'];
+        return [
+            'fecha_nacimiento' => 'date',
+            'latitud' => 'decimal:7',
+            'longitud' => 'decimal:7',
+            'latitud_negocio' => 'decimal:7',
+            'longitud_negocio' => 'decimal:7',
+        ];
     }
 
     /** Edad en años cumplidos a partir de fecha_nacimiento. */
@@ -95,6 +113,57 @@ class Cliente extends Model
     public function registradoPor(): BelongsTo
     {
         return $this->belongsTo(User::class, 'registrado_por');
+    }
+
+    public function creditos(): HasMany
+    {
+        return $this->hasMany(Credito::class);
+    }
+
+    public function ubigeoDistrito(): BelongsTo
+    {
+        return $this->belongsTo(UbigeoDistrito::class);
+    }
+
+    /** Distrito de la dirección del negocio/trabajo del cliente — opcional, separado de la casa. */
+    public function ubigeoDistritoNegocio(): BelongsTo
+    {
+        return $this->belongsTo(UbigeoDistrito::class, 'ubigeo_distrito_negocio_id');
+    }
+
+    /**
+     * distrito/provincia/departamento (de la casa) como texto plano, para
+     * mostrarlos sin que el frontend tenga que resolver la cadena de
+     * relaciones — se derivan de ubigeoDistrito, ya no son columnas propias.
+     */
+    protected function distrito(): Attribute
+    {
+        return Attribute::get(fn (): ?string => $this->ubigeoDistrito?->nombre);
+    }
+
+    protected function provincia(): Attribute
+    {
+        return Attribute::get(fn (): ?string => $this->ubigeoDistrito?->provincia?->nombre);
+    }
+
+    protected function departamento(): Attribute
+    {
+        return Attribute::get(fn (): ?string => $this->ubigeoDistrito?->provincia?->departamento?->nombre);
+    }
+
+    protected function distritoNegocio(): Attribute
+    {
+        return Attribute::get(fn (): ?string => $this->ubigeoDistritoNegocio?->nombre);
+    }
+
+    protected function provinciaNegocio(): Attribute
+    {
+        return Attribute::get(fn (): ?string => $this->ubigeoDistritoNegocio?->provincia?->nombre);
+    }
+
+    protected function departamentoNegocio(): Attribute
+    {
+        return Attribute::get(fn (): ?string => $this->ubigeoDistritoNegocio?->provincia?->departamento?->nombre);
     }
 
     protected function fotoClienteUrl(): Attribute

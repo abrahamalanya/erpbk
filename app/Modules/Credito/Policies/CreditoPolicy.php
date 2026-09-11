@@ -102,6 +102,15 @@ class CreditoPolicy
     }
 
     /**
+     * Misma autoridad que adendar() — el refinanciamiento (solo hipotecario)
+     * también genera un sucesor pendiente que reestructura la deuda.
+     */
+    public function refinanciar(User $user, Credito $credito): bool
+    {
+        return $user->can('creditos_prendarios.refinanciar') && $this->hierarchy->puedeVer($user, $credito);
+    }
+
+    /**
      * Same authority as aprobar/rechazar — editing terms (e.g. a custom
      * interest rate for an exclusive client) is an admin decision, not tied
      * to a specific actor the way subsanar() is.

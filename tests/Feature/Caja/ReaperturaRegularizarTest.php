@@ -106,6 +106,26 @@ it('lets administrador_general reabrir the principal boveda after a normal cierr
         ->assertJsonPath('data.id', $cicloId);
 });
 
+it('lets an administrador_general reabrir the agencia boveda directly, not just the principal', function () {
+    $asesor = User::factory()->forAgencia($this->agencia)->create();
+    $asesor->assignRole('asesor');
+    Sanctum::actingAs($asesor, ['*']);
+    $this->postJson('/api/caja/aperturar')->assertCreated();
+    $this->postJson('/api/caja/cerrar', ['monto_contado' => 0])->assertSuccessful();
+
+    $bovedaAgencia = Boveda::query()->where('agencia_id', $this->agencia->id)->firstOrFail();
+
+    $administradorGeneral = User::factory()->forEmpresa($this->empresa)->create();
+    $administradorGeneral->assignRole('administrador_general');
+    Sanctum::actingAs($administradorGeneral, ['*']);
+
+    $this->postJson("/api/bovedas/{$bovedaAgencia->id}/cerrar", ['monto_contado' => 0])->assertSuccessful();
+
+    $this->postJson("/api/bovedas/{$bovedaAgencia->id}/reabrir")
+        ->assertSuccessful()
+        ->assertJsonPath('data.estado', 'abierta');
+});
+
 it('denies an administrador_agencia from reabrir-ing the principal boveda', function () {
     $administradorGeneral = User::factory()->forEmpresa($this->empresa)->create();
     $administradorGeneral->assignRole('administrador_general');

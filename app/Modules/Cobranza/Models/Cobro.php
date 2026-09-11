@@ -39,6 +39,8 @@ class Cobro extends Model
         'medio',
         'interes',
         'mora',
+        'descuento',
+        'motivo_descuento',
         'vuelto',
     ];
 
@@ -51,6 +53,7 @@ class Cobro extends Model
             'monto_pagado' => 'decimal:2',
             'interes' => 'decimal:2',
             'mora' => 'decimal:2',
+            'descuento' => 'decimal:2',
             'vuelto' => 'decimal:2',
         ];
     }

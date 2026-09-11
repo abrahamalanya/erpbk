@@ -40,9 +40,26 @@ class BovedaPolicy
         return false;
     }
 
+    /**
+     * administrador_general controla también la bóveda de cualquier agencia
+     * de su empresa (no solo la principal) — misma autoridad de empresa
+     * completa que ya tiene para billetajes/cuentas bancarias. No se toca
+     * CajaBovedaHierarchyService::puedeControlarBoveda() para esto: esa
+     * también la usa puedeForzarCierre(), donde el force-close de cajas de
+     * asesor/supervisor debe seguir siendo solo trabajo del
+     * administrador_agencia (confirmado explícitamente).
+     */
     public function cerrar(User $user, Boveda $boveda): bool
     {
-        return $user->can('bovedas.cerrar') && $this->hierarchy->puedeControlarBoveda($user, $boveda);
+        if (! $user->can('bovedas.cerrar')) {
+            return false;
+        }
+
+        if ($user->hasRole('administrador_general')) {
+            return $user->empresa_id === $boveda->empresa_id;
+        }
+
+        return $this->hierarchy->puedeControlarBoveda($user, $boveda);
     }
 
     public function aperturar(User $user, Boveda $boveda): bool
@@ -65,8 +82,17 @@ class BovedaPolicy
             && $user->empresa_id === $boveda->empresa_id;
     }
 
+    /** Mismo alcance que cerrar(): administrador_general también reabre la de cualquier agencia. */
     public function reabrir(User $user, Boveda $boveda): bool
     {
-        return $user->can('bovedas.reabrir') && $this->hierarchy->puedeControlarBoveda($user, $boveda);
+        if (! $user->can('bovedas.reabrir')) {
+            return false;
+        }
+
+        if ($user->hasRole('administrador_general')) {
+            return $user->empresa_id === $boveda->empresa_id;
+        }
+
+        return $this->hierarchy->puedeControlarBoveda($user, $boveda);
     }
 }

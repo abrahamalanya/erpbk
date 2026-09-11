@@ -95,6 +95,45 @@ it('lets an admin correct the fecha de desembolso of an activo crédito and shif
     expect($credito->cuotas->pluck('monto_total', 'numero_cuota')->all())->toBe($montosOriginales->all());
 });
 
+it('transitions an activo crédito straight to vencido when the corrected fecha leaves it overdue, charging mora immediately', function () {
+    $creditoId = desembolsarCreditoDeTres($this);
+
+    $nuevaFecha = now()->subDays(45)->toDateString();
+
+    Sanctum::actingAs($this->adminAgencia, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/actualizar-fecha-desembolso", [
+        'fecha_desembolso' => $nuevaFecha,
+    ])->assertSuccessful();
+
+    $credito = Credito::find($creditoId);
+    expect($credito->estado)->toBe('vencido')
+        ->and($credito->dias_en_mora)->toBeGreaterThan(0);
+
+    // tasa_mora_diaria=1%, monto_prestamo=500, 17 días vencido (45 - 28 de plazo).
+    $sugerido = $this->getJson("/api/creditos-prendarios/{$creditoId}")->json('data.monto_liquidacion_sugerido');
+    expect($sugerido['dias_mora'])->toBe($credito->dias_en_mora)
+        ->and(bccomp($sugerido['mora'], '0.00', 2))->toBe(1);
+});
+
+it('reverts a vencido crédito back to activo when the corrected fecha clears the overdue period, dropping the mora', function () {
+    $creditoId = desembolsarCreditoDeTres($this);
+
+    Sanctum::actingAs($this->adminAgencia, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/actualizar-fecha-desembolso", [
+        'fecha_desembolso' => now()->subDays(45)->toDateString(),
+    ])->assertSuccessful();
+    expect(Credito::find($creditoId)->estado)->toBe('vencido');
+
+    // Corrige de nuevo a una fecha reciente: el crédito ya no está vencido.
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/actualizar-fecha-desembolso", [
+        'fecha_desembolso' => now()->subDays(5)->toDateString(),
+    ])->assertSuccessful();
+
+    $credito = Credito::find($creditoId);
+    expect($credito->estado)->toBe('activo')
+        ->and($credito->dias_en_mora)->toBe(0);
+});
+
 it('lets an admin fix the fecha de desembolso while pendiente, without touching cuotas', function () {
     Sanctum::actingAs($this->asesor, ['*']);
     $creditoId = $this->postJson('/api/creditos-prendarios', [
@@ -144,7 +183,7 @@ it('desembolsa using the fecha planificada set while pendiente when none is give
     $credito = Credito::find($creditoId)->load('cuotas');
     expect($credito->fecha_desembolso->toDateString())->toBe($fecha)
         ->and($credito->cuotas->first()->fecha_vencimiento->toDateString())
-            ->toBe(now()->subDays(12)->addDays(7)->toDateString());
+        ->toBe(now()->subDays(12)->addDays(7)->toDateString());
 });
 
 it('denies editing the fecha de desembolso once the crédito was refrendado', function () {

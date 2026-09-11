@@ -80,6 +80,24 @@ it('blocks closing the principal boveda while an agencia boveda underneath is st
         ->assertJsonPath('data.estado', 'cerrada');
 });
 
+it('lets an administrador_general close the agencia boveda directly, not just the principal', function () {
+    $asesor = User::factory()->forAgencia($this->agencia)->create();
+    $asesor->assignRole('asesor');
+    Sanctum::actingAs($asesor, ['*']);
+    $this->postJson('/api/caja/aperturar')->assertCreated();
+    $this->postJson('/api/caja/cerrar', ['monto_contado' => 0])->assertSuccessful();
+
+    $bovedaAgencia = Boveda::query()->where('agencia_id', $this->agencia->id)->firstOrFail();
+
+    $administradorGeneral = User::factory()->forEmpresa($this->empresa)->create();
+    $administradorGeneral->assignRole('administrador_general');
+    Sanctum::actingAs($administradorGeneral, ['*']);
+
+    $this->postJson("/api/bovedas/{$bovedaAgencia->id}/cerrar", ['monto_contado' => 0])
+        ->assertSuccessful()
+        ->assertJsonPath('data.estado', 'cerrada');
+});
+
 it('denies an administrador_agencia from closing a boveda of a different agencia', function () {
     $otraAgencia = Agencia::factory()->for($this->empresa)->create();
     $bovedaOtraAgencia = Boveda::factory()->deAgencia($otraAgencia)->create();

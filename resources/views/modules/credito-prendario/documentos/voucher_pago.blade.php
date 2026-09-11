@@ -28,6 +28,7 @@
             'refrendo' => 'REFRENDO',
             'adenda' => 'ADENDA',
             'liquidacion' => 'LIQUIDACIÓN',
+            'refinanciamiento' => 'REFINANCIAMIENTO',
         ][$datos['operacion'] ?? ''] ?? 'PAGO';
         $fecha = $documento->generado_at->locale('es')->translatedFormat('d \\d\\e F \\d\\e\\l Y, H:i');
         $medioLabel = ucfirst(str_replace('_', ' ', $datos['medio'] ?? 'efectivo'));
@@ -56,9 +57,26 @@
             <tr><td>Capital</td><td class="num">{{ number_format((float) ($datos['capital'] ?? 0), 2) }}</td></tr>
             <tr><td>Interés</td><td class="num">{{ number_format((float) ($datos['interes'] ?? 0), 2) }}</td></tr>
             <tr><td>Mora ({{ $datos['dias_mora'] ?? 0 }} días)</td><td class="num">{{ number_format((float) ($datos['mora'] ?? 0), 2) }}</td></tr>
+            @if ((float) ($datos['descuento'] ?? 0) > 0)
+                <tr><td>Descuento{{ !empty($datos['motivo_descuento']) ? ' ('.$datos['motivo_descuento'].')' : '' }}</td><td class="num">-{{ number_format((float) $datos['descuento'], 2) }}</td></tr>
+            @endif
             <tr class="tot"><td>Total a pagar</td><td class="num">{{ number_format((float) ($datos['total'] ?? 0), 2) }}</td></tr>
+        @elseif (($datos['operacion'] ?? '') === 'refinanciamiento')
+            <tr><td>Capital</td><td class="num">{{ number_format((float) ($datos['capital'] ?? 0), 2) }}</td></tr>
+            <tr><td>Interés</td><td class="num">{{ number_format((float) ($datos['interes'] ?? 0), 2) }}</td></tr>
+            <tr><td>Mora ({{ $datos['dias_mora'] ?? 0 }} días)</td><td class="num">{{ number_format((float) ($datos['mora'] ?? 0), 2) }}</td></tr>
+            @if ((float) ($datos['descuento'] ?? 0) > 0)
+                <tr><td>Descuento{{ !empty($datos['motivo_descuento']) ? ' ('.$datos['motivo_descuento'].')' : '' }}</td><td class="num">-{{ number_format((float) $datos['descuento'], 2) }}</td></tr>
+            @endif
+            <tr class="tot"><td>Deuda total</td><td class="num">{{ number_format((float) ($datos['deuda_total'] ?? 0), 2) }}</td></tr>
+            <tr><td>Pagado ahora</td><td class="num">-{{ number_format((float) ($datos['monto_pagado'] ?? 0), 2) }}</td></tr>
+            <tr class="tot"><td>Nuevo capital (crédito sucesor)</td><td class="num">{{ number_format((float) ($datos['nuevo_capital'] ?? 0), 2) }}</td></tr>
         @else
-            <tr><td>Interés cobrado</td><td class="num">{{ number_format((float) ($datos['interes'] ?? 0), 2) }}</td></tr>
+            <tr><td>Interés</td><td class="num">{{ number_format((float) ($datos['interes'] ?? 0), 2) }}</td></tr>
+            <tr><td>Mora</td><td class="num">{{ number_format((float) ($datos['mora'] ?? 0), 2) }}</td></tr>
+            @if ((float) ($datos['descuento'] ?? 0) > 0)
+                <tr><td>Descuento{{ !empty($datos['motivo_descuento']) ? ' ('.$datos['motivo_descuento'].')' : '' }}</td><td class="num">-{{ number_format((float) $datos['descuento'], 2) }}</td></tr>
+            @endif
             <tr><td>Abono a capital</td><td class="num">{{ number_format((float) ($datos['abono_capital'] ?? 0), 2) }}</td></tr>
             <tr class="tot"><td>Capital pendiente (crédito sucesor)</td><td class="num">{{ number_format((float) ($datos['saldo_capital'] ?? 0), 2) }}</td></tr>
         @endif

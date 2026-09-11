@@ -23,6 +23,7 @@ class DatabaseSeeder extends Seeder
             AgenciaSeeder::class,
             ConceptoSeeder::class,
             ConfiguracionCreditoPrendarioSeeder::class,
+            UbigeoSeeder::class,
         ]);
 
         // Usuarios/clientes/bienes REALES ya registrados en producción (ver

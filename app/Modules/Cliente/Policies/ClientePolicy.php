@@ -60,19 +60,38 @@ class ClientePolicy
 
     /**
      * $asesorId arrives via Gate::authorize('asignar', [$cliente, $asesorId]).
+     * El asesor siempre debe pertenecer a la misma agencia del cliente (no
+     * se mueve al cliente de agencia aquí, solo se le cambia el asesor); el
+     * alcance de QUÉ agencias/asesores puede tocar cada rol es el mismo
+     * patrón de canView()/canManage(): administrador_general a nivel
+     * empresa, administrador_agencia fijo a la suya, supervisor fijo a la
+     * suya y solo con sus propios subordinados (sin ampliar, confirmado
+     * explícitamente).
      */
     public function asignar(User $user, Cliente $cliente, int $asesorId): bool
     {
-        if (! $user->can('clientes.asignar') || ! $user->hasRole('supervisor')) {
-            return false;
-        }
-
-        if ($cliente->agencia_id !== $user->agencia_id) {
+        if (! $user->can('clientes.asignar')) {
             return false;
         }
 
         $asesor = User::query()->find($asesorId);
 
-        return $asesor !== null && $asesor->hasRole('asesor') && $asesor->supervisor_id === $user->id;
+        if (! $asesor || ! $asesor->hasRole('asesor') || $asesor->agencia_id !== $cliente->agencia_id) {
+            return false;
+        }
+
+        if ($user->hasRole('administrador_general')) {
+            return $user->empresa_id === $cliente->empresa_id;
+        }
+
+        if ($user->hasRole('administrador_agencia')) {
+            return $user->agencia_id === $cliente->agencia_id;
+        }
+
+        if ($user->hasRole('supervisor')) {
+            return $user->agencia_id === $cliente->agencia_id && $asesor->supervisor_id === $user->id;
+        }
+
+        return false;
     }
 }

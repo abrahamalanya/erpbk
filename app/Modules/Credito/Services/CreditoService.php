@@ -22,6 +22,7 @@ use App\Modules\Credito\Notifications\CreditoInteresActualizadoNotification;
 use App\Modules\Credito\Notifications\CreditoLiquidadoNotification;
 use App\Modules\Credito\Notifications\CreditoPendienteConformidadNotification;
 use App\Modules\Credito\Notifications\CreditoRechazadoNotification;
+use App\Modules\Credito\Notifications\CreditoRefinanciadoNotification;
 use App\Modules\Credito\Notifications\CreditoRefrendadoNotification;
 use App\Modules\Credito\Notifications\CreditoSolicitadoNotification;
 use App\Modules\Credito\Notifications\CreditoSubsanadoNotification;
@@ -198,7 +199,13 @@ final class CreditoService
             $this->documentos->generarContrato($credito, $actor);
             $this->documentos->generarDeclaracion($credito, $actor);
             $this->documentos->generarFotos($credito, $actor);
-            $this->documentos->generarSticker($credito, $actor);
+
+            // El sticker se pega sobre el bien/vehículo físico en tienda; un
+            // hipotecario no tiene un artículo que etiquetar (la garantía es
+            // el inmueble, que no pasa por tienda), así que no aplica.
+            if ($tipoClave !== 'hipotecario') {
+                $this->documentos->generarSticker($credito, $actor);
+            }
 
             if ($tipoClave === 'vehicular') {
                 $this->documentos->generarRecepcionVehiculos($credito, $actor);
@@ -381,6 +388,12 @@ final class CreditoService
      *   y esta edición deja de estar disponible (evita cronogramas
      *   inconsistentes).
      *
+     * El nuevo vencimiento también transiciona el estado en el acto —
+     * 'activo' → 'vencido' si la corrección lo deja ya vencido, o
+     * 'vencido' → 'activo' si lo saca del vencimiento — para que la mora
+     * (Credito::dias_en_mora, calcularMora()) quede correcta de inmediato en
+     * vez de esperar al job diario creditos-prendarios:actualizar-estados.
+     *
      * El movimiento de caja del desembolso NO se re-fecha (confirmado
      * explícitamente con el usuario): queda con la fecha real en que se
      * registró en el sistema, para no alterar cierres de caja ya cuadrados.
@@ -400,15 +413,30 @@ final class CreditoService
                 // Aún sin desembolsar: solo se anota la fecha planificada.
                 $credito->update(['fecha_desembolso' => $nuevaFecha->toDateString()]);
             } else {
+                $nuevaFechaVencimiento = $nuevaFecha->copy()->addDays($credito->plazo_dias);
+
                 $credito->update([
                     'fecha_desembolso' => $nuevaFecha->toDateString(),
-                    'fecha_vencimiento' => $nuevaFecha->copy()->addDays($credito->plazo_dias)->toDateString(),
+                    'fecha_vencimiento' => $nuevaFechaVencimiento->toDateString(),
                 ]);
 
                 foreach ($credito->cuotas as $cuota) {
                     $cuota->update([
                         'fecha_vencimiento' => $nuevaFecha->copy()->addDays($diasPorCuota * $cuota->numero_cuota)->toDateString(),
                     ]);
+                }
+
+                // El estado no es un accessor derivado como dias_en_mora: si
+                // la corrección deja el vencimiento en el pasado o lo saca de
+                // ahí, hay que transicionarlo ahora mismo (igual que hace
+                // desembolsar() con una fecha retroactiva) en vez de esperar
+                // al job diario o quedar con la mora congelada.
+                $quedaVencido = $nuevaFechaVencimiento->startOfDay()->lt(now()->startOfDay());
+
+                if ($quedaVencido && $credito->estado === 'activo') {
+                    $credito = $this->transicionarAVencido($credito);
+                } elseif (! $quedaVencido && $credito->estado === 'vencido') {
+                    $credito->update(['estado' => 'activo']);
                 }
             }
 
@@ -643,23 +671,29 @@ final class CreditoService
         string $montoPagado,
         string $medio,
         ?UploadedFile $comprobante,
+        ?string $descuento = null,
+        ?string $motivoDescuento = null,
     ): Credito {
         if (! in_array($credito->estado, ['activo', 'vencido'], true)) {
             throw new DomainException('Solo se puede refrendar un crédito activo o vencido.');
         }
 
-        $interes = $this->calcularMontoRefrendo($credito)['interes'];
-        $total = bcadd((string) $credito->monto_prestamo, $interes, 2);
+        $calculo = $this->calcularMontoRefrendo($credito);
+        $interes = $calculo['interes'];
+        $mora = $calculo['mora'];
+        $descuento = $this->resolverDescuento($calculo['total'], $descuento, $motivoDescuento);
+        $interesConMora = bcsub($calculo['total'], $descuento, 2);
+        $total = bcadd((string) $credito->monto_prestamo, $interesConMora, 2);
 
-        if (bccomp($montoPagado, $interes, 2) < 0) {
-            throw new DomainException("El monto pagado ({$montoPagado}) es menor al interés a refrendar calculado ({$interes}).");
+        if (bccomp($montoPagado, $interesConMora, 2) < 0) {
+            throw new DomainException("El monto pagado ({$montoPagado}) es menor al interés + mora a refrendar calculado ({$interesConMora}).");
         }
 
         if (bccomp($montoPagado, $total, 2) >= 0) {
             throw new DomainException("El monto pagado ({$montoPagado}) cubre el total del crédito ({$total}); selecciona Liquidar para cancelarlo.");
         }
 
-        $abonoCapital = bcsub($montoPagado, $interes, 2);
+        $abonoCapital = bcsub($montoPagado, $interesConMora, 2);
         $nuevoCapital = bcsub((string) $credito->monto_prestamo, $abonoCapital, 2);
 
         $configuracion = $this->configuracion->resolverPara($credito->agencia, $credito->tipo_credito);
@@ -672,7 +706,7 @@ final class CreditoService
         $modeloGarantia = $this->tipos->paraCredito($credito)->garantiaModelo();
         $ciclo = $this->resolverCicloParaCobro($actor);
 
-        return DB::transaction(function () use ($credito, $actor, $siguienteNumero, $nuevoCapital, $interes, $abonoCapital, $ciclo, $montoPagado, $medio, $comprobante, $modeloGarantia): Credito {
+        return DB::transaction(function () use ($credito, $actor, $siguienteNumero, $nuevoCapital, $interes, $mora, $descuento, $motivoDescuento, $abonoCapital, $ciclo, $montoPagado, $medio, $comprobante, $modeloGarantia): Credito {
             $credito->update(['estado' => 'refrendado']);
 
             $n = self::CUOTAS_POR_TIPO[$credito->tipo_cuota];
@@ -708,13 +742,14 @@ final class CreditoService
             $this->documentos->generarContrato($nuevo, $actor);
             $this->documentos->generarDeclaracion($nuevo, $actor);
             $this->documentos->generarFotos($nuevo, $actor);
-            $this->documentos->generarSticker($nuevo, $actor);
 
             if ($credito->tipo_credito === 'hipotecario') {
                 $this->documentos->generarFichaSocioeconomica($nuevo, $actor);
                 $this->documentos->generarNotificacionPago($nuevo, $actor);
                 $this->documentos->generarAvisoPrejudicial($nuevo, $actor);
                 $this->documentos->generarExpediente($nuevo, $actor);
+            } else {
+                $this->documentos->generarSticker($nuevo, $actor);
             }
 
             $nuevo = $nuevo->fresh(['bienes']);
@@ -722,6 +757,9 @@ final class CreditoService
             $this->registrarCobroEnCaja($ciclo, $actor, $credito, $montoPagado, $medio, $comprobante, "Refrendo de crédito prendario #{$credito->id}", [
                 'operacion' => 'refrendo',
                 'interes' => $interes,
+                'mora' => $mora,
+                'descuento' => $descuento,
+                'motivo_descuento' => $motivoDescuento,
                 'credito_sucesor_id' => $nuevo->id,
             ]);
 
@@ -730,6 +768,9 @@ final class CreditoService
                 'monto_pagado' => $montoPagado,
                 'medio' => $medio,
                 'interes' => $interes,
+                'mora' => $mora,
+                'descuento' => $descuento,
+                'motivo_descuento' => $motivoDescuento,
                 'abono_capital' => $abonoCapital,
                 'saldo_capital' => $nuevoCapital,
                 'vuelto' => '0.00',
@@ -770,29 +811,35 @@ final class CreditoService
         ?string $nuevoTipoCuota,
         string $medio,
         ?UploadedFile $comprobante,
+        ?string $descuento = null,
+        ?string $motivoDescuento = null,
     ): Credito {
         if (! in_array($credito->estado, ['activo', 'vencido'], true)) {
             throw new DomainException('Solo se puede hacer una adenda a un crédito activo o vencido.');
         }
 
-        $interes = $this->calcularMontoRefrendo($credito)['interes'];
-        $total = bcadd((string) $credito->monto_prestamo, $interes, 2);
+        $calculo = $this->calcularMontoRefrendo($credito);
+        $interes = $calculo['interes'];
+        $mora = $calculo['mora'];
+        $descuento = $this->resolverDescuento($calculo['total'], $descuento, $motivoDescuento);
+        $interesConMora = bcsub($calculo['total'], $descuento, 2);
+        $total = bcadd((string) $credito->monto_prestamo, $interesConMora, 2);
 
-        if (bccomp($montoPagado, $interes, 2) < 0) {
-            throw new DomainException("El monto pagado ({$montoPagado}) es menor al interés calculado ({$interes}).");
+        if (bccomp($montoPagado, $interesConMora, 2) < 0) {
+            throw new DomainException("El monto pagado ({$montoPagado}) es menor al interés + mora calculado ({$interesConMora}).");
         }
 
         if (bccomp($montoPagado, $total, 2) >= 0) {
             throw new DomainException("El monto pagado ({$montoPagado}) cubre el total del crédito ({$total}); selecciona Liquidar para cancelarlo.");
         }
 
-        $abonoCapital = bcsub($montoPagado, $interes, 2);
+        $abonoCapital = bcsub($montoPagado, $interesConMora, 2);
         $nuevoCapital = bcsub((string) $credito->monto_prestamo, $abonoCapital, 2);
         $configuracion = $this->configuracion->resolverPara($credito->agencia, $credito->tipo_credito);
         $modeloGarantia = $this->tipos->paraCredito($credito)->garantiaModelo();
         $ciclo = $this->resolverCicloParaCobro($actor);
 
-        return DB::transaction(function () use ($credito, $actor, $nuevoInteres, $nuevoTipoCuota, $nuevoCapital, $interes, $abonoCapital, $configuracion, $ciclo, $montoPagado, $medio, $comprobante, $modeloGarantia): Credito {
+        return DB::transaction(function () use ($credito, $actor, $nuevoInteres, $nuevoTipoCuota, $nuevoCapital, $interes, $mora, $descuento, $motivoDescuento, $abonoCapital, $configuracion, $ciclo, $montoPagado, $medio, $comprobante, $modeloGarantia): Credito {
             $credito->update(['estado' => 'adendado']);
 
             $nuevo = Credito::query()->create([
@@ -825,19 +872,23 @@ final class CreditoService
             $this->documentos->generarContrato($nuevo, $actor);
             $this->documentos->generarDeclaracion($nuevo, $actor);
             $this->documentos->generarFotos($nuevo, $actor);
-            $this->documentos->generarSticker($nuevo, $actor);
 
             if ($credito->tipo_credito === 'hipotecario') {
                 $this->documentos->generarFichaSocioeconomica($nuevo, $actor);
                 $this->documentos->generarNotificacionPago($nuevo, $actor);
                 $this->documentos->generarAvisoPrejudicial($nuevo, $actor);
                 $this->documentos->generarExpediente($nuevo, $actor);
+            } else {
+                $this->documentos->generarSticker($nuevo, $actor);
             }
 
             $nuevo = $nuevo->fresh(['bienes']);
             $this->registrarCobroEnCaja($ciclo, $actor, $credito, $montoPagado, $medio, $comprobante, "Adenda de crédito prendario #{$credito->id}", [
                 'operacion' => 'adenda',
                 'interes' => $interes,
+                'mora' => $mora,
+                'descuento' => $descuento,
+                'motivo_descuento' => $motivoDescuento,
                 'credito_sucesor_id' => $nuevo->id,
             ]);
 
@@ -846,6 +897,9 @@ final class CreditoService
                 'monto_pagado' => $montoPagado,
                 'medio' => $medio,
                 'interes' => $interes,
+                'mora' => $mora,
+                'descuento' => $descuento,
+                'motivo_descuento' => $motivoDescuento,
                 'abono_capital' => $abonoCapital,
                 'saldo_capital' => $nuevoCapital,
                 'vuelto' => '0.00',
@@ -863,19 +917,123 @@ final class CreditoService
         });
     }
 
+    /**
+     * Refinancia un crédito hipotecario: el capital del sucesor arranca en
+     * capital + interés + mora del actual (todo lo que se debe), no solo el
+     * interés como en refrendar/adendar — confirmado explícitamente: puede
+     * refinanciarse el 100% de la deuda (montoPagado = 0, todo se traslada)
+     * o pagar una parte ahora y refinanciar solo la diferencia. El sucesor
+     * nace "pendiente" (como adendar) porque cambia sustancialmente la
+     * estructura de la deuda y amerita una nueva revisión/firma.
+     */
+    public function refinanciar(
+        Credito $credito,
+        User $actor,
+        ?string $montoPagado,
+        string $medio,
+        ?UploadedFile $comprobante,
+        ?string $descuento = null,
+        ?string $motivoDescuento = null,
+    ): Credito {
+        if ($credito->tipo_credito !== 'hipotecario') {
+            throw new DomainException('Solo los créditos hipotecarios pueden refinanciarse.');
+        }
+
+        if (! in_array($credito->estado, ['activo', 'vencido'], true)) {
+            throw new DomainException('Solo se puede refinanciar un crédito activo o vencido.');
+        }
+
+        $montoPagado = $montoPagado !== null && $montoPagado !== '' ? $montoPagado : '0.00';
+
+        $liquidacion = $this->calcularMontoLiquidacion($credito);
+        $descuento = $this->resolverDescuento($liquidacion['total'], $descuento, $motivoDescuento);
+        $deudaTotal = bcsub($liquidacion['total'], $descuento, 2);
+
+        if (bccomp($montoPagado, $deudaTotal, 2) >= 0) {
+            throw new DomainException("El monto pagado ({$montoPagado}) cubre el total de la deuda ({$deudaTotal}); selecciona Liquidar para cancelarlo.");
+        }
+
+        $nuevoCapital = bcsub($deudaTotal, $montoPagado, 2);
+        $configuracion = $this->configuracion->resolverPara($credito->agencia, $credito->tipo_credito);
+        $modeloGarantia = $this->tipos->paraCredito($credito)->garantiaModelo();
+
+        return DB::transaction(function () use ($credito, $actor, $nuevoCapital, $liquidacion, $descuento, $motivoDescuento, $deudaTotal, $configuracion, $montoPagado, $medio, $comprobante, $modeloGarantia): Credito {
+            $credito->update(['estado' => 'refinanciado']);
+
+            $nuevo = Credito::query()->create([
+                'empresa_id' => $credito->empresa_id,
+                'agencia_id' => $credito->agencia_id,
+                'tipo_credito' => $credito->tipo_credito,
+                'cliente_id' => $credito->cliente_id,
+                'supervisado_por' => $credito->supervisado_por,
+                'registrado_por' => $credito->registrado_por,
+                'refinanciamiento_de_credito_id' => $credito->id,
+                'monto_prestamo' => $nuevoCapital,
+                'interes' => $credito->interes,
+                'tipo_cuota' => $credito->tipo_cuota,
+                'plazo_dias' => $configuracion->plazo_dias,
+                'estado' => 'pendiente',
+            ]);
+
+            $nuevo->garantiasComo($modeloGarantia)->attach($this->garantiasDe($credito)->get()->pluck('id'));
+
+            $this->documentos->generarContrato($nuevo, $actor);
+            $this->documentos->generarDeclaracion($nuevo, $actor);
+            $this->documentos->generarFotos($nuevo, $actor);
+            $this->documentos->generarFichaSocioeconomica($nuevo, $actor);
+            $this->documentos->generarNotificacionPago($nuevo, $actor);
+            $this->documentos->generarAvisoPrejudicial($nuevo, $actor);
+            $this->documentos->generarExpediente($nuevo, $actor);
+
+            $nuevo = $nuevo->fresh(['inmuebles']);
+            $this->registrarCobroRefinanciamiento($actor, $credito, $montoPagado, $medio, $comprobante, [
+                'interes' => $liquidacion['interes'],
+                'mora' => $liquidacion['mora'],
+                'descuento' => $descuento,
+                'motivo_descuento' => $motivoDescuento,
+                'credito_sucesor_id' => $nuevo->id,
+            ]);
+
+            $this->documentos->generarVoucherPago($credito, $actor, [
+                'operacion' => 'refinanciamiento',
+                'monto_pagado' => $montoPagado,
+                'medio' => $medio,
+                'capital' => $liquidacion['capital'],
+                'interes' => $liquidacion['interes'],
+                'mora' => $liquidacion['mora'],
+                'dias_mora' => $liquidacion['dias_mora'],
+                'descuento' => $descuento,
+                'motivo_descuento' => $motivoDescuento,
+                'deuda_total' => $deudaTotal,
+                'nuevo_capital' => $nuevoCapital,
+                'credito_id' => $credito->id,
+                'credito_sucesor_id' => $nuevo->id,
+                'fecha' => now()->toDateString(),
+            ]);
+
+            $this->notificar($nuevo);
+            $this->notificaciones->enviar(collect([$nuevo->registradoPor]), new CreditoRefinanciadoNotification($nuevo));
+
+            return $nuevo;
+        });
+    }
+
     public function liquidar(
         Credito $credito,
         User $actor,
         string $montoPagado,
         string $medio,
         ?UploadedFile $comprobante,
+        ?string $descuento = null,
+        ?string $motivoDescuento = null,
     ): Credito {
         if (! in_array($credito->estado, ['activo', 'vencido'], true)) {
             throw new DomainException('Solo se puede liquidar un crédito activo o vencido.');
         }
 
         $liquidacion = $this->calcularMontoLiquidacion($credito);
-        $montoCalculado = $liquidacion['total'];
+        $descuento = $this->resolverDescuento($liquidacion['total'], $descuento, $motivoDescuento);
+        $montoCalculado = bcsub($liquidacion['total'], $descuento, 2);
 
         if (bccomp($montoPagado, $montoCalculado, 2) < 0) {
             throw new DomainException("El monto pagado ({$montoPagado}) es menor al monto a liquidar calculado ({$montoCalculado}).");
@@ -883,7 +1041,7 @@ final class CreditoService
 
         $ciclo = $this->resolverCicloParaCobro($actor);
 
-        return DB::transaction(function () use ($credito, $actor, $ciclo, $montoPagado, $medio, $comprobante, $liquidacion): Credito {
+        return DB::transaction(function () use ($credito, $actor, $ciclo, $montoPagado, $medio, $comprobante, $liquidacion, $descuento, $motivoDescuento, $montoCalculado): Credito {
             $credito->update(['estado' => 'liquidado_pendiente']);
 
             $credito = $credito->fresh(['bienes']);
@@ -891,7 +1049,9 @@ final class CreditoService
                 'operacion' => 'liquidacion',
                 'interes' => $liquidacion['interes'],
                 'mora' => $liquidacion['mora'],
-                'vuelto' => bcsub($montoPagado, $liquidacion['total'], 2),
+                'descuento' => $descuento,
+                'motivo_descuento' => $motivoDescuento,
+                'vuelto' => bcsub($montoPagado, $montoCalculado, 2),
             ]);
             $this->documentos->generarDevolucion($credito, $actor);
 
@@ -903,8 +1063,10 @@ final class CreditoService
                 'interes' => $liquidacion['interes'],
                 'mora' => $liquidacion['mora'],
                 'dias_mora' => $liquidacion['dias_mora'],
-                'total' => $liquidacion['total'],
-                'vuelto' => bcsub($montoPagado, $liquidacion['total'], 2),
+                'descuento' => $descuento,
+                'motivo_descuento' => $motivoDescuento,
+                'total' => $montoCalculado,
+                'vuelto' => bcsub($montoPagado, $montoCalculado, 2),
                 'credito_id' => $credito->id,
                 'fecha' => now()->toDateString(),
             ]);
@@ -1002,24 +1164,54 @@ final class CreditoService
     }
 
     /**
-     * Total a pagar al refrendar: solo el interés prorateado (el capital
-     * sigue de pie, a diferencia de liquidar) — mismo cálculo, sin el
-     * capital sumado.
+     * Monto mínimo a pagar al refrendar/adendar: interés prorateado + mora
+     * (el capital sigue de pie, a diferencia de liquidar). Antes de agregar
+     * la mora aquí, un crédito vencido se podía refrendar/adendar pagando
+     * solo el interés, sin penalidad por el atraso — confirmado explícitamente
+     * que la mora debe cobrarse también en estos dos flujos, no solo al liquidar.
      *
-     * @return array{interes: string, total: string, dias_transcurridos: int, dias_minimo: int, dias_cobrados: int, tasa_interes: string}
+     * @return array{interes: string, mora: string, total: string, dias_transcurridos: int, dias_minimo: int, dias_cobrados: int, tasa_interes: string}
      */
     public function calcularMontoRefrendo(Credito $credito): array
     {
         $prorateo = $this->calcularInteresProrateado($credito);
+        $mora = $this->calcularMora($credito);
 
         return [
             'interes' => $prorateo['interes'],
-            'total' => $prorateo['interes'],
+            'mora' => $mora,
+            'total' => bcadd($prorateo['interes'], $mora, 2),
             'dias_transcurridos' => $prorateo['dias_transcurridos'],
             'dias_minimo' => $prorateo['dias_minimo'],
             'dias_cobrados' => $prorateo['dias_cobrados'],
             'tasa_interes' => $prorateo['tasa_interes'],
         ];
+    }
+
+    /**
+     * Resuelve el descuento a aplicar sobre `$montoBase` (interés+mora en
+     * refrendo/adenda, o el total completo en liquidación) — nunca puede
+     * exceder esa base (no tiene sentido "descontar" más de lo que se debe
+     * por ese concepto) y exige un motivo en cuanto es mayor a cero, para
+     * dejar auditoría de por qué se condonó dinero.
+     *
+     * @return string el descuento normalizado (nunca null)
+     */
+    private function resolverDescuento(string $montoBase, ?string $descuento, ?string $motivoDescuento): string
+    {
+        if ($descuento === null || bccomp($descuento, '0', 2) <= 0) {
+            return '0.00';
+        }
+
+        if (blank($motivoDescuento)) {
+            throw new DomainException('Debes indicar el motivo del descuento.');
+        }
+
+        if (bccomp($descuento, $montoBase, 2) > 0) {
+            throw new DomainException("El descuento ({$descuento}) no puede superar el monto a cobrar ({$montoBase}).");
+        }
+
+        return $descuento;
     }
 
     /**
@@ -1266,7 +1458,7 @@ final class CreditoService
      * módulo Cobranzas). Todo pago sobre un crédito — refrendo, adenda o
      * liquidación — pasa por aquí, así que es el único punto de escritura.
      *
-     * @param  array{operacion: string, interes: string, mora?: string|null, vuelto?: string, credito_sucesor_id?: int|null}  $detalleCobro
+     * @param  array{operacion: string, interes: string, mora?: string|null, descuento?: string|null, motivo_descuento?: string|null, vuelto?: string, credito_sucesor_id?: int|null}  $detalleCobro
      */
     private function registrarCobroEnCaja(
         CajaCiclo $ciclo,
@@ -1308,9 +1500,74 @@ final class CreditoService
             'medio' => $medio,
             'interes' => $detalleCobro['interes'],
             'mora' => $detalleCobro['mora'] ?? null,
+            'descuento' => $detalleCobro['descuento'] ?? null,
+            'motivo_descuento' => $detalleCobro['motivo_descuento'] ?? null,
             'vuelto' => $detalleCobro['vuelto'] ?? '0.00',
         ]);
 
         CajaActualizada::dispatch($ciclo->caja, $ciclo->fresh()->saldoActual());
+    }
+
+    /**
+     * Variante de registrarCobroEnCaja() para refinanciar(): `$monto` puede
+     * ser legítimamente cero (toda la deuda se traslada al nuevo capital,
+     * sin que cambie de manos dinero real) — en ese caso no exige caja
+     * aperturada ni genera movimiento de caja, solo deja la fila de
+     * auditoría en `cobros` (caja_ciclo_id queda null, columna ya nullable).
+     *
+     * @param  array{interes: string, mora?: string|null, descuento?: string|null, motivo_descuento?: string|null, credito_sucesor_id?: int|null}  $detalleCobro
+     */
+    private function registrarCobroRefinanciamiento(
+        User $actor,
+        Credito $credito,
+        string $monto,
+        string $medio,
+        ?UploadedFile $comprobante,
+        array $detalleCobro,
+    ): void {
+        $ciclo = null;
+
+        if (bccomp($monto, '0', 2) > 0) {
+            $ciclo = $this->resolverCicloParaCobro($actor);
+
+            $movimiento = CajaMovimiento::query()->create([
+                'caja_ciclo_id' => $ciclo->id,
+                'empresa_id' => $ciclo->empresa_id,
+                'tipo' => 'ingreso',
+                'monto' => $monto,
+                'medio' => $medio,
+                'concepto' => "Refinanciamiento de crédito hipotecario #{$credito->id}",
+                'registrado_por' => $actor->id,
+                'fecha_caja' => $ciclo->fecha,
+            ]);
+
+            if ($comprobante) {
+                $movimiento->fotos()->create([
+                    'tipo' => 'comprobante',
+                    'path' => $comprobante->store("caja-movimientos/{$movimiento->id}", 'public'),
+                ]);
+            }
+        }
+
+        Cobro::query()->create([
+            'empresa_id' => $credito->empresa_id,
+            'cliente_id' => $credito->cliente_id,
+            'credito_id' => $credito->id,
+            'credito_sucesor_id' => $detalleCobro['credito_sucesor_id'] ?? null,
+            'caja_ciclo_id' => $ciclo?->id,
+            'registrado_por' => $actor->id,
+            'operacion' => 'refinanciamiento',
+            'monto_pagado' => $monto,
+            'medio' => $medio,
+            'interes' => $detalleCobro['interes'],
+            'mora' => $detalleCobro['mora'] ?? null,
+            'descuento' => $detalleCobro['descuento'] ?? null,
+            'motivo_descuento' => $detalleCobro['motivo_descuento'] ?? null,
+            'vuelto' => '0.00',
+        ]);
+
+        if ($ciclo) {
+            CajaActualizada::dispatch($ciclo->caja, $ciclo->fresh()->saldoActual());
+        }
     }
 }
