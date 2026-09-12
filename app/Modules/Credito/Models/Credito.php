@@ -3,6 +3,7 @@
 namespace App\Modules\Credito\Models;
 
 use App\Modules\Cliente\Models\Cliente;
+use App\Modules\Cobranza\Models\Cobro;
 use App\Modules\CreditoHipotecario\Models\Inmueble;
 use App\Modules\CreditoPrendario\Models\Bien;
 use App\Modules\CreditoVehicular\Models\Vehiculo;
@@ -201,6 +202,11 @@ class Credito extends Model
     public function cuotas(): HasMany
     {
         return $this->hasMany(CuotaCredito::class, 'credito_id')->orderBy('numero_cuota');
+    }
+
+    public function cobros(): HasMany
+    {
+        return $this->hasMany(Cobro::class, 'credito_id');
     }
 
     protected function diasEnMora(): Attribute

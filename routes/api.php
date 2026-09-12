@@ -143,6 +143,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('creditos-prendarios/{credito}/refinanciar', [CreditoController::class, 'refinanciar'])->name('creditos-prendarios.refinanciar');
     Route::post('creditos-prendarios/{credito}/actualizar-interes', [CreditoController::class, 'actualizarInteres'])->name('creditos-prendarios.actualizar-interes');
     Route::post('creditos-prendarios/{credito}/actualizar-fecha-desembolso', [CreditoController::class, 'actualizarFechaDesembolso'])->name('creditos-prendarios.actualizar-fecha-desembolso');
+    Route::post('creditos-prendarios/{credito}/actualizar-numero-cuotas', [CreditoController::class, 'actualizarNumeroCuotas'])->name('creditos-prendarios.actualizar-numero-cuotas');
     Route::post('creditos-prendarios/{credito}/revertir-aprobacion', [CreditoController::class, 'revertirAprobacion'])->name('creditos-prendarios.revertir-aprobacion');
     Route::post('creditos-prendarios/{credito}/enviar-tienda', [CreditoController::class, 'enviarATienda'])->name('creditos-prendarios.enviar-tienda');
     Route::post('creditos-prendarios/{credito}/conformidad', [CreditoController::class, 'confirmarConformidad'])->name('creditos-prendarios.conformidad');

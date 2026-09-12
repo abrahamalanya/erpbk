@@ -4,6 +4,7 @@ namespace App\Modules\Credito\Http\Controllers;
 
 use App\Modules\Credito\Http\Requests\ActualizarFechaDesembolsoCreditoRequest;
 use App\Modules\Credito\Http\Requests\ActualizarInteresCreditoRequest;
+use App\Modules\Credito\Http\Requests\ActualizarNumeroCuotasCreditoRequest;
 use App\Modules\Credito\Http\Requests\AdendarCreditoRequest;
 use App\Modules\Credito\Http\Requests\ConfirmarConformidadRequest;
 use App\Modules\Credito\Http\Requests\DesembolsarCreditoRequest;
@@ -338,6 +339,15 @@ class CreditoController extends Controller
         $credito = $this->creditoService->actualizarFechaDesembolso($credito, $request->user(), (string) $request->validated('fecha_desembolso'));
 
         return $this->successResponse($credito, 'Fecha de desembolso actualizada');
+    }
+
+    public function actualizarNumeroCuotas(ActualizarNumeroCuotasCreditoRequest $request, Credito $credito): JsonResponse
+    {
+        Gate::authorize('editar', $credito);
+
+        $credito = $this->creditoService->actualizarNumeroCuotas($credito, $request->user(), (int) $request->validated('numero_cuotas'));
+
+        return $this->successResponse($credito, 'Número de cuotas actualizado');
     }
 
     public function revertirAprobacion(Credito $credito): JsonResponse

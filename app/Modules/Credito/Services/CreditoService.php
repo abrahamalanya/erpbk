@@ -20,6 +20,7 @@ use App\Modules\Credito\Notifications\CreditoEnVentaNotification;
 use App\Modules\Credito\Notifications\CreditoFechaDesembolsoActualizadaNotification;
 use App\Modules\Credito\Notifications\CreditoInteresActualizadoNotification;
 use App\Modules\Credito\Notifications\CreditoLiquidadoNotification;
+use App\Modules\Credito\Notifications\CreditoNumeroCuotasActualizadoNotification;
 use App\Modules\Credito\Notifications\CreditoPendienteConformidadNotification;
 use App\Modules\Credito\Notifications\CreditoRechazadoNotification;
 use App\Modules\Credito\Notifications\CreditoRefinanciadoNotification;
@@ -443,6 +444,68 @@ final class CreditoService
             $credito = $credito->fresh(['cuotas']);
             $this->notificar($credito);
             $this->notificaciones->enviar(collect([$credito->registradoPor]), new CreditoFechaDesembolsoActualizadaNotification($credito));
+
+            return $credito;
+        });
+    }
+
+    /**
+     * Corrige el número de cuotas de un crédito ya registrado (p. ej. se
+     * desembolsó a 1 cuota por error y debía ser a 12).
+     *
+     * - Si el crédito **aún no se desembolsó** (pendiente / aprobado): solo
+     *   deja anotado el nuevo número; desembolsar() lo toma como override si
+     *   no recibe uno explícito propio.
+     * - Si el crédito **ya se desembolsó** (activo / vencido): se exige que
+     *   todavía no tenga cobros registrados — el cronograma se borra y se
+     *   regenera desde cero con el nuevo número de cuotas (misma fórmula de
+     *   generarCronograma()), y plazo_dias/fecha_vencimiento se recalculan a
+     *   partir de la fecha_desembolso ya fijada. Igual que
+     *   actualizarFechaDesembolso(), transiciona el estado en el acto si el
+     *   nuevo vencimiento lo deja vencido o lo saca del vencimiento.
+     */
+    public function actualizarNumeroCuotas(Credito $credito, User $actor, int $numeroCuotas): Credito
+    {
+        if (! in_array($credito->estado, ['pendiente', 'aprobado', 'activo', 'vencido'], true)) {
+            throw new DomainException('Solo se puede corregir el número de cuotas mientras el crédito está pendiente, aprobado, activo o vencido.');
+        }
+
+        $diasPorCuota = self::DIAS_POR_PERIODO[$credito->tipo_cuota];
+        $yaDesembolsado = $credito->cuotas()->exists();
+
+        if ($yaDesembolsado && $credito->cobros()->exists()) {
+            throw new DomainException('No se puede corregir el número de cuotas: el crédito ya tiene cobros registrados.');
+        }
+
+        return DB::transaction(function () use ($credito, $numeroCuotas, $diasPorCuota, $yaDesembolsado): Credito {
+            if (! $yaDesembolsado) {
+                $credito->update(['numero_cuotas' => $numeroCuotas]);
+            } else {
+                $nuevoPlazoDias = $diasPorCuota * $numeroCuotas;
+                $nuevaFechaVencimiento = $credito->fecha_desembolso->copy()->addDays($nuevoPlazoDias);
+
+                $credito->cuotas()->delete();
+
+                $credito->update([
+                    'numero_cuotas' => $numeroCuotas,
+                    'plazo_dias' => $nuevoPlazoDias,
+                    'fecha_vencimiento' => $nuevaFechaVencimiento->toDateString(),
+                ]);
+
+                $this->generarCronograma($credito, $numeroCuotas, $diasPorCuota);
+
+                $quedaVencido = $nuevaFechaVencimiento->copy()->startOfDay()->lt(now()->startOfDay());
+
+                if ($quedaVencido && $credito->estado === 'activo') {
+                    $credito = $this->transicionarAVencido($credito);
+                } elseif (! $quedaVencido && $credito->estado === 'vencido') {
+                    $credito->update(['estado' => 'activo']);
+                }
+            }
+
+            $credito = $credito->fresh(['cuotas']);
+            $this->notificar($credito);
+            $this->notificaciones->enviar(collect([$credito->registradoPor]), new CreditoNumeroCuotasActualizadoNotification($credito));
 
             return $credito;
         });

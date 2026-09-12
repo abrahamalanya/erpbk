@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <title>Carta de aviso prejudicial — Crédito #{{ $credito->id }}</title>
     <style>
-        @page { margin: 3cm 2.2cm 2.5cm 2.2cm; }
+        @page { margin: 4cm 1cm 3cm 3cm; }
         body { font-family: DejaVu Sans, sans-serif; font-size: 10.5px; color: #1a1a1a; line-height: 1.5; }
         h1 { font-size: 14px; text-align: center; margin: 0 0 18px; letter-spacing: 2px; }
         p { text-align: justify; margin: 7px 0; }

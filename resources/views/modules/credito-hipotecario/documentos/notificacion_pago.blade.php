@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <title>Notificación — Requerimiento de pago — Crédito #{{ $credito->id }}</title>
     <style>
-        @page { margin: 2.2cm 2cm 1.8cm 2cm; }
+        @page { margin: 4cm 1cm 3cm 3cm; }
         body { font-family: DejaVu Sans, sans-serif; font-size: 10px; color: #1a1a1a; line-height: 1.4; }
         h1 { font-size: 13px; text-align: center; margin: 0 0 12px; letter-spacing: 2px; }
         p { text-align: justify; margin: 5px 0; }
