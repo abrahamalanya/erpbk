@@ -48,4 +48,18 @@ final class ConfiguracionCreditoService
             $datos
         );
     }
+
+    /**
+     * Borra un override de agencia (la agencia vuelve a heredar el default de
+     * la empresa para ese tipo) o la fila default de la empresa misma —
+     * ConfiguracionCreditoPolicy::delete() ya restringe esto último a
+     * administrador_general, porque deja a la empresa sin configuración
+     * resoluble para ese tipo hasta que se registre una nueva (resolverPara()
+     * lanzará DomainException al intentar registrar un crédito mientras
+     * tanto).
+     */
+    public function eliminar(ConfiguracionCredito $configuracion): void
+    {
+        $configuracion->delete();
+    }
 }

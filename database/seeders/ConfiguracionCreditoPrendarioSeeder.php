@@ -53,5 +53,18 @@ class ConfiguracionCreditoPrendarioSeeder extends Seeder
                 'max_cuotas' => 12,
             ]
         );
+
+        ConfiguracionCredito::query()->firstOrCreate(
+            ['empresa_id' => $credimas->id, 'agencia_id' => null, 'tipo_credito' => 'diario'],
+            [
+                'interes_default' => 15,
+                'plazo_dias' => 30,
+                'dias_espera_mora' => 15,
+                'dias_minimo_interes' => 15,
+                'tasa_mora_diaria' => 0.05,
+                'max_refrendos' => null,
+                'max_cuotas' => 45,
+            ]
+        );
     }
 }

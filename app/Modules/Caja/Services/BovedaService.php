@@ -398,14 +398,66 @@ final class BovedaService
 
     private function tieneCajasAbiertasDebajo(Boveda $boveda): bool
     {
+        return $this->queryCajasAbiertasDebajo($boveda)->exists();
+    }
+
+    private function queryCajasAbiertasDebajo(Boveda $boveda): Builder
+    {
         [$roles, $columna, $valor] = $boveda->tipo === 'principal'
             ? [self::ROLES_PRINCIPAL, 'empresa_id', $boveda->empresa_id]
             : [self::ROLES_AGENCIA, 'agencia_id', $boveda->agencia_id];
 
         return Caja::query()
             ->whereHas('user', fn (Builder $q) => $q->role($roles)->where($columna, $valor))
-            ->whereHas('cicloAbierto')
-            ->exists();
+            ->whereHas('cicloAbierto');
+    }
+
+    /**
+     * The same cajas tieneCajasAbiertasDebajo() checks for, as models
+     * instead of a bool — powers the cierre-forzado preview/cascade
+     * (see detalleCierre() below and BovedaController::cerrarForzado()).
+     *
+     * @return Collection<int, Caja>
+     */
+    public function cajasAbiertasDebajo(Boveda $boveda): Collection
+    {
+        return $this->queryCajasAbiertasDebajo($boveda)->with(['user.roles', 'cicloAbierto'])->get();
+    }
+
+    /**
+     * Preview of everything that would be counted if this bóveda were closed
+     * right now with every open caja beneath it force-closed first: the cash
+     * each caja would hand over (its saldoEfectivo() — same figure
+     * CajaService::cerrarForzado() uses, since nobody is physically present
+     * to count each caja individually) plus the bóveda's own current cash.
+     * Lets the admin know the total to expect before they physically count
+     * the bóveda and submit monto_contado to BovedaController::cerrarForzado().
+     *
+     * @return array<string, mixed>
+     */
+    public function detalleCierre(Boveda $boveda): array
+    {
+        $ciclo = $boveda->cicloAbierto()->first();
+
+        if (! $ciclo) {
+            throw new DomainException('La bóveda no tiene un ciclo abierto.');
+        }
+
+        $cajas = $this->cajasAbiertasDebajo($boveda)->map(fn (Caja $caja): array => [
+            'caja_id' => $caja->id,
+            'user' => $caja->user,
+            'saldo_efectivo' => $caja->cicloAbierto->saldoEfectivo(),
+        ])->values();
+
+        $saldoBoveda = $this->calcularSaldo($ciclo);
+        $totalCajas = (string) $cajas->reduce(fn (string $total, array $caja): string => bcadd($total, $caja['saldo_efectivo'], 2), '0');
+
+        return [
+            'saldo_boveda_actual' => $saldoBoveda,
+            'cajas' => $cajas,
+            'total_cajas' => $totalCajas,
+            'total_estimado_cierre' => bcadd($saldoBoveda, $totalCajas, 2),
+        ];
     }
 
     public function calcularSaldo(BovedaCiclo $ciclo): string

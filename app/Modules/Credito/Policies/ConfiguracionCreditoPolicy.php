@@ -43,4 +43,32 @@ class ConfiguracionCreditoPolicy
 
         return false;
     }
+
+    /**
+     * Misma autoridad que update() — el asesor/supervisor no toca esto, solo
+     * administradores. $agencia es null cuando el objetivo es la fila default
+     * de toda la empresa: solo administrador_general puede borrarla (deja a
+     * la empresa sin configuración resoluble para ese tipo hasta que se
+     * registre una nueva), igual que solo él puede editarla.
+     */
+    public function delete(User $user, ?Agencia $agencia): bool
+    {
+        if (! $user->can('configuraciones_credito_prendario.eliminar')) {
+            return false;
+        }
+
+        if ($agencia === null) {
+            return $user->hasRole('administrador_general');
+        }
+
+        if ($user->hasRole('administrador_general')) {
+            return $user->empresa_id === $agencia->empresa_id;
+        }
+
+        if ($user->hasRole('administrador_agencia')) {
+            return $user->agencia_id === $agencia->id;
+        }
+
+        return false;
+    }
 }

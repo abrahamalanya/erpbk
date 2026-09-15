@@ -24,6 +24,7 @@ final class DocumentoCreditoService
         'voucher_desembolso', 'voucher_pago', 'sticker',
         'carta_no_adeudo', 'recepcion_vehiculos', 'ficha_socioeconomica',
         'notificacion_pago', 'aviso_prejudicial', 'expediente',
+        'contrato_transferencia',
     ];
 
     public function __construct(
@@ -164,6 +165,20 @@ final class DocumentoCreditoService
     }
 
     /**
+     * Contrato de transferencia del vehículo ejecutado a un tercero
+     * comprador — solo vehicular, se genera al cerrar la venta
+     * (CreditoService::vender()). Los datos del comprador y el precio/pagos
+     * son propios de esta operación puntual (no columnas del crédito), así
+     * que se guardan en el documento como cualquier voucher.
+     *
+     * @param  array<string, mixed>  $datos
+     */
+    public function generarContratoTransferencia(Credito $credito, User $actor, array $datos): DocumentoCredito
+    {
+        return $this->generar($credito, $actor, 'contrato_transferencia', $datos);
+    }
+
+    /**
      * Renders the PDF fresh from the crédito's current data — nothing is
      * kept on disk, so this runs again on every "ver documento" request.
      */
@@ -175,7 +190,7 @@ final class DocumentoCreditoService
 
         $credito = $documento->credito()->with([
             'cliente.fichaSocioeconomica.familiares', 'cuotas', 'aval', 'aval2',
-            'expedienteDocumentos', 'inmuebles', 'agencia', 'empresa',
+            'expedienteDocumentos', 'inmuebles', 'agencia', 'empresa', 'registradoPor',
         ])->firstOrFail();
 
         $tipo = $this->tipos->paraCredito($credito);
@@ -194,6 +209,7 @@ final class DocumentoCreditoService
                 (string) $credito->interes,
                 $credito->tipo_cuota,
                 $credito->numero_cuotas,
+                tipoCredito: $credito->tipo_credito,
             );
 
             $credito->setRelation('cuotas', collect($preview['cuotas'])->map(fn (array $fila): CuotaCredito => new CuotaCredito([

@@ -32,7 +32,13 @@ class StoreCreditoHipotecarioRequest extends FormRequest
             'interes_solicitud_especial' => ['sometimes', 'boolean'],
             'motivo_interes' => ['nullable', 'string', 'max:255'],
             'tipo_cuota' => ['required', Rule::in(['diario', 'semanal', 'quincenal', 'mensual'])],
-            'numero_cuotas' => $this->reglasNumeroCuotas('hipotecario'),
+            // Un crédito de interés compuesto (sistema francés) necesita un
+            // número de cuotas definido — la cuota fija se calcula sobre él.
+            'numero_cuotas' => [
+                ...$this->reglasNumeroCuotas('hipotecario'),
+                Rule::requiredIf(fn (): bool => $this->input('tipo_interes') === 'compuesto'),
+            ],
+            'tipo_interes' => ['nullable', Rule::in(['simple', 'compuesto'])],
         ];
     }
 
@@ -50,6 +56,8 @@ class StoreCreditoHipotecarioRequest extends FormRequest
             'monto_prestamo.required' => 'El monto del préstamo es requerido',
             'tipo_cuota.required' => 'El tipo de cuota es requerido',
             'tipo_cuota.in' => 'El tipo de cuota no es válido',
+            'numero_cuotas.required_if' => 'Debes indicar el número de cuotas para un crédito de interés compuesto',
+            'tipo_interes.in' => 'El tipo de interés no es válido',
         ];
     }
 }

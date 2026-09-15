@@ -29,6 +29,7 @@
             'adenda' => 'ADENDA',
             'liquidacion' => 'LIQUIDACIÓN',
             'refinanciamiento' => 'REFINANCIAMIENTO',
+            'pago_cuota' => 'PAGO DE CUOTA',
         ][$datos['operacion'] ?? ''] ?? 'PAGO';
         $fecha = $documento->generado_at->locale('es')->translatedFormat('d \\d\\e F \\d\\e\\l Y, H:i');
         $medioLabel = ucfirst(str_replace('_', ' ', $datos['medio'] ?? 'efectivo'));

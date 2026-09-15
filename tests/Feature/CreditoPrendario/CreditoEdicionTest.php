@@ -5,6 +5,7 @@ use App\Modules\Caja\Models\CajaCiclo;
 use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Credito\Models\ConfiguracionCredito;
 use App\Modules\Credito\Models\Credito;
+use App\Modules\CreditoHipotecario\Models\Inmueble;
 use App\Modules\CreditoPrendario\Models\Bien;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
@@ -365,4 +366,136 @@ it('returns 404 when the documento does not belong to the given crédito', funct
 
     $this->get("/api/creditos-prendarios/{$creditoId}/documentos/{$documentoDeOtroCredito->id}/ver")
         ->assertNotFound();
+});
+
+it('allows administrador_agencia to update tipo_cuota and monto_prestamo while pendiente', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+    $creditoId = $this->postJson('/api/creditos-prendarios', [
+        'bien_ids' => [$this->bien->id],
+        'monto_prestamo' => 500, 'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+
+    Sanctum::actingAs($this->adminAgencia, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/actualizar-condiciones", [
+        'tipo_cuota' => 'quincenal',
+        'monto_prestamo' => 800,
+    ])->assertSuccessful()
+        ->assertJsonPath('data.tipo_cuota', 'quincenal')
+        ->assertJsonPath('data.monto_prestamo', '800.00');
+});
+
+it('denies a monto_prestamo above the sum of the garantías valorizaciones', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+    $creditoId = $this->postJson('/api/creditos-prendarios', [
+        'bien_ids' => [$this->bien->id],
+        'monto_prestamo' => 500, 'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+
+    Sanctum::actingAs($this->adminAgencia, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/actualizar-condiciones", ['monto_prestamo' => 1500])
+        ->assertUnprocessable()
+        ->assertJsonPath('message', 'El monto del préstamo no puede superar la suma de las valorizaciones de las garantías seleccionadas.');
+});
+
+it('denies switching a prendario to interés compuesto', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+    $creditoId = $this->postJson('/api/creditos-prendarios', [
+        'bien_ids' => [$this->bien->id],
+        'monto_prestamo' => 500, 'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+
+    Sanctum::actingAs($this->adminAgencia, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/actualizar-condiciones", ['tipo_interes' => 'compuesto'])
+        ->assertUnprocessable()
+        ->assertJsonPath('message', 'Solo los créditos hipotecarios pueden ser de interés compuesto.');
+});
+
+it('denies editing condiciones once the crédito has a cronograma (ya desembolsado)', function () {
+    Storage::fake('public');
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $creditoId = $this->postJson('/api/creditos-prendarios', [
+        'bien_ids' => [$this->bien->id],
+        'monto_prestamo' => 500, 'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+
+    Sanctum::actingAs($this->adminAgencia, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/aprobar")->assertSuccessful();
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    foreach (Credito::find($creditoId)->documentos as $documento) {
+        $this->postJson("/api/creditos-prendarios/{$creditoId}/documentos/{$documento->id}/subir-firmado", [
+            'archivo' => UploadedFile::fake()->create('firmado.pdf', 100, 'application/pdf'),
+        ])->assertSuccessful();
+    }
+
+    Caja::query()->where('user_id', $this->asesor->id)->first()->cicloAbierto->update(['saldo_apertura' => 10000]);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar")->assertSuccessful();
+
+    Sanctum::actingAs($this->adminAgencia, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/actualizar-condiciones", ['tipo_cuota' => 'quincenal'])
+        ->assertUnprocessable();
+});
+
+it('denies asesor from updating condiciones', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+    $creditoId = $this->postJson('/api/creditos-prendarios', [
+        'bien_ids' => [$this->bien->id],
+        'monto_prestamo' => 500, 'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/actualizar-condiciones", ['tipo_cuota' => 'quincenal'])
+        ->assertForbidden();
+});
+
+it('requires at least one condición to update', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+    $creditoId = $this->postJson('/api/creditos-prendarios', [
+        'bien_ids' => [$this->bien->id],
+        'monto_prestamo' => 500, 'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+
+    Sanctum::actingAs($this->adminAgencia, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/actualizar-condiciones", [])
+        ->assertUnprocessable();
+});
+
+it('allows administrador_general to switch a hipotecario crédito to interés compuesto once numero_cuotas is set', function () {
+    ConfiguracionCredito::factory()->deEmpresa($this->empresa)->create([
+        'tipo_credito' => 'hipotecario', 'interes_default' => 8, 'plazo_dias' => 30,
+        'dias_espera_mora' => 30, 'dias_minimo_interes' => 15, 'tasa_mora_diaria' => 1, 'max_cuotas' => 24,
+    ]);
+
+    $inmueble = Inmueble::factory()->paraCliente($this->cliente)->create(['valorizacion' => 150000]);
+    $adminGeneral = User::factory()->forEmpresa($this->empresa)->create();
+    $adminGeneral->assignRole('administrador_general');
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $creditoId = $this->postJson('/api/creditos-hipotecarios', [
+        'inmueble_ids' => [$inmueble->id],
+        'supervisado_por' => $this->adminAgencia->id,
+        'monto_prestamo' => 90000,
+        'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+
+    Sanctum::actingAs($adminGeneral, ['*']);
+
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/actualizar-condiciones", ['tipo_interes' => 'compuesto'])
+        ->assertUnprocessable()
+        ->assertJsonPath('message', 'Debes indicar el número de cuotas antes de cambiar a interés compuesto.');
+
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/actualizar-condiciones", [
+        'tipo_interes' => 'compuesto',
+        'monto_prestamo' => 80000,
+    ])->assertUnprocessable();
+
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/actualizar-numero-cuotas", ['numero_cuotas' => 12])
+        ->assertSuccessful();
+
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/actualizar-condiciones", [
+        'tipo_interes' => 'compuesto',
+        'monto_prestamo' => 80000,
+    ])->assertSuccessful()
+        ->assertJsonPath('data.tipo_interes', 'compuesto')
+        ->assertJsonPath('data.monto_prestamo', '80000.00');
 });

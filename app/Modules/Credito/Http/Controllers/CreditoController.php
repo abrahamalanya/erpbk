@@ -2,6 +2,7 @@
 
 namespace App\Modules\Credito\Http\Controllers;
 
+use App\Modules\Credito\Http\Requests\ActualizarCondicionesCreditoRequest;
 use App\Modules\Credito\Http\Requests\ActualizarFechaDesembolsoCreditoRequest;
 use App\Modules\Credito\Http\Requests\ActualizarInteresCreditoRequest;
 use App\Modules\Credito\Http\Requests\ActualizarNumeroCuotasCreditoRequest;
@@ -10,12 +11,14 @@ use App\Modules\Credito\Http\Requests\ConfirmarConformidadRequest;
 use App\Modules\Credito\Http\Requests\DesembolsarCreditoRequest;
 use App\Modules\Credito\Http\Requests\EnviarATiendaRequest;
 use App\Modules\Credito\Http\Requests\LiquidarCreditoRequest;
+use App\Modules\Credito\Http\Requests\PagarCuotaCreditoRequest;
 use App\Modules\Credito\Http\Requests\PreviewCronogramaRequest;
 use App\Modules\Credito\Http\Requests\RechazarCreditoRequest;
 use App\Modules\Credito\Http\Requests\RefinanciarCreditoRequest;
 use App\Modules\Credito\Http\Requests\RefrendarCreditoRequest;
 use App\Modules\Credito\Http\Requests\StoreCreditoRequest;
 use App\Modules\Credito\Http\Requests\SubirDocumentoFirmadoRequest;
+use App\Modules\Credito\Http\Requests\VenderCreditoRequest;
 use App\Modules\Credito\Models\Credito;
 use App\Modules\Credito\Models\DocumentoCredito;
 use App\Modules\Credito\Services\ConfiguracionCreditoService;
@@ -55,7 +58,7 @@ class CreditoController extends Controller
 
         $agencia = request()->user()->agencia;
 
-        $tipos = collect(['prendario', 'vehicular', 'hipotecario']);
+        $tipos = collect(['prendario', 'vehicular', 'hipotecario', 'diario']);
 
         $configPorTipo = $tipos->mapWithKeys(function (string $tipo) use ($agencia): array {
             if ($agencia === null) {
@@ -91,6 +94,8 @@ class CreditoController extends Controller
             (string) $data['interes'],
             $data['tipo_cuota'],
             isset($data['numero_cuotas']) ? (int) $data['numero_cuotas'] : null,
+            $data['tipo_interes'] ?? 'simple',
+            $data['tipo_credito'] ?? 'prendario',
         );
 
         return $this->successResponse($preview);
@@ -112,7 +117,8 @@ class CreditoController extends Controller
         }
 
         if (request()->filled('estado')) {
-            $query->where('estado', (string) request()->string('estado'));
+            $estados = (array) request()->query('estado');
+            $query->whereIn('estado', array_map(strval(...), $estados));
         }
 
         $creditos = $query->latest()->paginate(15);
@@ -174,7 +180,12 @@ class CreditoController extends Controller
 
         if (in_array($credito->estado, ['activo', 'vencido'], true)) {
             $credito->setAttribute('monto_liquidacion_sugerido', $this->creditoService->calcularMontoLiquidacion($credito));
-            $credito->setAttribute('monto_refrendo_sugerido', $this->creditoService->calcularMontoRefrendo($credito));
+
+            if ($credito->tipo_interes === 'compuesto') {
+                $credito->setAttribute('monto_pago_cuota_sugerido', $this->creditoService->calcularMontoPagoCuota($credito));
+            } else {
+                $credito->setAttribute('monto_refrendo_sugerido', $this->creditoService->calcularMontoRefrendo($credito));
+            }
         }
 
         if ($credito->estado === 'vencido') {
@@ -260,6 +271,23 @@ class CreditoController extends Controller
         return $this->successResponse($nuevo, 'Crédito refrendado', 201);
     }
 
+    public function pagarCuota(PagarCuotaCreditoRequest $request, Credito $credito): JsonResponse
+    {
+        Gate::authorize('pagarCuota', $credito);
+
+        $data = $request->validated();
+
+        $nuevo = $this->creditoService->pagarCuota(
+            $credito,
+            $request->user(),
+            (string) $data['monto_pagado'],
+            $data['medio'],
+            $request->file('comprobante'),
+        );
+
+        return $this->successResponse($nuevo, 'Cuota pagada', 201);
+    }
+
     public function liquidar(LiquidarCreditoRequest $request, Credito $credito): JsonResponse
     {
         Gate::authorize('liquidar', $credito);
@@ -332,6 +360,23 @@ class CreditoController extends Controller
         return $this->successResponse($credito, 'Tasa de interés actualizada');
     }
 
+    public function actualizarCondiciones(ActualizarCondicionesCreditoRequest $request, Credito $credito): JsonResponse
+    {
+        Gate::authorize('editar', $credito);
+
+        $data = $request->validated();
+
+        $credito = $this->creditoService->actualizarCondiciones(
+            $credito,
+            $request->user(),
+            $data['tipo_interes'] ?? null,
+            $data['tipo_cuota'] ?? null,
+            isset($data['monto_prestamo']) ? (string) $data['monto_prestamo'] : null,
+        );
+
+        return $this->successResponse($credito, 'Condiciones del crédito actualizadas');
+    }
+
     public function actualizarFechaDesembolso(ActualizarFechaDesembolsoCreditoRequest $request, Credito $credito): JsonResponse
     {
         Gate::authorize('editar', $credito);
@@ -382,6 +427,15 @@ class CreditoController extends Controller
         return $this->successResponse($credito, 'Conformidad registrada');
     }
 
+    public function vender(VenderCreditoRequest $request, Credito $credito): JsonResponse
+    {
+        Gate::authorize('vender', $credito);
+
+        $credito = $this->creditoService->vender($credito, $request->user(), $request->validated());
+
+        return $this->successResponse($credito, 'Vehículo transferido, contrato generado');
+    }
+
     public function verDocumento(Credito $credito, DocumentoCredito $documento): Response
     {
         // El sticker y los vouchers son documentos de salida (no se firman):
@@ -414,6 +468,7 @@ class CreditoController extends Controller
             (string) $credito->interes,
             $credito->tipo_cuota,
             $credito->numero_cuotas,
+            tipoCredito: $credito->tipo_credito,
         );
 
         return $this->documentoService->renderizarCronogramaTentativo($credito, $preview);

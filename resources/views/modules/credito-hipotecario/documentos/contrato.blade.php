@@ -5,7 +5,7 @@
     <title>Contrato de Préstamo con Garantía Hipotecaria #{{ $credito->id }}</title>
     <style>
         @page { margin: 4cm 1cm 3cm 3cm; }
-        body { font-family: DejaVu Sans, sans-serif; font-size: 8.3px; color: #1a1a1a; line-height: 1.2; }
+        body { font-family: DejaVu Sans, sans-serif; font-size: 10px; color: #1a1a1a; line-height: 1.2; }
         h1 { font-size: 12px; text-align: center; margin: 0; }
         h2 { font-size: 8.6px; margin-top: 4px; margin-bottom: 1px; }
         p { text-align: justify; margin: 2.5px 0; }

@@ -93,15 +93,17 @@ final class CajaBovedaHierarchyService
     }
 
     /**
-     * Safety-valve special case: administrador_general can always force-close
-     * (or reabrir) an administrador_agencia's OWN caja — even though it's now
-     * funded by the agencia bóveda that administrador_agencia themselves
-     * controls — as an escalation path if that person is unavailable.
-     * asesor/supervisor cajas stay administrador_agencia's job only.
+     * administrador_general can always force-close (or reabrir) ANY caja in
+     * their empresa — including asesor/supervisor cajas of an agencia they
+     * don't directly administer, not just administrador_agencia's own. Same
+     * full-empresa authority they already have over bóvedas/billetajes/
+     * cuentas bancarias — needed so closing another agencia's bóveda can
+     * cascade down and force-close every caja it funds (see
+     * BovedaController::cerrarForzado()).
      */
     public function puedeForzarCierre(User $superior, Caja $caja): bool
     {
-        if ($caja->user->hasRole('administrador_agencia') && $superior->hasRole('administrador_general')) {
+        if ($superior->hasRole('administrador_general')) {
             return $superior->empresa_id === $caja->empresa_id;
         }
 

@@ -6,8 +6,11 @@ use App\Modules\Caja\Http\Requests\StoreBovedaAperturaRequest;
 use App\Modules\Caja\Http\Requests\StoreBovedaInyeccionRequest;
 use App\Modules\Caja\Http\Requests\StoreCajaCierreRequest;
 use App\Modules\Caja\Models\Boveda;
+use App\Modules\Caja\Models\BovedaCiclo;
+use App\Modules\Caja\Models\Caja;
 use App\Modules\Caja\Services\BovedaService;
 use App\Modules\Caja\Services\CajaBovedaHierarchyService;
+use App\Modules\Caja\Services\CajaService;
 use App\Modules\Caja\Services\CuentaBancariaService;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Usuario\Models\User;
@@ -15,6 +18,7 @@ use App\Nucleo\Http\Controllers\Controller;
 use App\Nucleo\Traits\ApiResponse;
 use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 
 class BovedaController extends Controller
@@ -25,6 +29,7 @@ class BovedaController extends Controller
         private readonly BovedaService $bovedaService,
         private readonly CajaBovedaHierarchyService $hierarchy,
         private readonly CuentaBancariaService $cuentaBancariaService,
+        private readonly CajaService $cajaService,
     ) {}
 
     /**
@@ -137,6 +142,47 @@ class BovedaController extends Controller
         $this->bovedaService->eliminarInyeccion($boveda, $movimiento);
 
         return $this->successResponse(null, 'Inyección eliminada');
+    }
+
+    /**
+     * Preview de lo que se contaría si esta bóveda se cerrara ahora forzando
+     * el cierre de cada caja abierta debajo (ver cerrarForzado()) — misma
+     * autoridad que cerrar(), ya que es su preview.
+     */
+    public function detalleCierre(Boveda $boveda): JsonResponse
+    {
+        Gate::authorize('cerrar', $boveda);
+
+        return $this->successResponse($this->bovedaService->detalleCierre($boveda));
+    }
+
+    /**
+     * Cierra la bóveda forzando primero el cierre de cada caja abierta
+     * debajo (asesor/supervisor/administrador_agencia según el tipo de
+     * bóveda) — la vía que administrador_general usa para cerrar la bóveda
+     * de otra agencia sin depender de que cada usuario cierre su propia
+     * caja primero. Cada caja se cierra con su saldoEfectivo() calculado
+     * (nadie está físicamente presente para contarla), y monto_contado sigue
+     * siendo el arqueo real de la bóveda — que ya incluye el efectivo
+     * recién entregado por esas cajas, de ahí el preview en detalleCierre().
+     */
+    public function cerrarForzado(StoreCajaCierreRequest $request, Boveda $boveda): JsonResponse
+    {
+        Gate::authorize('cerrar', $boveda);
+
+        $cajas = $this->bovedaService->cajasAbiertasDebajo($boveda);
+
+        $cajas->each(fn (Caja $caja) => Gate::authorize('cerrarForzado', $caja));
+
+        $ciclo = DB::transaction(function () use ($request, $boveda, $cajas): BovedaCiclo {
+            $cajas->each(function (Caja $caja) use ($request): void {
+                $this->cajaService->cerrarForzado($request->user(), $caja, $caja->cicloAbierto->saldoEfectivo());
+            });
+
+            return $this->bovedaService->cerrar($boveda, $request->user(), (string) $request->validated('monto_contado'));
+        });
+
+        return $this->successResponse($ciclo, 'Bóveda cerrada (forzado)');
     }
 
     public function reabrir(Boveda $boveda): JsonResponse

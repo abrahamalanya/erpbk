@@ -39,6 +39,8 @@ class ProduccionClientesSeeder extends Seeder
                 'telefono' => $datos['telefono'],
                 'direccion' => $datos['direccion'],
                 'referencia' => $datos['referencia'],
+                'latitud' => $datos['latitud'],
+                'longitud' => $datos['longitud'],
                 'foto_cliente_path' => $datos['foto_cliente_path'],
                 'foto_dni_path' => $datos['foto_dni_path'],
                 'foto_dni_reverso_path' => $datos['foto_dni_reverso_path'],

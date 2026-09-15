@@ -24,12 +24,18 @@ class EnviarATiendaRequest extends FormRequest
      * Get the validation rules that apply to the request.
      *
      * `precios` is a { bien_id: precio_venta } map — the sale price the
-     * storefront will show for each bien of the crédito.
+     * storefront will show for each bien of the crédito. Tipos sin garantía
+     * real que rematar (diario) no piden esto — CreditoService::enviarATienda()
+     * los rechaza igual, con un mensaje de dominio más claro.
      *
      * @return array<string, ValidationRule|array<mixed>|string>
      */
     public function rules(): array
     {
+        if (! $this->pasaATiendaAlVencer()) {
+            return ['precios' => ['sometimes', 'array']];
+        }
+
         return [
             'precios' => ['required', 'array'],
             'precios.*' => ['numeric', 'min:0.01', 'max:99999999.99'],
@@ -44,7 +50,7 @@ class EnviarATiendaRequest extends FormRequest
         $validator->after(function (Validator $validator): void {
             $credito = $this->route('credito');
 
-            if (! $credito instanceof Credito) {
+            if (! $credito instanceof Credito || ! $this->pasaATiendaAlVencer()) {
                 return;
             }
 
@@ -58,6 +64,13 @@ class EnviarATiendaRequest extends FormRequest
                 }
             }
         });
+    }
+
+    private function pasaATiendaAlVencer(): bool
+    {
+        $credito = $this->route('credito');
+
+        return $credito instanceof Credito && app(CreditoTipoManager::class)->paraCredito($credito)->pasaATiendaAlVencer();
     }
 
     /**

@@ -31,10 +31,15 @@ class ProduccionBienesSeeder extends Seeder
                 ->where('numero_documento', $datos['cliente_numero_documento'])
                 ->firstOrFail();
 
-            Bien::query()->firstOrCreate([
+            // created_at entra a la clave porque un mismo cliente puede
+            // empeñar 2 bienes distintos con nombre/serie idénticos (ej. dos
+            // "lavadora" sin serie, en fechas distintas) — sin esto,
+            // firstOrCreate() los fusiona en uno solo y se pierde el otro.
+            $bien = Bien::query()->firstOrCreate([
                 'cliente_id' => $cliente->id,
                 'nombre' => $datos['nombre'],
                 'serie' => $datos['serie'],
+                'created_at' => $datos['created_at'],
             ], [
                 'empresa_id' => $empresa->id,
                 'agencia_id' => $agencia->id,
@@ -50,6 +55,18 @@ class ProduccionBienesSeeder extends Seeder
                 'video_path' => $datos['video_path'],
                 'estado' => $datos['estado'],
             ]);
+
+            // DatabaseSeeder corre con WithoutModelEvents: el hook de
+            // EsGarantia::bootEsGarantia() que asigna el código no se
+            // dispara. Lo asignamos a mano, y con saveQuietly() fijamos
+            // también el created_at real (el insert lo pisa con "now").
+            if ($bien->wasRecentlyCreated) {
+                $bien->forceFill([
+                    'codigo' => 'B-'.str_pad((string) $bien->id, 6, '0', STR_PAD_LEFT),
+                    'created_at' => $datos['created_at'],
+                    'updated_at' => $datos['created_at'],
+                ])->saveQuietly();
+            }
         }
     }
 

@@ -14,7 +14,9 @@ use App\Modules\Credito\Models\DocumentoCredito;
 use App\Modules\Credito\Notifications\CreditoAdendadoNotification;
 use App\Modules\Credito\Notifications\CreditoAprobacionRevertidaNotification;
 use App\Modules\Credito\Notifications\CreditoAprobadoNotification;
+use App\Modules\Credito\Notifications\CreditoCondicionesActualizadasNotification;
 use App\Modules\Credito\Notifications\CreditoConformidadRegistradaNotification;
+use App\Modules\Credito\Notifications\CreditoCuotaPagadaNotification;
 use App\Modules\Credito\Notifications\CreditoDesembolsadoNotification;
 use App\Modules\Credito\Notifications\CreditoEnVentaNotification;
 use App\Modules\Credito\Notifications\CreditoFechaDesembolsoActualizadaNotification;
@@ -28,6 +30,7 @@ use App\Modules\Credito\Notifications\CreditoRefrendadoNotification;
 use App\Modules\Credito\Notifications\CreditoSolicitadoNotification;
 use App\Modules\Credito\Notifications\CreditoSubsanadoNotification;
 use App\Modules\Credito\Notifications\CreditoVencidoNotification;
+use App\Modules\Credito\Notifications\CreditoVendidoNotification;
 use App\Modules\Credito\Tipos\CreditoTipoManager;
 use App\Modules\Sistemas\Services\NotificacionService;
 use App\Modules\Usuario\Models\User;
@@ -91,6 +94,27 @@ final class CreditoService
     private function garantiasDe(Credito $credito): MorphToMany
     {
         return $credito->garantiasComo($this->tipos->paraCredito($credito)->garantiaModelo());
+    }
+
+    /**
+     * Plazo total (días) para $n cuotas de $tipoCuota. Por defecto es
+     * simplemente `DIAS_POR_PERIODO[$tipoCuota] * $n`, igual para los cuatro
+     * tipos de crédito — salvo un caso: diario con tipo_cuota semanal usando
+     * las 4 cuotas por defecto. Ahí, diario (30×1), quincenal (2×15) y
+     * mensual (1×30) ya abarcan exactamente un mes calendario (30 días),
+     * pero semanal (4×7=28) queda 2 días corto — así que la última cuota
+     * absorbe esos 2 días de más (7, 7, 7, 9 en vez de 7, 7, 7, 7) para que
+     * el crédito también abarque el mes completo. Solo aplica a las 4
+     * cuotas por defecto: si el asesor elige un número de cuotas propio, se
+     * usa la fórmula genérica (confirmado explícitamente con el usuario).
+     */
+    private function plazoTotalPara(string $tipoCredito, string $tipoCuota, int $n): int
+    {
+        if ($tipoCredito === 'diario' && $tipoCuota === 'semanal' && $n === self::CUOTAS_POR_TIPO['semanal']) {
+            return 30;
+        }
+
+        return self::DIAS_POR_PERIODO[$tipoCuota] * $n;
     }
 
     /**
@@ -199,12 +223,18 @@ final class CreditoService
             // still pendiente, instead of deciding blind on raw fields.
             $this->documentos->generarContrato($credito, $actor);
             $this->documentos->generarDeclaracion($credito, $actor);
-            $this->documentos->generarFotos($credito, $actor);
+
+            // Diario no tiene una prenda física que fotografiar ni etiquetar
+            // (la garantía es un placeholder invisible).
+            if ($tipoClave !== 'diario') {
+                $this->documentos->generarFotos($credito, $actor);
+            }
 
             // El sticker se pega sobre el bien/vehículo físico en tienda; un
             // hipotecario no tiene un artículo que etiquetar (la garantía es
-            // el inmueble, que no pasa por tienda), así que no aplica.
-            if ($tipoClave !== 'hipotecario') {
+            // el inmueble, que no pasa por tienda), y diario tampoco tiene
+            // prenda física, así que no aplica.
+            if (! in_array($tipoClave, ['hipotecario', 'diario'], true)) {
                 $this->documentos->generarSticker($credito, $actor);
             }
 
@@ -375,6 +405,64 @@ final class CreditoService
     }
 
     /**
+     * Corrige tipo_interes / tipo_cuota / monto_prestamo de un crédito que
+     * todavía no se desembolsó — mismo alcance que actualizarInteres(): solo
+     * mientras está pendiente o aprobado, y solo antes de que exista un
+     * cronograma real (cuotas), ya que cambiar cualquiera de estos tres
+     * después invalidaría uno ya generado. Cada parámetro es independiente:
+     * null deja el valor actual sin tocar, para que el frontend pueda seguir
+     * ofreciendo un botón de edición por campo (mismo patrón que
+     * actualizarInteres()/actualizarFechaDesembolso()) contra un único
+     * endpoint.
+     */
+    public function actualizarCondiciones(Credito $credito, User $actor, ?string $tipoInteres, ?string $tipoCuota, ?string $montoPrestamo): Credito
+    {
+        if (! in_array($credito->estado, ['pendiente', 'aprobado'], true)) {
+            throw new DomainException('Solo se pueden editar estas condiciones mientras el crédito está pendiente o aprobado.');
+        }
+
+        if ($credito->cuotas()->exists()) {
+            throw new DomainException('No se pueden editar estas condiciones: el crédito ya tiene un cronograma generado.');
+        }
+
+        $nuevoTipoInteres = $tipoInteres ?? $credito->tipo_interes;
+
+        if ($nuevoTipoInteres === 'compuesto' && $credito->tipo_credito !== 'hipotecario') {
+            throw new DomainException('Solo los créditos hipotecarios pueden ser de interés compuesto.');
+        }
+
+        if ($nuevoTipoInteres === 'compuesto' && $credito->numero_cuotas === null) {
+            throw new DomainException('Debes indicar el número de cuotas antes de cambiar a interés compuesto.');
+        }
+
+        // Diario no tiene una garantía real que limite el monto (su
+        // "garantía" es un placeholder invisible, ver CreditoDiarioTipo) —
+        // este tope solo aplica a los tipos con prenda real.
+        if ($montoPrestamo !== null && $credito->tipo_credito !== 'diario') {
+            $sumaValorizaciones = $this->garantiasDe($credito)->get()->reduce(
+                fn (string $carry, $garantia): string => bcadd($carry, (string) $garantia->valorizacion, 2),
+                '0'
+            );
+
+            if (bccomp($montoPrestamo, $sumaValorizaciones, 2) > 0) {
+                throw new DomainException('El monto del préstamo no puede superar la suma de las valorizaciones de las garantías seleccionadas.');
+            }
+        }
+
+        $credito->update(array_filter([
+            'tipo_interes' => $tipoInteres,
+            'tipo_cuota' => $tipoCuota,
+            'monto_prestamo' => $montoPrestamo,
+        ], fn (?string $valor): bool => $valor !== null));
+
+        $credito = $credito->fresh();
+        $this->notificar($credito);
+        $this->notificaciones->enviar(collect([$credito->registradoPor]), new CreditoCondicionesActualizadasNotification($credito));
+
+        return $credito;
+    }
+
+    /**
      * Fija / corrige la fecha de desembolso de un crédito.
      *
      * - Si el crédito **aún no se desembolsó** (pendiente / aprobado): solo
@@ -414,7 +502,9 @@ final class CreditoService
                 // Aún sin desembolsar: solo se anota la fecha planificada.
                 $credito->update(['fecha_desembolso' => $nuevaFecha->toDateString()]);
             } else {
-                $nuevaFechaVencimiento = $nuevaFecha->copy()->addDays($credito->plazo_dias);
+                $nuevaFechaVencimiento = $credito->tipo_interes === 'compuesto'
+                    ? $this->fechaCuotaCompuesta($nuevaFecha, $credito->tipo_cuota, 1)
+                    : $nuevaFecha->copy()->addDays($credito->plazo_dias);
 
                 $credito->update([
                     'fecha_desembolso' => $nuevaFecha->toDateString(),
@@ -422,9 +512,11 @@ final class CreditoService
                 ]);
 
                 foreach ($credito->cuotas as $cuota) {
-                    $cuota->update([
-                        'fecha_vencimiento' => $nuevaFecha->copy()->addDays($diasPorCuota * $cuota->numero_cuota)->toDateString(),
-                    ]);
+                    $fechaCuota = $credito->tipo_interes === 'compuesto'
+                        ? $this->fechaCuotaCompuesta($nuevaFecha, $credito->tipo_cuota, $cuota->numero_cuota)
+                        : $nuevaFecha->copy()->addDays($diasPorCuota * $cuota->numero_cuota);
+
+                    $cuota->update(['fecha_vencimiento' => $fechaCuota->toDateString()]);
                 }
 
                 // El estado no es un accessor derivado como dias_en_mora: si
@@ -482,7 +574,9 @@ final class CreditoService
                 $credito->update(['numero_cuotas' => $numeroCuotas]);
             } else {
                 $nuevoPlazoDias = $diasPorCuota * $numeroCuotas;
-                $nuevaFechaVencimiento = $credito->fecha_desembolso->copy()->addDays($nuevoPlazoDias);
+                $nuevaFechaVencimiento = $credito->tipo_interes === 'compuesto'
+                    ? $this->fechaCuotaCompuesta($credito->fecha_desembolso, $credito->tipo_cuota, 1)
+                    : $credito->fecha_desembolso->copy()->addDays($nuevoPlazoDias);
 
                 $credito->cuotas()->delete();
 
@@ -492,7 +586,7 @@ final class CreditoService
                     'fecha_vencimiento' => $nuevaFechaVencimiento->toDateString(),
                 ]);
 
-                $this->generarCronograma($credito, $numeroCuotas, $diasPorCuota);
+                $this->generarCronograma($credito, $numeroCuotas);
 
                 $quedaVencido = $nuevaFechaVencimiento->copy()->startOfDay()->lt(now()->startOfDay());
 
@@ -568,8 +662,7 @@ final class CreditoService
             }
 
             $n = $numeroCuotas ?? $credito->numero_cuotas ?? self::CUOTAS_POR_TIPO[$credito->tipo_cuota];
-            $diasPorCuota = self::DIAS_POR_PERIODO[$credito->tipo_cuota];
-            $plazoTotal = $diasPorCuota * $n;
+            $plazoTotal = $this->plazoTotalPara($credito->tipo_credito, $credito->tipo_cuota, $n);
 
             // Prioridad: fecha explícita del formulario → fecha planificada ya
             // anotada en el crédito (actualizarFechaDesembolso en pendiente) → hoy.
@@ -577,11 +670,22 @@ final class CreditoService
                 ? Carbon::parse($fecha)->startOfDay()
                 : ($credito->fecha_desembolso?->copy()->startOfDay() ?? now()->startOfDay());
 
+            // Para interés compuesto, cada snapshot representa UNA sola cuota
+            // pendiente por vez (ver pagarCuota()): fecha_vencimiento marca el
+            // vencimiento de esa próxima cuota (mes de calendario real si es
+            // mensual, ver fechaCuotaCompuesta()), no el fin del plazo
+            // completo — así "vencido"/dias_en_mora reaccionan a la cuota
+            // inmediata, no a las n cuotas restantes. plazo_dias sí sigue
+            // reflejando el plazo total (lo usan los documentos/contrato).
+            $fechaVencimiento = $credito->tipo_interes === 'compuesto'
+                ? $this->fechaCuotaCompuesta($fechaDesembolso, $credito->tipo_cuota, 1)
+                : $fechaDesembolso->copy()->addDays($plazoTotal);
+
             $credito->update([
                 'estado' => 'activo',
                 'fecha_desembolso' => $fechaDesembolso->toDateString(),
                 'plazo_dias' => $plazoTotal,
-                'fecha_vencimiento' => $fechaDesembolso->copy()->addDays($plazoTotal)->toDateString(),
+                'fecha_vencimiento' => $fechaVencimiento->toDateString(),
             ]);
 
             if (! $esAdenda) {
@@ -599,7 +703,7 @@ final class CreditoService
             }
 
             $credito = $credito->fresh();
-            $this->generarCronograma($credito, $n, $diasPorCuota);
+            $this->generarCronograma($credito, $n, $plazoTotal);
 
             $this->documentos->generarVoucherDesembolso($credito, $actor, [
                 'monto' => (string) $credito->monto_prestamo,
@@ -635,9 +739,13 @@ final class CreditoService
      * calcularMontoLiquidacion(), evaluado a un período fijo en vez de días
      * transcurridos.
      */
-    private function generarCronograma(Credito $credito, int $n, int $diasPorCuota): void
+    private function generarCronograma(Credito $credito, int $n, ?int $plazoTotal = null): void
     {
-        foreach ($this->filasCronograma((string) $credito->monto_prestamo, (string) $credito->interes, $n, $diasPorCuota) as $fila) {
+        $filas = $credito->tipo_interes === 'compuesto'
+            ? $this->filasCronogramaCompuesto($credito->fecha_desembolso->copy(), (string) $credito->monto_prestamo, (string) $credito->interes, $credito->tipo_cuota, $n)
+            : $this->filasCronograma((string) $credito->monto_prestamo, (string) $credito->interes, $n, self::DIAS_POR_PERIODO[$credito->tipo_cuota], $plazoTotal);
+
+        foreach ($filas as $fila) {
             CuotaCredito::query()->create([
                 'credito_id' => $credito->id,
                 'empresa_id' => $credito->empresa_id,
@@ -656,33 +764,144 @@ final class CreditoService
      * cuota sobre el monto original completo. `dias` es el desfase desde el
      * desembolso hasta el vencimiento de esa cuota.
      *
+     * La cuota TOTAL se redondea al sol entero más cercano (39.99 -> 40.00),
+     * para que el cliente pague un monto redondo sin decimales — el capital
+     * es siempre el exacto de la amortización (sin tocar), el interés
+     * mostrado absorbe el ajuste de redondeo (33.33 + 6.67 = 40.00, en vez
+     * de 6.66). Como el capital de la última cuota ya es distinto (absorbe
+     * el resto de la amortización), su redondeo la "regulariza" sola, sin
+     * un caso especial aparte — confirmado explícitamente con el usuario.
+     *
+     * `$plazoTotal`, cuando se da, fija los días de la ÚLTIMA cuota en vez de
+     * `$diasPorCuota * $n` — usado por diario con tipo_cuota semanal (ver
+     * plazoTotalPara()) para que las 4 cuotas por defecto abarquen el mes
+     * calendario completo (30 días) en vez de quedar en 28.
+     *
      * @return list<array{numero_cuota: int, dias: int, monto_capital: string, monto_interes: string, monto_total: string}>
      */
-    private function filasCronograma(string $monto, string $interes, int $n, int $diasPorCuota): array
+    private function filasCronograma(string $monto, string $interes, int $n, int $diasPorCuota, ?int $plazoTotal = null): array
     {
         $capitalPorCuota = bcdiv($monto, (string) $n, 2);
         $saldoCapital = $monto;
 
         $factor = bcmul($monto, $interes, 10);
-        $interesCuota = bcdiv(bcmul($factor, (string) $diasPorCuota, 10), '3000', 2);
+        $interesNominal = bcdiv(bcmul($factor, (string) $diasPorCuota, 10), '3000', 2);
 
         $filas = [];
 
         for ($i = 1; $i <= $n; $i++) {
             $capitalCuota = $i === $n ? $saldoCapital : $capitalPorCuota;
+            $totalCuota = $this->bcRoundEntero(bcadd($capitalCuota, $interesNominal, 2));
 
             $filas[] = [
                 'numero_cuota' => $i,
-                'dias' => $diasPorCuota * $i,
+                'dias' => $i === $n ? ($plazoTotal ?? $diasPorCuota * $i) : $diasPorCuota * $i,
                 'monto_capital' => $capitalCuota,
-                'monto_interes' => $interesCuota,
-                'monto_total' => bcadd($capitalCuota, $interesCuota, 2),
+                'monto_interes' => bcsub($totalCuota, $capitalCuota, 2),
+                'monto_total' => $totalCuota,
             ];
 
             $saldoCapital = bcsub($saldoCapital, $capitalCuota, 2);
         }
 
         return $filas;
+    }
+
+    /**
+     * Redondeo half-up al sol entero más cercano (0 decimales, formateado a
+     * 2) — la cuota total de interés simple se muestra así (ver
+     * filasCronograma()), para que el cliente pague un monto sin decimales.
+     */
+    private function bcRoundEntero(string $numero): string
+    {
+        return bcadd(bcadd($numero, '0.5', 0), '0', 2);
+    }
+
+    /**
+     * Sistema francés (cuota fija): el interés de cada cuota se calcula
+     * sobre el SALDO INSOLUTO (que baja cada cuota), a diferencia de
+     * filasCronograma() que siempre cobra interés sobre el monto original
+     * completo. La tasa del periodo usa el día-conteo NOMINAL del tipo_cuota
+     * (30/7/15/1) — fija toda la vida del crédito, para que la cuota (y cada
+     * interés) sea predecible sin importar cuántos días reales tenga el mes
+     * calendario de turno (confirmado con el usuario: usar el día real aquí
+     * desbalanceaba la última cuota). Las FECHAS de vencimiento sí son mes de
+     * calendario real (ver fechaCuotaCompuesta()) — solo cambia qué día cae
+     * cada cuota, no cuánto cuesta. El interés se redondea a la décima
+     * (bcRoundMoney10() — solo el capital conserva los centavos, confirmado
+     * con el usuario) y el capital de cada fila es el resto exacto (cuota
+     * fija − interés), para que cada fila cuadre exacto contra la cuota — la
+     * última absorbe el saldo insoluto que quede, para que el crédito cierre
+     * en cero.
+     *
+     * @return list<array{numero_cuota: int, dias: int, monto_capital: string, monto_interes: string, monto_total: string}>
+     */
+    private function filasCronogramaCompuesto(Carbon $fechaBase, string $monto, string $interes, string $tipoCuota, int $n): array
+    {
+        $r = bcdiv(bcmul($interes, (string) self::DIAS_POR_PERIODO[$tipoCuota], 10), '3000', 10);
+
+        $factor = bcpow(bcadd('1', $r, 10), (string) $n, 10);
+        $cuotaFija = $this->bcRoundMoney(bcdiv(bcmul($monto, $r, 10), bcsub('1', bcdiv('1', $factor, 10), 10), 10));
+
+        $saldoInsoluto = $monto;
+        $filas = [];
+
+        for ($i = 1; $i <= $n; $i++) {
+            $fechaCuota = $this->fechaCuotaCompuesta($fechaBase, $tipoCuota, $i);
+
+            $interesCuota = $this->bcRoundMoney10(bcmul($saldoInsoluto, $r, 10));
+            $capitalCuota = $i === $n ? $saldoInsoluto : bcsub($cuotaFija, $interesCuota, 2);
+            $totalCuota = $i === $n ? bcadd($capitalCuota, $interesCuota, 2) : $cuotaFija;
+
+            $filas[] = [
+                'numero_cuota' => $i,
+                'dias' => (int) $fechaBase->diffInDays($fechaCuota),
+                'monto_capital' => $capitalCuota,
+                'monto_interes' => $interesCuota,
+                'monto_total' => $totalCuota,
+            ];
+
+            $saldoInsoluto = bcsub($saldoInsoluto, $capitalCuota, 2);
+        }
+
+        return $filas;
+    }
+
+    /**
+     * Redondeo half-up a 2 decimales — a diferencia del resto del módulo
+     * (que trunca, bcdiv/bcmul con scale nunca redondea), la cuota fija del
+     * sistema francés sí necesita redondeo estándar para que coincida con
+     * cualquier tabla de amortización de referencia (calculadora, Excel,
+     * otro banco) — confirmado contra un ejemplo exacto que pasó el usuario.
+     */
+    private function bcRoundMoney(string $numero): string
+    {
+        return bcadd($numero, '0.005', 2);
+    }
+
+    /**
+     * Redondeo half-up a la DÉCIMA más cercana (1 decimal), formateado a 2 —
+     * el interés de cada cuota compuesta se muestra así (solo el capital
+     * conserva los centavos), confirmado explícitamente con el usuario para
+     * que la tabla se lea más simple.
+     */
+    private function bcRoundMoney10(string $numero): string
+    {
+        return bcadd(bcadd($numero, '0.05', 1), '0', 2);
+    }
+
+    /**
+     * Fecha de vencimiento de la cuota N.º $numeroCuota de un crédito de
+     * interés compuesto, contada desde $fechaBase (fecha de desembolso o de
+     * la última cuota pagada). Mensual usa mes de calendario real (28-31
+     * días, "15 de cada mes"); las demás frecuencias no tienen variabilidad
+     * de calendario, así que siguen siendo un múltiplo fijo de días.
+     */
+    private function fechaCuotaCompuesta(Carbon $fechaBase, string $tipoCuota, int $numeroCuota): Carbon
+    {
+        return $tipoCuota === 'mensual'
+            ? $fechaBase->copy()->addMonthsNoOverflow($numeroCuota)
+            : $fechaBase->copy()->addDays(self::DIAS_POR_PERIODO[$tipoCuota] * $numeroCuota);
     }
 
     /**
@@ -693,7 +912,7 @@ final class CreditoService
      *
      * @return array{fecha_base: string, plazo_dias: int, cuotas: list<array{numero_cuota: int, fecha_vencimiento: string, monto_capital: string, monto_interes: string, monto_total: string}>}
      */
-    public function previsualizarCronograma(string $monto, string $interes, string $tipoCuota, ?int $numeroCuotas = null): array
+    public function previsualizarCronograma(string $monto, string $interes, string $tipoCuota, ?int $numeroCuotas = null, string $tipoInteres = 'simple', string $tipoCredito = 'prendario'): array
     {
         if (! isset(self::CUOTAS_POR_TIPO[$tipoCuota])) {
             throw new DomainException("Tipo de cuota inválido: {$tipoCuota}");
@@ -701,7 +920,12 @@ final class CreditoService
 
         $n = $numeroCuotas ?? self::CUOTAS_POR_TIPO[$tipoCuota];
         $diasPorCuota = self::DIAS_POR_PERIODO[$tipoCuota];
+        $plazoTotal = $this->plazoTotalPara($tipoCredito, $tipoCuota, $n);
         $base = now()->startOfDay();
+
+        $filas = $tipoInteres === 'compuesto'
+            ? $this->filasCronogramaCompuesto($base, $monto, $interes, $tipoCuota, $n)
+            : $this->filasCronograma($monto, $interes, $n, $diasPorCuota, $plazoTotal);
 
         $cuotas = array_map(fn (array $fila): array => [
             'numero_cuota' => $fila['numero_cuota'],
@@ -709,11 +933,11 @@ final class CreditoService
             'monto_capital' => $fila['monto_capital'],
             'monto_interes' => $fila['monto_interes'],
             'monto_total' => $fila['monto_total'],
-        ], $this->filasCronograma($monto, $interes, $n, $diasPorCuota));
+        ], $filas);
 
         return [
             'fecha_base' => $base->toDateString(),
-            'plazo_dias' => $diasPorCuota * $n,
+            'plazo_dias' => $plazoTotal,
             'cuotas' => $cuotas,
         ];
     }
@@ -739,6 +963,10 @@ final class CreditoService
     ): Credito {
         if (! in_array($credito->estado, ['activo', 'vencido'], true)) {
             throw new DomainException('Solo se puede refrendar un crédito activo o vencido.');
+        }
+
+        if ($credito->tipo_interes === 'compuesto') {
+            throw new DomainException('Este crédito es de interés compuesto: usa "pagar cuota" en vez de refrendar.');
         }
 
         $calculo = $this->calcularMontoRefrendo($credito);
@@ -773,8 +1001,7 @@ final class CreditoService
             $credito->update(['estado' => 'refrendado']);
 
             $n = self::CUOTAS_POR_TIPO[$credito->tipo_cuota];
-            $diasPorCuota = self::DIAS_POR_PERIODO[$credito->tipo_cuota];
-            $plazoTotal = $diasPorCuota * $n;
+            $plazoTotal = $this->plazoTotalPara($credito->tipo_credito, $credito->tipo_cuota, $n);
 
             $fechaDesembolso = now()->startOfDay();
 
@@ -804,19 +1031,22 @@ final class CreditoService
             // distinto, reservado para cuando SÍ se modifican las condiciones.
             $this->documentos->generarContrato($nuevo, $actor);
             $this->documentos->generarDeclaracion($nuevo, $actor);
-            $this->documentos->generarFotos($nuevo, $actor);
+
+            if ($credito->tipo_credito !== 'diario') {
+                $this->documentos->generarFotos($nuevo, $actor);
+            }
 
             if ($credito->tipo_credito === 'hipotecario') {
                 $this->documentos->generarFichaSocioeconomica($nuevo, $actor);
                 $this->documentos->generarNotificacionPago($nuevo, $actor);
                 $this->documentos->generarAvisoPrejudicial($nuevo, $actor);
                 $this->documentos->generarExpediente($nuevo, $actor);
-            } else {
+            } elseif ($credito->tipo_credito !== 'diario') {
                 $this->documentos->generarSticker($nuevo, $actor);
             }
 
             $nuevo = $nuevo->fresh(['bienes']);
-            $this->generarCronograma($nuevo, $n, $diasPorCuota);
+            $this->generarCronograma($nuevo, $n, $plazoTotal);
             $this->registrarCobroEnCaja($ciclo, $actor, $credito, $montoPagado, $medio, $comprobante, "Refrendo de crédito prendario #{$credito->id}", [
                 'operacion' => 'refrendo',
                 'interes' => $interes,
@@ -881,6 +1111,10 @@ final class CreditoService
             throw new DomainException('Solo se puede hacer una adenda a un crédito activo o vencido.');
         }
 
+        if ($credito->tipo_interes === 'compuesto') {
+            throw new DomainException('Este crédito es de interés compuesto: usa "pagar cuota" en vez de adendar.');
+        }
+
         $calculo = $this->calcularMontoRefrendo($credito);
         $interes = $calculo['interes'];
         $mora = $calculo['mora'];
@@ -934,14 +1168,17 @@ final class CreditoService
 
             $this->documentos->generarContrato($nuevo, $actor);
             $this->documentos->generarDeclaracion($nuevo, $actor);
-            $this->documentos->generarFotos($nuevo, $actor);
+
+            if ($credito->tipo_credito !== 'diario') {
+                $this->documentos->generarFotos($nuevo, $actor);
+            }
 
             if ($credito->tipo_credito === 'hipotecario') {
                 $this->documentos->generarFichaSocioeconomica($nuevo, $actor);
                 $this->documentos->generarNotificacionPago($nuevo, $actor);
                 $this->documentos->generarAvisoPrejudicial($nuevo, $actor);
                 $this->documentos->generarExpediente($nuevo, $actor);
-            } else {
+            } elseif ($credito->tipo_credito !== 'diario') {
                 $this->documentos->generarSticker($nuevo, $actor);
             }
 
@@ -975,6 +1212,159 @@ final class CreditoService
 
             $this->notificar($nuevo);
             $this->notificaciones->enviar(collect([$nuevo->registradoPor]), new CreditoAdendadoNotification($nuevo));
+
+            return $nuevo;
+        });
+    }
+
+    /**
+     * Paga la cuota fija correspondiente de un crédito de interés compuesto
+     * (sistema francés) — el equivalente de refrendar()/adendar() para este
+     * tipo de crédito, que no admite ninguno de esos dos (el capital ya se
+     * amortiza por cuota, no tiene sentido "renovar" pagando solo interés).
+     * Cierra el crédito actual y crea un sucesor con el saldo insoluto ya
+     * descontado, salvo que sea la ÚLTIMA cuota: ahí no hay sucesor, el
+     * crédito pasa a liquidado_pendiente igual que liquidar() (queda a la
+     * espera de la firma de la devolución de la garantía).
+     *
+     * Recalcular la cuota fija sobre el saldo insoluto y las cuotas
+     * restantes reproduce el mismo monto (propiedad matemática de las
+     * anualidades: una cuota fija calculada sobre P, r, n da la misma cuota
+     * si se recalcula sobre el saldo remanente tras k periodos con n-k
+     * periodos restantes, mismo r) — módulo redondeo, así el monto de cuota
+     * se mantiene estable durante toda la vida del crédito.
+     */
+    public function pagarCuota(Credito $credito, User $actor, string $montoPagado, string $medio, ?UploadedFile $comprobante): Credito
+    {
+        if ($credito->tipo_interes !== 'compuesto') {
+            throw new DomainException('Solo los créditos de interés compuesto se pagan por cuota — usa refrendar o liquidar.');
+        }
+
+        if (! in_array($credito->estado, ['activo', 'vencido'], true)) {
+            throw new DomainException('Solo se puede pagar una cuota de un crédito activo o vencido.');
+        }
+
+        $cuota = $credito->cuotas()->orderBy('numero_cuota')->first();
+
+        if (! $cuota) {
+            throw new DomainException('Este crédito no tiene un cronograma de cuotas generado.');
+        }
+
+        $mora = $this->calcularMora($credito);
+        $montoMinimo = bcadd((string) $cuota->monto_total, $mora, 2);
+
+        if (bccomp($montoPagado, $montoMinimo, 2) < 0) {
+            throw new DomainException("El monto pagado ({$montoPagado}) es menor a la cuota + mora a pagar calculada ({$montoMinimo}).");
+        }
+
+        $abonoExtra = bcsub($montoPagado, $montoMinimo, 2);
+        $abonoCapital = bcadd((string) $cuota->monto_capital, $abonoExtra, 2);
+        $nuevoCapital = bcsub((string) $credito->monto_prestamo, $abonoCapital, 2);
+        $nuevoNumeroCuotas = $credito->numero_cuotas - 1;
+
+        if ($nuevoNumeroCuotas > 0 && bccomp($nuevoCapital, '0', 2) <= 0) {
+            throw new DomainException('El abono ingresado cancela todo el saldo pendiente; selecciona Liquidar para cancelar el crédito.');
+        }
+
+        $modeloGarantia = $this->tipos->paraCredito($credito)->garantiaModelo();
+        $ciclo = $this->resolverCicloParaCobro($actor);
+
+        return DB::transaction(function () use ($credito, $actor, $cuota, $nuevoNumeroCuotas, $nuevoCapital, $mora, $abonoCapital, $ciclo, $montoPagado, $medio, $comprobante, $modeloGarantia): Credito {
+            if ($nuevoNumeroCuotas === 0) {
+                // Última cuota: mismo final que liquidar() — el pago ya
+                // canceló todo el saldo, solo falta la firma de la devolución
+                // para liberar la garantía (confirmarLiquidacionSiCorresponde()
+                // no cambia, reacciona igual sin importar cómo se llegó aquí).
+                $credito->update(['estado' => 'liquidado_pendiente']);
+
+                $credito = $credito->fresh(['inmuebles']);
+                $this->registrarCobroEnCaja($ciclo, $actor, $credito, $montoPagado, $medio, $comprobante, "Pago de última cuota — crédito hipotecario #{$credito->id}", [
+                    'operacion' => 'pago_cuota',
+                    'interes' => bcsub($montoPagado, bcadd($abonoCapital, $mora, 2), 2),
+                    'mora' => $mora,
+                ]);
+                $this->documentos->generarDevolucion($credito, $actor);
+
+                $this->documentos->generarVoucherPago($credito, $actor, [
+                    'operacion' => 'pago_cuota',
+                    'monto_pagado' => $montoPagado,
+                    'medio' => $medio,
+                    'mora' => $mora,
+                    'abono_capital' => $abonoCapital,
+                    'saldo_capital' => '0.00',
+                    'credito_id' => $credito->id,
+                    'fecha' => now()->toDateString(),
+                ]);
+
+                $this->notificar($credito);
+
+                return $credito->fresh(['inmuebles', 'documentos']);
+            }
+
+            $credito->update(['estado' => 'cuota_pagada']);
+
+            $diasPorCuota = self::DIAS_POR_PERIODO[$credito->tipo_cuota];
+            // Ancla el sucesor al vencimiento PROGRAMADO de la cuota recién
+            // pagada (no a "hoy") — así "15 de cada mes" se mantiene aunque
+            // el cliente pague unos días antes o tarde, y generarCronograma()
+            // (que arranca desde fecha_desembolso) genera las cuotas
+            // restantes con las mismas fechas ancladas.
+            $fechaDesembolso = $cuota->fecha_vencimiento->copy();
+
+            $nuevo = Credito::query()->create([
+                'empresa_id' => $credito->empresa_id,
+                'agencia_id' => $credito->agencia_id,
+                'tipo_credito' => $credito->tipo_credito,
+                'cliente_id' => $credito->cliente_id,
+                'aval_id' => $credito->aval_id,
+                'aval_2_id' => $credito->aval_2_id,
+                'supervisado_por' => $credito->supervisado_por,
+                'registrado_por' => $credito->registrado_por,
+                'pago_cuota_de_credito_id' => $credito->id,
+                'monto_prestamo' => $nuevoCapital,
+                'interes' => $credito->interes,
+                'tipo_interes' => 'compuesto',
+                'tipo_cuota' => $credito->tipo_cuota,
+                'numero_cuotas' => $nuevoNumeroCuotas,
+                'plazo_dias' => $diasPorCuota * $nuevoNumeroCuotas,
+                'estado' => 'activo',
+                'fecha_desembolso' => $fechaDesembolso->toDateString(),
+                'fecha_vencimiento' => $this->fechaCuotaCompuesta($fechaDesembolso, $credito->tipo_cuota, 1)->toDateString(),
+            ]);
+
+            $nuevo->garantiasComo($modeloGarantia)->attach($this->garantiasDe($credito)->get()->pluck('id'));
+
+            $this->documentos->generarContrato($nuevo, $actor);
+            $this->documentos->generarDeclaracion($nuevo, $actor);
+            $this->documentos->generarFotos($nuevo, $actor);
+            $this->documentos->generarFichaSocioeconomica($nuevo, $actor);
+            $this->documentos->generarNotificacionPago($nuevo, $actor);
+            $this->documentos->generarAvisoPrejudicial($nuevo, $actor);
+            $this->documentos->generarExpediente($nuevo, $actor);
+
+            $nuevo = $nuevo->fresh(['inmuebles']);
+            $this->generarCronograma($nuevo, $nuevoNumeroCuotas);
+            $this->registrarCobroEnCaja($ciclo, $actor, $credito, $montoPagado, $medio, $comprobante, "Pago de cuota — crédito hipotecario #{$credito->id}", [
+                'operacion' => 'pago_cuota',
+                'interes' => bcsub($montoPagado, bcadd($abonoCapital, $mora, 2), 2),
+                'mora' => $mora,
+                'credito_sucesor_id' => $nuevo->id,
+            ]);
+
+            $this->documentos->generarVoucherPago($credito, $actor, [
+                'operacion' => 'pago_cuota',
+                'monto_pagado' => $montoPagado,
+                'medio' => $medio,
+                'mora' => $mora,
+                'abono_capital' => $abonoCapital,
+                'saldo_capital' => $nuevoCapital,
+                'credito_id' => $credito->id,
+                'credito_sucesor_id' => $nuevo->id,
+                'fecha' => now()->toDateString(),
+            ]);
+
+            $this->notificar($nuevo);
+            $this->notificaciones->enviar(collect([$nuevo->registradoPor]), new CreditoCuotaPagadaNotification($nuevo));
 
             return $nuevo;
         });
@@ -1033,6 +1423,7 @@ final class CreditoService
                 'refinanciamiento_de_credito_id' => $credito->id,
                 'monto_prestamo' => $nuevoCapital,
                 'interes' => $credito->interes,
+                'tipo_interes' => $credito->tipo_interes,
                 'tipo_cuota' => $credito->tipo_cuota,
                 'plazo_dias' => $configuracion->plazo_dias,
                 'estado' => 'pendiente',
@@ -1252,6 +1643,28 @@ final class CreditoService
     }
 
     /**
+     * Monto a pagar en pagarCuota(): la cuota fija en curso (del cronograma
+     * ya generado) más la mora si está vencida — equivalente de
+     * calcularMontoRefrendo() para un crédito de interés compuesto.
+     *
+     * @return array{numero_cuota: int, monto_capital: string, monto_interes: string, cuota_total: string, mora: string, total: string}
+     */
+    public function calcularMontoPagoCuota(Credito $credito): array
+    {
+        $cuota = $credito->cuotas()->orderBy('numero_cuota')->firstOrFail();
+        $mora = $this->calcularMora($credito);
+
+        return [
+            'numero_cuota' => $cuota->numero_cuota,
+            'monto_capital' => (string) $cuota->monto_capital,
+            'monto_interes' => (string) $cuota->monto_interes,
+            'cuota_total' => (string) $cuota->monto_total,
+            'mora' => $mora,
+            'total' => bcadd((string) $cuota->monto_total, $mora, 2),
+        ];
+    }
+
+    /**
      * Resuelve el descuento a aplicar sobre `$montoBase` (interés+mora en
      * refrendo/adenda, o el total completo en liquidación) — nunca puede
      * exceder esa base (no tiene sentido "descontar" más de lo que se debe
@@ -1299,6 +1712,10 @@ final class CreditoService
             ->with(['agencia'])
             ->get()
             ->each(function (Credito $credito) use ($hoy): void {
+                if (! $this->tipos->paraCredito($credito)->pasaATiendaAlVencer()) {
+                    return;
+                }
+
                 if ($this->fechaLimiteEspera($credito) >= $hoy) {
                     return;
                 }
@@ -1328,6 +1745,11 @@ final class CreditoService
     public function enviarATienda(Credito $credito, User $actor, array $preciosPorBien = []): Credito
     {
         $tipo = $this->tipos->paraCredito($credito);
+
+        if (! $tipo->pasaATiendaAlVencer()) {
+            throw new DomainException('Este tipo de crédito no se envía a la tienda: no tiene garantía que rematar.');
+        }
+
         $requiereConformidad = $tipo->requiereConformidadPreviaATienda();
 
         if ($credito->estado === 'vencido') {
@@ -1426,6 +1848,10 @@ final class CreditoService
             return false;
         }
 
+        if (! $this->tipos->paraCredito($credito)->pasaATiendaAlVencer()) {
+            return false;
+        }
+
         return $this->fechaLimiteEspera($credito) < now()->startOfDay()->toDateString();
     }
 
@@ -1457,6 +1883,42 @@ final class CreditoService
         return $credito;
     }
 
+    /**
+     * Cierra el ciclo de vida de un crédito vehicular en_venta: registra al
+     * comprador del vehículo ya ejecutado y genera el "Contrato de
+     * Transferencia de Vehículo por Ejecución de Garantía". Solo aplica a
+     * vehicular (confirmado explícitamente con el usuario) y solo mientras
+     * el crédito está en_venta. Los pagos del comprador (depósitos previos +
+     * saldo) NO mueven caja — se reciben por depósito bancario directo, fuera
+     * del sistema (confirmado explícitamente); el documento solo deja
+     * constancia de los montos y fechas declarados.
+     *
+     * @param  array{comprador_nombre: string, comprador_tipo_documento: string, comprador_numero_documento: string, comprador_domicilio?: string|null, precio_transferencia: string, pagos_previos?: list<array{monto: string, fecha: string}>}  $datosComprador
+     */
+    public function vender(Credito $credito, User $actor, array $datosComprador): Credito
+    {
+        if ($credito->tipo_credito !== 'vehicular') {
+            throw new DomainException('Solo los créditos vehiculares pueden cerrarse con un contrato de transferencia.');
+        }
+
+        $this->asegurarEstado($credito, 'en_venta');
+
+        return DB::transaction(function () use ($credito, $actor, $datosComprador): Credito {
+            $credito->update(['estado' => 'vendido']);
+
+            $this->documentos->generarContratoTransferencia($credito, $actor, $datosComprador);
+
+            $credito = $credito->fresh();
+            $this->notificar($credito);
+            $this->notificaciones->enviar(
+                $this->hierarchy->controladoresDe($credito)->push($credito->registradoPor),
+                new CreditoVendidoNotification($credito),
+            );
+
+            return $credito;
+        });
+    }
+
     public function calcularMora(Credito $credito): string
     {
         $dias = $credito->dias_en_mora;
@@ -1467,6 +1929,19 @@ final class CreditoService
 
         $configuracion = $this->configuracion->resolverPara($credito->agencia, $credito->tipo_credito);
         $tasaDiaria = bcdiv((string) $configuracion->tasa_mora_diaria, '100', 4);
+
+        // Compuesto: la mora penaliza solo la cuota vencida impaga (el
+        // monto que efectivamente no se pagó a tiempo), no el saldo insoluto
+        // completo como en el modelo simple — confirmado con el usuario.
+        if ($credito->tipo_interes === 'compuesto') {
+            $cuota = $credito->cuotas()->orderBy('numero_cuota')->first();
+
+            if (! $cuota) {
+                return '0.00';
+            }
+
+            return bcmul(bcmul((string) $cuota->monto_total, $tasaDiaria, 4), (string) $dias, 2);
+        }
 
         return bcmul(bcmul((string) $credito->monto_prestamo, $tasaDiaria, 4), (string) $dias, 2);
     }

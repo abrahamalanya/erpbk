@@ -248,6 +248,29 @@ it('streams the notificacion_pago and aviso_prejudicial PDFs with the overdue cu
         ->and(substr_count($html, '<tr>'))->toBeGreaterThanOrEqual(4); // encabezado + 3 vencidas
 });
 
+it('shows the asesor who registered the crédito, not the empresa, as the contact in notificacion_pago', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $this->asesor->update(['nombre' => 'Juan', 'apellido' => 'Pérez', 'telefono' => '987654321']);
+    $this->empresa->update(['apoderado_legal' => 'Norma Quispe Quicaña', 'celular_cobranzas' => '965263936']);
+
+    $creditoId = $this->postJson('/api/creditos-hipotecarios', [
+        'inmueble_ids' => [$this->inmueble->id],
+        'supervisado_por' => $this->adminAgencia->id,
+        'monto_prestamo' => 15000,
+        'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+
+    $credito = Credito::find($creditoId)->load(['cliente', 'agencia', 'empresa', 'cuotas', 'registradoPor']);
+    $doc = $credito->documentos()->where('tipo', 'notificacion_pago')->first();
+    $html = view('modules.credito-hipotecario.documentos.notificacion_pago', ['credito' => $credito, 'documento' => $doc])->render();
+
+    expect($html)->toContain('987654321')
+        ->and($html)->toContain('JUAN PÉREZ')
+        ->and($html)->not->toContain('965263936')
+        ->and($html)->not->toContain('NORMA QUISPE QUICAÑA');
+});
+
 it('streams the ficha_socioeconomica PDF, with and without a ficha loaded on the cliente', function () {
     Sanctum::actingAs($this->asesor, ['*']);
 

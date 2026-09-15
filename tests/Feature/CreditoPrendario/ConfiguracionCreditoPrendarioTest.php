@@ -145,3 +145,62 @@ it('rejects registering a crédito when no configuration exists at all', functio
         'tipo_cuota' => 'mensual',
     ])->assertUnprocessable();
 });
+
+it('allows administrador_agencia to delete their own agencia override', function () {
+    $config = ConfiguracionCredito::factory()->deAgencia($this->agencia)->create();
+
+    $adminAgencia = User::factory()->forAgencia($this->agencia)->create();
+    $adminAgencia->assignRole('administrador_agencia');
+    Sanctum::actingAs($adminAgencia, ['*']);
+
+    $this->deleteJson("/api/configuraciones-credito-prendario/{$config->id}")->assertSuccessful();
+
+    expect(ConfiguracionCredito::find($config->id))->toBeNull();
+});
+
+it('denies administrador_agencia from deleting an override of another agencia', function () {
+    $otraAgencia = Agencia::factory()->for($this->empresa)->create();
+    $config = ConfiguracionCredito::factory()->deAgencia($otraAgencia)->create();
+
+    $adminAgencia = User::factory()->forAgencia($this->agencia)->create();
+    $adminAgencia->assignRole('administrador_agencia');
+    Sanctum::actingAs($adminAgencia, ['*']);
+
+    $this->deleteJson("/api/configuraciones-credito-prendario/{$config->id}")->assertForbidden();
+
+    expect(ConfiguracionCredito::find($config->id))->not->toBeNull();
+});
+
+it('denies an asesor without the permission from deleting a configuration', function () {
+    $config = ConfiguracionCredito::factory()->deAgencia($this->agencia)->create();
+
+    $asesor = User::factory()->forAgencia($this->agencia)->create();
+    $asesor->assignRole('asesor');
+    Sanctum::actingAs($asesor, ['*']);
+
+    $this->deleteJson("/api/configuraciones-credito-prendario/{$config->id}")->assertForbidden();
+});
+
+it('allows administrador_general to delete the empresa-wide default configuration', function () {
+    $config = ConfiguracionCredito::factory()->deEmpresa($this->empresa)->create();
+
+    $admin = User::factory()->forEmpresa($this->empresa)->create();
+    $admin->assignRole('administrador_general');
+    Sanctum::actingAs($admin, ['*']);
+
+    $this->deleteJson("/api/configuraciones-credito-prendario/{$config->id}")->assertSuccessful();
+
+    expect(ConfiguracionCredito::find($config->id))->toBeNull();
+});
+
+it('denies administrador_agencia from deleting the empresa-wide default configuration', function () {
+    $config = ConfiguracionCredito::factory()->deEmpresa($this->empresa)->create();
+
+    $adminAgencia = User::factory()->forAgencia($this->agencia)->create();
+    $adminAgencia->assignRole('administrador_agencia');
+    Sanctum::actingAs($adminAgencia, ['*']);
+
+    $this->deleteJson("/api/configuraciones-credito-prendario/{$config->id}")->assertForbidden();
+
+    expect(ConfiguracionCredito::find($config->id))->not->toBeNull();
+});

@@ -61,6 +61,21 @@ it('filters créditos by estado', function () {
         ->and($response->json('data.data.0.estado'))->toBe('vencido');
 });
 
+it('filters créditos by multiple estado values', function () {
+    $bien = Bien::factory()->paraCliente($this->cliente1)->create();
+    Credito::factory()->paraBien($bien)->count(2)->create(['estado' => 'pendiente']);
+    Credito::factory()->paraBien($bien)->create(['estado' => 'aprobado']);
+    Credito::factory()->paraBien($bien)->activo()->create();
+    Credito::factory()->paraBien($bien)->vencido()->create();
+
+    $response = $this->getJson('/api/creditos-prendarios?estado[]=aprobado&estado[]=activo&estado[]=vencido')
+        ->assertSuccessful();
+
+    expect($response->json('data.data'))->toHaveCount(3)
+        ->and(collect($response->json('data.data'))->pluck('estado')->all())
+        ->each(fn ($estado) => $estado->toBeIn(['aprobado', 'activo', 'vencido']));
+});
+
 it('combines tipo_credito, cliente_id and estado filters', function () {
     $bien1 = Bien::factory()->paraCliente($this->cliente1)->create();
     $bien2 = Bien::factory()->paraCliente($this->cliente2)->create();

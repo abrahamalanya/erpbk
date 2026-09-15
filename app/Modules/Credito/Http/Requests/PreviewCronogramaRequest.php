@@ -23,6 +23,8 @@ class PreviewCronogramaRequest extends FormRequest
             'interes' => ['required', 'numeric', 'min:0'],
             'tipo_cuota' => ['required', Rule::in(['diario', 'semanal', 'quincenal', 'mensual'])],
             'numero_cuotas' => ['nullable', 'integer', 'min:1', 'max:60'],
+            'tipo_interes' => ['nullable', Rule::in(['simple', 'compuesto'])],
+            'tipo_credito' => ['nullable', Rule::in(['prendario', 'vehicular', 'hipotecario', 'diario'])],
         ];
     }
 

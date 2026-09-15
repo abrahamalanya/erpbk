@@ -83,6 +83,12 @@ class CreditoPolicy
         return $user->can('creditos_prendarios.refrendar') && $this->hierarchy->puedeVer($user, $credito);
     }
 
+    /** Mismo alcance que refrendar() — es su equivalente para créditos de interés compuesto. */
+    public function pagarCuota(User $user, Credito $credito): bool
+    {
+        return $user->can('creditos_prendarios.pagar_cuota') && $this->hierarchy->puedeVer($user, $credito);
+    }
+
     public function liquidar(User $user, Credito $credito): bool
     {
         return $user->can('creditos_prendarios.liquidar') && $this->hierarchy->puedeVer($user, $credito);
@@ -160,5 +166,16 @@ class CreditoPolicy
     public function confirmarConformidad(User $user, Credito $credito): bool
     {
         return $user->can('creditos_prendarios.enviar_tienda') && $this->hierarchy->puedeAprobar($user, $credito);
+    }
+
+    /**
+     * Cierra el crédito vehicular en_venta registrando al comprador del
+     * vehículo ejecutado. Misma autoridad admin que enviarATienda/
+     * confirmarConformidad — fijar el precio final de transferencia es una
+     * decisión de nivel admin.
+     */
+    public function vender(User $user, Credito $credito): bool
+    {
+        return $user->can('creditos_prendarios.vender') && $this->hierarchy->puedeAprobar($user, $credito);
     }
 }

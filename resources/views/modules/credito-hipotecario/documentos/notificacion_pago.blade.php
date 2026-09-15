@@ -5,7 +5,7 @@
     <title>Notificación — Requerimiento de pago — Crédito #{{ $credito->id }}</title>
     <style>
         @page { margin: 4cm 1cm 3cm 3cm; }
-        body { font-family: DejaVu Sans, sans-serif; font-size: 10px; color: #1a1a1a; line-height: 1.4; }
+        body { font-family: DejaVu Sans, sans-serif; font-size: 11px; color: #1a1a1a; line-height: 1.4; }
         h1 { font-size: 13px; text-align: center; margin: 0 0 12px; letter-spacing: 2px; }
         p { text-align: justify; margin: 5px 0; }
         .ref td { padding: 1px 0; vertical-align: top; }
@@ -25,6 +25,7 @@
 
         $c = $credito->cliente;
         $emp = $credito->empresa;
+        $asesor = $credito->registradoPor;
         $fecha = $documento->generado_at->locale('es')->translatedFormat('d \\d\\e F \\d\\e\\l Y');
         $ciudad = Str::after($credito->agencia->nombre, 'Agencia ');
         $razonSocial = $emp->razon_social ?: $emp->nombre;
@@ -97,8 +98,8 @@
 
     <p>
         Lo instamos a comunicarse con nosotros a la brevedad posible
-        @if (filled($emp->celular_cobranzas))
-            al número de celular N° {{ $emp->celular_cobranzas }}@if (filled($emp->apoderado_legal)) ({{ mb_strtoupper($emp->apoderado_legal) }})@endif.
+        @if (filled($asesor?->telefono))
+            al número de celular N° {{ $asesor->telefono }} ({{ mb_strtoupper($asesor->nombre.' '.$asesor->apellido) }}).
         @else
             al número de celular N° __________________________.
         @endif

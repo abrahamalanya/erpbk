@@ -5,7 +5,7 @@
     <title>Expediente — Crédito #{{ $credito->id }}</title>
     <style>
         @page { margin: 2cm 1.6cm; }
-        body { font-family: DejaVu Sans, sans-serif; font-size: 10px; color: #1a1a1a; }
+        body { font-family: DejaVu Sans, sans-serif; font-size: 11px; color: #1a1a1a; }
         .exp-persona-titulo { font-size: 20px; font-weight: bold; text-align: center; margin: 8px 0 4px; }
         .exp-rol { font-size: 12px; text-align: center; color: #444; margin-bottom: 14px; }
         .exp-datos { width: 70%; margin: 0 auto; border-collapse: collapse; }

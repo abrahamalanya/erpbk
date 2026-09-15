@@ -29,7 +29,7 @@ class UpdateConfiguracionCreditoRequest extends FormRequest
                 'nullable', 'integer', 'exists:empresas,id',
             ],
             'agencia_id' => ['nullable', 'integer', 'exists:agencias,id'],
-            'tipo_credito' => ['nullable', Rule::in(['prendario', 'vehicular', 'hipotecario'])],
+            'tipo_credito' => ['nullable', Rule::in(['prendario', 'vehicular', 'hipotecario', 'diario'])],
             'interes_default' => ['required', 'numeric', 'min:0'],
             'plazo_dias' => ['required', 'integer', 'min:1'],
             'dias_espera_mora' => ['required', 'integer', 'min:0'],

@@ -36,6 +36,9 @@ class DatabaseSeeder extends Seeder
                 ProduccionUsuariosSeeder::class,
                 ProduccionClientesSeeder::class,
                 ProduccionBienesSeeder::class,
+                ProduccionVehiculosSeeder::class,
+                ProduccionInmueblesSeeder::class,
+                ProduccionCreditosSeeder::class,
             ]);
         }
 

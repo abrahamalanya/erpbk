@@ -68,4 +68,13 @@ class ConfiguracionCreditoController extends Controller
 
         return $this->successResponse($configuracion, 'Configuración actualizada');
     }
+
+    public function destroy(ConfiguracionCredito $configuracion): JsonResponse
+    {
+        Gate::authorize('delete', [ConfiguracionCredito::class, $configuracion->agencia]);
+
+        $this->configuracionService->eliminar($configuracion);
+
+        return $this->successResponse(null, 'Configuración eliminada');
+    }
 }

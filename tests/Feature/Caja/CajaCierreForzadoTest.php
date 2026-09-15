@@ -86,6 +86,23 @@ it('auto-rejects pending billetajes when force-closing a caja', function () {
     expect($ciclo->billetajes()->latest()->firstOrFail()->estado)->toBe('rechazado');
 });
 
+it('allows administrador_general to force-close an asesor caja directly, not just administrador_agencia', function () {
+    $asesor = User::factory()->forAgencia($this->agencia)->create();
+    $asesor->assignRole('asesor');
+    Sanctum::actingAs($asesor, ['*']);
+    $this->postJson('/api/caja/aperturar')->assertCreated();
+
+    $caja = Caja::query()->where('user_id', $asesor->id)->firstOrFail();
+
+    $administradorGeneral = User::factory()->forEmpresa($this->empresa)->create();
+    $administradorGeneral->assignRole('administrador_general');
+    Sanctum::actingAs($administradorGeneral, ['*']);
+
+    $this->postJson("/api/cajas/{$caja->id}/cerrar-forzado", ['monto_contado' => 30])
+        ->assertSuccessful()
+        ->assertJsonPath('data.cierre_forzado', true);
+});
+
 it('allows administrador_general to force-close an administrador_agencia caja', function () {
     $adminAgencia = User::factory()->forAgencia($this->agencia)->create();
     $adminAgencia->assignRole('administrador_agencia');

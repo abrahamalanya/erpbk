@@ -61,6 +61,13 @@ interface CreditoTipo
     public function requiereConformidadPreviaATienda(): bool;
 
     /**
+     * Whether a vencido crédito that exceeds its período de espera moves to
+     * en_venta/tienda (remate de la garantía). False for tipos sin garantía
+     * real (diario): se queda en vencido indefinidamente, solo cobranza.
+     */
+    public function pasaATiendaAlVencer(): bool;
+
+    /**
      * Blade view name for a generated documento (contrato, declaracion,
      * fotos, devolucion, adenda, cronograma).
      */

@@ -46,6 +46,7 @@ final class HipotecarioTipo extends CreditoTipoSupervisado
             ...parent::atributosExtra($datos),
             'aval_id' => $datos['aval_id'] ?? null,
             'aval_2_id' => $datos['aval_2_id'] ?? null,
+            'tipo_interes' => $datos['tipo_interes'] ?? 'simple',
         ];
     }
 }

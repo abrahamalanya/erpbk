@@ -45,6 +45,11 @@ final class PrendarioTipo implements CreditoTipo
         return false;
     }
 
+    public function pasaATiendaAlVencer(): bool
+    {
+        return true;
+    }
+
     public function vistaDocumento(string $tipoDocumento): string
     {
         return "modules.credito-prendario.documentos.{$tipoDocumento}";

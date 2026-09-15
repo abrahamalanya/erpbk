@@ -4,6 +4,7 @@ namespace App\Modules\Credito\Models;
 
 use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Cobranza\Models\Cobro;
+use App\Modules\CreditoDiario\Models\CreditoDiarioGarantia;
 use App\Modules\CreditoHipotecario\Models\Inmueble;
 use App\Modules\CreditoPrendario\Models\Bien;
 use App\Modules\CreditoVehicular\Models\Vehiculo;
@@ -39,6 +40,7 @@ class Credito extends Model
     protected $fillable = [
         'empresa_id',
         'agencia_id',
+        'codigo',
         'tipo_credito',
         'cliente_id',
         'aval_id',
@@ -49,8 +51,10 @@ class Credito extends Model
         'numero_refrendo',
         'adenda_de_credito_id',
         'refinanciamiento_de_credito_id',
+        'pago_cuota_de_credito_id',
         'monto_prestamo',
         'interes',
+        'tipo_interes',
         'interes_solicitud_especial',
         'motivo_interes',
         'tipo_cuota',
@@ -83,6 +87,26 @@ class Credito extends Model
             'fecha_vencimiento' => 'date',
             'conformidad_confirmada_at' => 'datetime',
         ];
+    }
+
+    /**
+     * Asigna un código único legible (prefijo + id con ceros a la izquierda)
+     * apenas se crea el crédito, igual que EsGarantia::bootEsGarantia() —
+     * pero compartido por los 4 tipos (viven en la misma tabla), así que no
+     * necesita un prefijo por subclase. saveQuietly() para no re-disparar
+     * eventos (notificaciones, broadcast).
+     */
+    public static function booted(): void
+    {
+        static::created(function (Credito $credito): void {
+            if (filled($credito->codigo)) {
+                return;
+            }
+
+            $credito->forceFill([
+                'codigo' => 'C-'.str_pad((string) $credito->getKey(), 6, '0', STR_PAD_LEFT),
+            ])->saveQuietly();
+        });
     }
 
     public function empresa(): BelongsTo
@@ -121,6 +145,11 @@ class Credito extends Model
     public function inmuebles(): MorphToMany
     {
         return $this->garantiasComo(Inmueble::class);
+    }
+
+    public function garantiasDiarias(): MorphToMany
+    {
+        return $this->garantiasComo(CreditoDiarioGarantia::class);
     }
 
     public function cliente(): BelongsTo
@@ -192,6 +221,16 @@ class Credito extends Model
     public function refinanciamientos(): HasMany
     {
         return $this->hasMany(self::class, 'refinanciamiento_de_credito_id');
+    }
+
+    public function pagoCuotaDe(): BelongsTo
+    {
+        return $this->belongsTo(self::class, 'pago_cuota_de_credito_id');
+    }
+
+    public function pagosCuota(): HasMany
+    {
+        return $this->hasMany(self::class, 'pago_cuota_de_credito_id');
     }
 
     public function documentos(): HasMany

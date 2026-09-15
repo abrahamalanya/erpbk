@@ -4,6 +4,7 @@ namespace Database\Factories;
 
 use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Credito\Models\Credito;
+use App\Modules\CreditoDiario\Models\CreditoDiarioGarantia;
 use App\Modules\CreditoHipotecario\Models\Inmueble;
 use App\Modules\CreditoPrendario\Models\Bien;
 use App\Modules\CreditoVehicular\Models\Vehiculo;
@@ -53,6 +54,7 @@ class CreditoFactory extends Factory
         'prendario' => ['modelo' => Bien::class, 'relacion' => 'bienes'],
         'vehicular' => ['modelo' => Vehiculo::class, 'relacion' => 'vehiculos'],
         'hipotecario' => ['modelo' => Inmueble::class, 'relacion' => 'inmuebles'],
+        'diario' => ['modelo' => CreditoDiarioGarantia::class, 'relacion' => 'garantiasDiarias'],
     ];
 
     public function configure(): static
@@ -88,6 +90,11 @@ class CreditoFactory extends Factory
     public function hipotecario(): static
     {
         return $this->state(fn (): array => ['tipo_credito' => 'hipotecario']);
+    }
+
+    public function diario(): static
+    {
+        return $this->state(fn (): array => ['tipo_credito' => 'diario', 'tipo_cuota' => 'diario']);
     }
 
     public function paraVehiculo(Vehiculo $vehiculo): static

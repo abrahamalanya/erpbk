@@ -45,9 +45,9 @@ class BovedaPolicy
      * de su empresa (no solo la principal) — misma autoridad de empresa
      * completa que ya tiene para billetajes/cuentas bancarias. No se toca
      * CajaBovedaHierarchyService::puedeControlarBoveda() para esto: esa
-     * también la usa puedeForzarCierre(), donde el force-close de cajas de
-     * asesor/supervisor debe seguir siendo solo trabajo del
-     * administrador_agencia (confirmado explícitamente).
+     * también la usa puedeForzarCierre(), que por separado ya le da a
+     * administrador_general autoridad de empresa completa para forzar el
+     * cierre de cualquier caja debajo.
      */
     public function cerrar(User $user, Boveda $boveda): bool
     {

@@ -3,6 +3,8 @@
 namespace App\Providers;
 
 use App\Modules\Credito\Tipos\CreditoTipoManager;
+use App\Modules\CreditoDiario\Models\CreditoDiarioGarantia;
+use App\Modules\CreditoDiario\Tipos\CreditoDiarioTipo;
 use App\Modules\CreditoHipotecario\Models\Inmueble;
 use App\Modules\CreditoHipotecario\Tipos\HipotecarioTipo;
 use App\Modules\CreditoPrendario\Models\Bien;
@@ -24,6 +26,7 @@ class AppServiceProvider extends ServiceProvider
             $manager->registrar($app->make(PrendarioTipo::class));
             $manager->registrar($app->make(VehicularTipo::class));
             $manager->registrar($app->make(HipotecarioTipo::class));
+            $manager->registrar($app->make(CreditoDiarioTipo::class));
 
             return $manager;
         });
@@ -43,6 +46,7 @@ class AppServiceProvider extends ServiceProvider
             'bien' => Bien::class,
             'vehiculo' => Vehiculo::class,
             'inmueble' => Inmueble::class,
+            'diario_garantia' => CreditoDiarioGarantia::class,
         ]);
     }
 }

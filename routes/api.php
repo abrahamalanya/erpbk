@@ -10,6 +10,7 @@ use App\Modules\Cobranza\Http\Controllers\CobroController;
 use App\Modules\Credito\Http\Controllers\ConfiguracionCreditoController;
 use App\Modules\Credito\Http\Controllers\CreditoController;
 use App\Modules\Credito\Http\Controllers\CreditoExpedienteController;
+use App\Modules\CreditoDiario\Http\Controllers\CreditoDiarioController;
 use App\Modules\CreditoHipotecario\Http\Controllers\CreditoHipotecarioController;
 use App\Modules\CreditoHipotecario\Http\Controllers\InmuebleController;
 use App\Modules\CreditoPrendario\Http\Controllers\BienController;
@@ -18,7 +19,9 @@ use App\Modules\CreditoVehicular\Http\Controllers\VehiculoController;
 use App\Modules\Dashboard\Http\Controllers\DashboardController;
 use App\Modules\Empresa\Http\Controllers\AgenciaController;
 use App\Modules\Empresa\Http\Controllers\EmpresaController;
+use App\Modules\Reportes\Http\Controllers\ReporteCobranzaController;
 use App\Modules\Reportes\Http\Controllers\ReporteMovimientosController;
+use App\Modules\Ruta\Http\Controllers\RutaCobranzaController;
 use App\Modules\Simulador\Http\Controllers\SimuladorController;
 use App\Modules\Sistemas\Http\Controllers\AuthController;
 use App\Modules\Sistemas\Http\Controllers\ConceptoController;
@@ -97,6 +100,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('bovedas/mia', [BovedaController::class, 'mia'])->name('bovedas.mia');
     Route::apiResource('bovedas', BovedaController::class)->only(['index', 'show']);
     Route::post('bovedas/{boveda}/cerrar', [BovedaController::class, 'cerrar'])->name('bovedas.cerrar');
+    Route::get('bovedas/{boveda}/cierre/detalle', [BovedaController::class, 'detalleCierre'])->name('bovedas.cierre.detalle');
+    Route::post('bovedas/{boveda}/cerrar-forzado', [BovedaController::class, 'cerrarForzado'])->name('bovedas.cerrar-forzado');
     Route::post('bovedas/{boveda}/aperturar', [BovedaController::class, 'aperturar'])->name('bovedas.aperturar');
     Route::post('bovedas/{boveda}/inyectar', [BovedaController::class, 'inyectar'])->name('bovedas.inyectar');
     Route::get('bovedas/{boveda}/inyecciones', [BovedaController::class, 'inyecciones'])->name('bovedas.inyecciones');
@@ -129,6 +134,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('inmuebles', InmuebleController::class)->only(['index', 'store', 'show', 'update'])->parameters(['inmuebles' => 'inmueble']);
     Route::post('creditos-hipotecarios', [CreditoHipotecarioController::class, 'store'])->name('creditos-hipotecarios.store');
 
+    Route::post('creditos-diarios', [CreditoDiarioController::class, 'store'])->name('creditos-diarios.store');
+
     Route::get('creditos-prendarios/supervisores', [CreditoController::class, 'supervisores'])->name('creditos-prendarios.supervisores');
     Route::get('creditos-prendarios/configuracion', [CreditoController::class, 'configuracion'])->name('creditos-prendarios.configuracion');
     Route::post('creditos-prendarios/cronograma-preview', [CreditoController::class, 'cronogramaPreview'])->name('creditos-prendarios.cronograma-preview');
@@ -138,15 +145,18 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('creditos-prendarios/{credito}/subsanar', [CreditoController::class, 'subsanar'])->name('creditos-prendarios.subsanar');
     Route::post('creditos-prendarios/{credito}/desembolsar', [CreditoController::class, 'desembolsar'])->name('creditos-prendarios.desembolsar');
     Route::post('creditos-prendarios/{credito}/refrendar', [CreditoController::class, 'refrendar'])->name('creditos-prendarios.refrendar');
+    Route::post('creditos-prendarios/{credito}/pagar-cuota', [CreditoController::class, 'pagarCuota'])->name('creditos-prendarios.pagar-cuota');
     Route::post('creditos-prendarios/{credito}/liquidar', [CreditoController::class, 'liquidar'])->name('creditos-prendarios.liquidar');
     Route::post('creditos-prendarios/{credito}/adendar', [CreditoController::class, 'adendar'])->name('creditos-prendarios.adendar');
     Route::post('creditos-prendarios/{credito}/refinanciar', [CreditoController::class, 'refinanciar'])->name('creditos-prendarios.refinanciar');
     Route::post('creditos-prendarios/{credito}/actualizar-interes', [CreditoController::class, 'actualizarInteres'])->name('creditos-prendarios.actualizar-interes');
+    Route::post('creditos-prendarios/{credito}/actualizar-condiciones', [CreditoController::class, 'actualizarCondiciones'])->name('creditos-prendarios.actualizar-condiciones');
     Route::post('creditos-prendarios/{credito}/actualizar-fecha-desembolso', [CreditoController::class, 'actualizarFechaDesembolso'])->name('creditos-prendarios.actualizar-fecha-desembolso');
     Route::post('creditos-prendarios/{credito}/actualizar-numero-cuotas', [CreditoController::class, 'actualizarNumeroCuotas'])->name('creditos-prendarios.actualizar-numero-cuotas');
     Route::post('creditos-prendarios/{credito}/revertir-aprobacion', [CreditoController::class, 'revertirAprobacion'])->name('creditos-prendarios.revertir-aprobacion');
     Route::post('creditos-prendarios/{credito}/enviar-tienda', [CreditoController::class, 'enviarATienda'])->name('creditos-prendarios.enviar-tienda');
     Route::post('creditos-prendarios/{credito}/conformidad', [CreditoController::class, 'confirmarConformidad'])->name('creditos-prendarios.conformidad');
+    Route::post('creditos-prendarios/{credito}/vender', [CreditoController::class, 'vender'])->name('creditos-prendarios.vender');
     Route::get('creditos-prendarios/{credito}/cronograma/ver', [CreditoController::class, 'verCronograma'])->name('creditos-prendarios.cronograma.ver');
     Route::get('creditos-prendarios/{credito}/expediente', [CreditoExpedienteController::class, 'index'])->name('creditos-prendarios.expediente.index');
     Route::post('creditos-prendarios/{credito}/expediente', [CreditoExpedienteController::class, 'store'])->name('creditos-prendarios.expediente.store');
@@ -157,6 +167,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::get('configuraciones-credito-prendario', [ConfiguracionCreditoController::class, 'index'])->name('configuraciones-credito-prendario.index');
     Route::put('configuraciones-credito-prendario', [ConfiguracionCreditoController::class, 'update'])->name('configuraciones-credito-prendario.update');
+    Route::delete('configuraciones-credito-prendario/{configuracion}', [ConfiguracionCreditoController::class, 'destroy'])->name('configuraciones-credito-prendario.destroy');
 
     Route::apiResource('simulaciones-credito', SimuladorController::class)->only(['index', 'store', 'show', 'destroy'])->parameters(['simulaciones-credito' => 'simulacion']);
 
@@ -164,6 +175,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('cobros/creditos-pendientes/{cliente}', [CobroController::class, 'creditosPendientes'])->name('cobros.creditos-pendientes');
 
     Route::get('reportes/movimientos-dinero', [ReporteMovimientosController::class, 'movimientosDinero'])->name('reportes.movimientos-dinero');
+    Route::get('reportes/cobranza-diaria', [ReporteCobranzaController::class, 'cobranzaDiaria'])->name('reportes.cobranza-diaria');
+
+    Route::get('rutas-cobranza/asesores', [RutaCobranzaController::class, 'asesores'])->name('rutas-cobranza.asesores');
+    Route::get('rutas-cobranza', [RutaCobranzaController::class, 'show'])->name('rutas-cobranza.show');
+    Route::post('rutas-cobranza/reordenar', [RutaCobranzaController::class, 'reordenar'])->name('rutas-cobranza.reordenar');
 });
 
 // ===== HEALTH CHECK =====
