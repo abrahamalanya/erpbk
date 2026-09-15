@@ -2,6 +2,7 @@
 
 namespace App\Modules\Cobranza\Policies;
 
+use App\Modules\Cobranza\Models\Cobro;
 use App\Modules\Usuario\Models\User;
 
 class CobroPolicy
@@ -24,6 +25,17 @@ class CobroPolicy
      * cobro en sí lo autorizan las policies de refrendar()/liquidar().
      */
     public function registrar(User $user): bool
+    {
+        return $user->can('cobranzas.registrar');
+    }
+
+    /**
+     * Misma autoridad que registrar() — el candado real de "solo mientras tu
+     * caja sigue abierta" lo aplica CreditoService::anularCobro() (el ciclo
+     * de caja del cobro es siempre el ciclo propio del actor), así que esto
+     * solo verifica el permiso general.
+     */
+    public function anular(User $user, Cobro $cobro): bool
     {
         return $user->can('cobranzas.registrar');
     }

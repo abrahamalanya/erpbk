@@ -2,7 +2,9 @@
 
 namespace App\Modules\Cobranza\Http\Controllers;
 
+use App\Modules\Caja\Models\Caja;
 use App\Modules\Cliente\Models\Cliente;
+use App\Modules\Cobranza\Http\Requests\AnularCobroRequest;
 use App\Modules\Cobranza\Models\Cobro;
 use App\Modules\Credito\Models\Credito;
 use App\Modules\Credito\Services\CreditoHierarchyService;
@@ -61,8 +63,21 @@ class CobroController extends Controller
         }
 
         $porPagina = max(1, min(request()->integer('per_page', 15), 100));
+        $paginado = $query->latest()->paginate($porPagina);
 
-        return $this->successResponse($query->latest()->paginate($porPagina));
+        // `puede_anular` evita que el frontend tenga que adivinar la regla
+        // de negocio (mismo ciclo de caja, todavía abierto, del actor) —
+        // ver CreditoService::anularCobro().
+        $cicloAbiertoId = Caja::query()->where('user_id', $actor->id)->first()?->cicloAbierto()->first()?->id;
+
+        $paginado->getCollection()->each(
+            fn (Cobro $cobro) => $cobro->setAttribute(
+                'puede_anular',
+                $cobro->estado === 'registrado' && $cicloAbiertoId !== null && $cobro->caja_ciclo_id === $cicloAbiertoId
+            )
+        );
+
+        return $this->successResponse($paginado);
     }
 
     /**
@@ -89,5 +104,19 @@ class CobroController extends Controller
             });
 
         return $this->successResponse($creditos);
+    }
+
+    /**
+     * Anula un cobro registrado por error — solo mientras el ciclo de caja
+     * donde se cobró sigue siendo el ciclo abierto del actor (ver
+     * CreditoService::anularCobro()).
+     */
+    public function anular(AnularCobroRequest $request, Cobro $cobro): JsonResponse
+    {
+        Gate::authorize('anular', $cobro);
+
+        $credito = $this->creditoService->anularCobro($cobro, $request->user(), $request->validated()['motivo'] ?? null);
+
+        return $this->successResponse($credito->load(['bienes', 'vehiculos', 'inmuebles']), 'Cobro anulado');
     }
 }

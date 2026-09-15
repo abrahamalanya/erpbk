@@ -996,8 +996,9 @@ final class CreditoService
 
         $modeloGarantia = $this->tipos->paraCredito($credito)->garantiaModelo();
         $ciclo = $this->resolverCicloParaCobro($actor);
+        $estadoAnterior = $credito->estado;
 
-        return DB::transaction(function () use ($credito, $actor, $siguienteNumero, $nuevoCapital, $interes, $mora, $descuento, $motivoDescuento, $abonoCapital, $ciclo, $montoPagado, $medio, $comprobante, $modeloGarantia): Credito {
+        return DB::transaction(function () use ($credito, $actor, $siguienteNumero, $nuevoCapital, $interes, $mora, $descuento, $motivoDescuento, $abonoCapital, $ciclo, $montoPagado, $medio, $comprobante, $modeloGarantia, $estadoAnterior): Credito {
             $credito->update(['estado' => 'refrendado']);
 
             $n = self::CUOTAS_POR_TIPO[$credito->tipo_cuota];
@@ -1049,6 +1050,7 @@ final class CreditoService
             $this->generarCronograma($nuevo, $n, $plazoTotal);
             $this->registrarCobroEnCaja($ciclo, $actor, $credito, $montoPagado, $medio, $comprobante, "Refrendo de crédito prendario #{$credito->id}", [
                 'operacion' => 'refrendo',
+                'credito_estado_anterior' => $estadoAnterior,
                 'interes' => $interes,
                 'mora' => $mora,
                 'descuento' => $descuento,
@@ -1135,8 +1137,9 @@ final class CreditoService
         $configuracion = $this->configuracion->resolverPara($credito->agencia, $credito->tipo_credito);
         $modeloGarantia = $this->tipos->paraCredito($credito)->garantiaModelo();
         $ciclo = $this->resolverCicloParaCobro($actor);
+        $estadoAnterior = $credito->estado;
 
-        return DB::transaction(function () use ($credito, $actor, $nuevoInteres, $nuevoTipoCuota, $nuevoCapital, $interes, $mora, $descuento, $motivoDescuento, $abonoCapital, $configuracion, $ciclo, $montoPagado, $medio, $comprobante, $modeloGarantia): Credito {
+        return DB::transaction(function () use ($credito, $actor, $nuevoInteres, $nuevoTipoCuota, $nuevoCapital, $interes, $mora, $descuento, $motivoDescuento, $abonoCapital, $configuracion, $ciclo, $montoPagado, $medio, $comprobante, $modeloGarantia, $estadoAnterior): Credito {
             $credito->update(['estado' => 'adendado']);
 
             $nuevo = Credito::query()->create([
@@ -1185,6 +1188,7 @@ final class CreditoService
             $nuevo = $nuevo->fresh(['bienes']);
             $this->registrarCobroEnCaja($ciclo, $actor, $credito, $montoPagado, $medio, $comprobante, "Adenda de crédito prendario #{$credito->id}", [
                 'operacion' => 'adenda',
+                'credito_estado_anterior' => $estadoAnterior,
                 'interes' => $interes,
                 'mora' => $mora,
                 'descuento' => $descuento,
@@ -1268,8 +1272,9 @@ final class CreditoService
 
         $modeloGarantia = $this->tipos->paraCredito($credito)->garantiaModelo();
         $ciclo = $this->resolverCicloParaCobro($actor);
+        $estadoAnterior = $credito->estado;
 
-        return DB::transaction(function () use ($credito, $actor, $cuota, $nuevoNumeroCuotas, $nuevoCapital, $mora, $abonoCapital, $ciclo, $montoPagado, $medio, $comprobante, $modeloGarantia): Credito {
+        return DB::transaction(function () use ($credito, $actor, $cuota, $nuevoNumeroCuotas, $nuevoCapital, $mora, $abonoCapital, $ciclo, $montoPagado, $medio, $comprobante, $modeloGarantia, $estadoAnterior): Credito {
             if ($nuevoNumeroCuotas === 0) {
                 // Última cuota: mismo final que liquidar() — el pago ya
                 // canceló todo el saldo, solo falta la firma de la devolución
@@ -1280,6 +1285,7 @@ final class CreditoService
                 $credito = $credito->fresh(['inmuebles']);
                 $this->registrarCobroEnCaja($ciclo, $actor, $credito, $montoPagado, $medio, $comprobante, "Pago de última cuota — crédito hipotecario #{$credito->id}", [
                     'operacion' => 'pago_cuota',
+                    'credito_estado_anterior' => $estadoAnterior,
                     'interes' => bcsub($montoPagado, bcadd($abonoCapital, $mora, 2), 2),
                     'mora' => $mora,
                 ]);
@@ -1346,6 +1352,7 @@ final class CreditoService
             $this->generarCronograma($nuevo, $nuevoNumeroCuotas);
             $this->registrarCobroEnCaja($ciclo, $actor, $credito, $montoPagado, $medio, $comprobante, "Pago de cuota — crédito hipotecario #{$credito->id}", [
                 'operacion' => 'pago_cuota',
+                'credito_estado_anterior' => $estadoAnterior,
                 'interes' => bcsub($montoPagado, bcadd($abonoCapital, $mora, 2), 2),
                 'mora' => $mora,
                 'credito_sucesor_id' => $nuevo->id,
@@ -1409,8 +1416,9 @@ final class CreditoService
         $nuevoCapital = bcsub($deudaTotal, $montoPagado, 2);
         $configuracion = $this->configuracion->resolverPara($credito->agencia, $credito->tipo_credito);
         $modeloGarantia = $this->tipos->paraCredito($credito)->garantiaModelo();
+        $estadoAnterior = $credito->estado;
 
-        return DB::transaction(function () use ($credito, $actor, $nuevoCapital, $liquidacion, $descuento, $motivoDescuento, $deudaTotal, $configuracion, $montoPagado, $medio, $comprobante, $modeloGarantia): Credito {
+        return DB::transaction(function () use ($credito, $actor, $nuevoCapital, $liquidacion, $descuento, $motivoDescuento, $deudaTotal, $configuracion, $montoPagado, $medio, $comprobante, $modeloGarantia, $estadoAnterior): Credito {
             $credito->update(['estado' => 'refinanciado']);
 
             $nuevo = Credito::query()->create([
@@ -1442,6 +1450,7 @@ final class CreditoService
             $nuevo = $nuevo->fresh(['inmuebles']);
             $this->registrarCobroRefinanciamiento($actor, $credito, $montoPagado, $medio, $comprobante, [
                 'interes' => $liquidacion['interes'],
+                'credito_estado_anterior' => $estadoAnterior,
                 'mora' => $liquidacion['mora'],
                 'descuento' => $descuento,
                 'motivo_descuento' => $motivoDescuento,
@@ -1494,13 +1503,15 @@ final class CreditoService
         }
 
         $ciclo = $this->resolverCicloParaCobro($actor);
+        $estadoAnterior = $credito->estado;
 
-        return DB::transaction(function () use ($credito, $actor, $ciclo, $montoPagado, $medio, $comprobante, $liquidacion, $descuento, $motivoDescuento, $montoCalculado): Credito {
+        return DB::transaction(function () use ($credito, $actor, $ciclo, $montoPagado, $medio, $comprobante, $liquidacion, $descuento, $motivoDescuento, $montoCalculado, $estadoAnterior): Credito {
             $credito->update(['estado' => 'liquidado_pendiente']);
 
             $credito = $credito->fresh(['bienes']);
             $this->registrarCobroEnCaja($ciclo, $actor, $credito, $montoPagado, $medio, $comprobante, "Liquidación de crédito prendario #{$credito->id}", [
                 'operacion' => 'liquidacion',
+                'credito_estado_anterior' => $estadoAnterior,
                 'interes' => $liquidacion['interes'],
                 'mora' => $liquidacion['mora'],
                 'descuento' => $descuento,
@@ -1528,6 +1539,130 @@ final class CreditoService
             $this->notificar($credito);
 
             return $credito->fresh(['bienes', 'documentos']);
+        });
+    }
+
+    /**
+     * Deshace un cobro (refrendo, adenda, liquidación, pago de cuota o
+     * refinanciamiento) registrado por error — mismo criterio que
+     * BovedaService::eliminarInyeccion(): solo mientras el ciclo de caja
+     * donde se cobró sigue siendo el ciclo ABIERTO del actor (nunca uno ya
+     * cerrado). Si la operación generó un crédito sucesor (todo salvo
+     * liquidar()/la última cuota de un compuesto), ese sucesor se borra
+     * entero — a menos que ya se haya movido más allá de lo que este cobro
+     * dejó (tiene sus propios cobros, o ya se desembolsó si nació
+     * "pendiente"), en cuyo caso se rechaza la anulación. El crédito
+     * ORIGINAL vuelve exactamente al estado que tenía antes (activo/
+     * vencido, capturado en `credito_estado_anterior` al momento del
+     * cobro). El movimiento de caja se borra (el saldo se recalcula solo,
+     * ver CajaCiclo::saldoActual()); el Cobro no se borra, queda marcado
+     * "anulado" para la auditoría.
+     */
+    public function anularCobro(Cobro $cobro, User $actor, ?string $motivo = null): Credito
+    {
+        if ($cobro->estado === 'anulado') {
+            throw new DomainException('Este cobro ya está anulado.');
+        }
+
+        $ciclo = Caja::query()->where('user_id', $actor->id)->first()?->cicloAbierto()->first();
+
+        if (! $ciclo || $cobro->caja_ciclo_id !== $ciclo->id) {
+            throw new DomainException('Solo puedes anular un cobro mientras el ciclo de caja donde se registró sigue abierto.');
+        }
+
+        $credito = $cobro->credito;
+
+        return DB::transaction(function () use ($cobro, $credito, $actor, $motivo): Credito {
+            if ($cobro->credito_sucesor_id) {
+                $this->deshacerSucesorDeCobro($cobro, $credito);
+            } else {
+                $this->deshacerLiquidacionDeCobro($credito);
+            }
+
+            $credito->update(['estado' => $cobro->credito_estado_anterior]);
+
+            if ($cobro->caja_movimiento_id) {
+                CajaMovimiento::query()->find($cobro->caja_movimiento_id)?->delete();
+            }
+
+            $cobro->update([
+                'estado' => 'anulado',
+                'anulado_por' => $actor->id,
+                'anulado_at' => now(),
+                'motivo_anulacion' => $motivo,
+            ]);
+
+            $credito = $credito->fresh();
+            $this->notificar($credito);
+
+            if ($cobro->caja_ciclo_id) {
+                $ciclo = CajaCiclo::query()->find($cobro->caja_ciclo_id);
+                CajaActualizada::dispatch($ciclo->caja, $ciclo->fresh()->saldoActual());
+            }
+
+            return $credito;
+        });
+    }
+
+    /**
+     * Borra el crédito sucesor que dejó un refrendo/adenda/pago de cuota/
+     * refinanciamiento — mismo criterio de limpieza que eliminar(): quita
+     * el vínculo de garantía, borra documentos (con cualquier escaneo
+     * firmado) y cuotas, y por último el crédito mismo. El voucher_pago de
+     * esa operación queda en el crédito ORIGINAL (generarVoucherPago() lo
+     * asocia ahí, no al sucesor), así que se borra aparte.
+     */
+    private function deshacerSucesorDeCobro(Cobro $cobro, Credito $credito): void
+    {
+        $sucesor = Credito::query()->findOrFail($cobro->credito_sucesor_id);
+
+        if ($sucesor->cobros()->where('estado', 'registrado')->exists()) {
+            throw new DomainException('No se puede anular: ya se registró un cobro sobre el crédito sucesor.');
+        }
+
+        // adenda/refinanciamiento nacen "pendiente" y solo generan cuotas al
+        // desembolsarse — si eso ya pasó, ese desembolso es una operación
+        // aparte (sin su propio Cobro) que el chequeo de arriba no detecta.
+        if (in_array($cobro->operacion, ['adenda', 'refinanciamiento'], true) && $sucesor->cuotas()->exists()) {
+            throw new DomainException('No se puede anular: el crédito sucesor ya fue desembolsado.');
+        }
+
+        $this->garantiasDe($sucesor)->detach();
+
+        foreach ($sucesor->documentos as $documento) {
+            if ($documento->archivo_firmado_path) {
+                Storage::disk('public')->delete($documento->archivo_firmado_path);
+            }
+
+            $documento->delete();
+        }
+
+        $sucesor->cuotas()->delete();
+        $sucesor->delete();
+
+        $credito->documentos()->where('tipo', 'voucher_pago')->latest()->first()?->delete();
+    }
+
+    /**
+     * Deshace una liquidación (o el pago de la última cuota de un
+     * compuesto, que termina igual sin sucesor): solo procede si el
+     * crédito sigue "liquidado_pendiente" — si la devolución ya se firmó
+     * (confirmarLiquidacionSiCorresponde() ya corrió), la garantía quedó
+     * "recuperada" y se notificó al cliente, ya no es un simple error de
+     * caja para deshacer aquí.
+     */
+    private function deshacerLiquidacionDeCobro(Credito $credito): void
+    {
+        if ($credito->estado !== 'liquidado_pendiente') {
+            throw new DomainException('No se puede anular: la devolución de este crédito ya fue confirmada.');
+        }
+
+        $credito->documentos()->whereIn('tipo', ['devolucion', 'voucher_pago'])->get()->each(function (DocumentoCredito $documento): void {
+            if ($documento->archivo_firmado_path) {
+                Storage::disk('public')->delete($documento->archivo_firmado_path);
+            }
+
+            $documento->delete();
         });
     }
 
@@ -1996,7 +2131,7 @@ final class CreditoService
      * módulo Cobranzas). Todo pago sobre un crédito — refrendo, adenda o
      * liquidación — pasa por aquí, así que es el único punto de escritura.
      *
-     * @param  array{operacion: string, interes: string, mora?: string|null, descuento?: string|null, motivo_descuento?: string|null, vuelto?: string, credito_sucesor_id?: int|null}  $detalleCobro
+     * @param  array{operacion: string, credito_estado_anterior: string, interes: string, mora?: string|null, descuento?: string|null, motivo_descuento?: string|null, vuelto?: string, credito_sucesor_id?: int|null}  $detalleCobro
      */
     private function registrarCobroEnCaja(
         CajaCiclo $ciclo,
@@ -2032,8 +2167,10 @@ final class CreditoService
             'credito_id' => $credito->id,
             'credito_sucesor_id' => $detalleCobro['credito_sucesor_id'] ?? null,
             'caja_ciclo_id' => $ciclo->id,
+            'caja_movimiento_id' => $movimiento->id,
             'registrado_por' => $actor->id,
             'operacion' => $detalleCobro['operacion'],
+            'credito_estado_anterior' => $detalleCobro['credito_estado_anterior'],
             'monto_pagado' => $monto,
             'medio' => $medio,
             'interes' => $detalleCobro['interes'],
@@ -2053,7 +2190,7 @@ final class CreditoService
      * aperturada ni genera movimiento de caja, solo deja la fila de
      * auditoría en `cobros` (caja_ciclo_id queda null, columna ya nullable).
      *
-     * @param  array{interes: string, mora?: string|null, descuento?: string|null, motivo_descuento?: string|null, credito_sucesor_id?: int|null}  $detalleCobro
+     * @param  array{interes: string, credito_estado_anterior: string, mora?: string|null, descuento?: string|null, motivo_descuento?: string|null, credito_sucesor_id?: int|null}  $detalleCobro
      */
     private function registrarCobroRefinanciamiento(
         User $actor,
@@ -2064,6 +2201,7 @@ final class CreditoService
         array $detalleCobro,
     ): void {
         $ciclo = null;
+        $movimiento = null;
 
         if (bccomp($monto, '0', 2) > 0) {
             $ciclo = $this->resolverCicloParaCobro($actor);
@@ -2093,8 +2231,10 @@ final class CreditoService
             'credito_id' => $credito->id,
             'credito_sucesor_id' => $detalleCobro['credito_sucesor_id'] ?? null,
             'caja_ciclo_id' => $ciclo?->id,
+            'caja_movimiento_id' => $movimiento?->id,
             'registrado_por' => $actor->id,
             'operacion' => 'refinanciamiento',
+            'credito_estado_anterior' => $detalleCobro['credito_estado_anterior'],
             'monto_pagado' => $monto,
             'medio' => $medio,
             'interes' => $detalleCobro['interes'],

@@ -3,6 +3,7 @@
 namespace App\Modules\Cobranza\Models;
 
 use App\Modules\Caja\Models\CajaCiclo;
+use App\Modules\Caja\Models\CajaMovimiento;
 use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Credito\Models\Credito;
 use App\Modules\Empresa\Models\Empresa;
@@ -14,10 +15,11 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
- * Un cobro registrado sobre un crédito (refrendo, adenda o liquidación).
- * Lo crea CreditoService al recibir el pago; el módulo Cobranzas solo lo
- * lista. El pago en sí (movimiento de caja, cambio de estado del crédito)
- * lo siguen manejando refrendar()/adendar()/liquidar().
+ * Un cobro registrado sobre un crédito (refrendo, adenda, liquidación,
+ * pago de cuota o refinanciamiento). Lo crea CreditoService al recibir el
+ * pago; el módulo Cobranzas lo lista y permite anularlo (ver
+ * CreditoService::anularCobro()) mientras el ciclo de caja donde se cobró
+ * siga abierto.
  */
 class Cobro extends Model
 {
@@ -33,8 +35,11 @@ class Cobro extends Model
         'credito_id',
         'credito_sucesor_id',
         'caja_ciclo_id',
+        'caja_movimiento_id',
         'registrado_por',
         'operacion',
+        'estado',
+        'credito_estado_anterior',
         'monto_pagado',
         'medio',
         'interes',
@@ -42,6 +47,9 @@ class Cobro extends Model
         'descuento',
         'motivo_descuento',
         'vuelto',
+        'anulado_por',
+        'anulado_at',
+        'motivo_anulacion',
     ];
 
     /**
@@ -55,6 +63,7 @@ class Cobro extends Model
             'mora' => 'decimal:2',
             'descuento' => 'decimal:2',
             'vuelto' => 'decimal:2',
+            'anulado_at' => 'datetime',
         ];
     }
 
@@ -83,9 +92,19 @@ class Cobro extends Model
         return $this->belongsTo(CajaCiclo::class);
     }
 
+    public function cajaMovimiento(): BelongsTo
+    {
+        return $this->belongsTo(CajaMovimiento::class);
+    }
+
     public function registradoPor(): BelongsTo
     {
         return $this->belongsTo(User::class, 'registrado_por');
+    }
+
+    public function anuladoPor(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'anulado_por');
     }
 
     protected static function newFactory(): CobroFactory

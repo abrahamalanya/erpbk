@@ -173,6 +173,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::get('cobros', [CobroController::class, 'index'])->name('cobros.index');
     Route::get('cobros/creditos-pendientes/{cliente}', [CobroController::class, 'creditosPendientes'])->name('cobros.creditos-pendientes');
+    Route::post('cobros/{cobro}/anular', [CobroController::class, 'anular'])->name('cobros.anular');
 
     Route::get('reportes/movimientos-dinero', [ReporteMovimientosController::class, 'movimientosDinero'])->name('reportes.movimientos-dinero');
     Route::get('reportes/cobranza-diaria', [ReporteCobranzaController::class, 'cobranzaDiaria'])->name('reportes.cobranza-diaria');
