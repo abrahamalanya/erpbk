@@ -41,6 +41,14 @@ beforeEach(function () {
     $this->adminAgencia = User::factory()->forAgencia($this->agencia)->create();
     $this->adminAgencia->assignRole('administrador_agencia');
 
+    $this->supervisor = User::factory()->forAgencia($this->agencia)->create();
+    $this->supervisor->assignRole('supervisor');
+    $cajaSupervisor = Caja::factory()->create(['user_id' => $this->supervisor->id, 'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id]);
+    CajaCiclo::query()->create([
+        'caja_id' => $cajaSupervisor->id, 'empresa_id' => $cajaSupervisor->empresa_id, 'fecha' => now()->toDateString(),
+        'estado' => 'abierta', 'saldo_apertura' => 50000, 'abierta_at' => now(),
+    ]);
+
     $this->cliente = Cliente::factory()->forAgencia($this->agencia)->create();
     $this->vehiculo = Vehiculo::factory()->paraCliente($this->cliente)->create(['valorizacion' => 20000]);
     $this->vehiculo2 = Vehiculo::factory()->paraCliente($this->cliente)->create(['valorizacion' => 15000]);
@@ -109,7 +117,7 @@ it('lists admin de agencia y supervisores of the actor agencia as supervisado_po
     $response = $this->getJson('/api/creditos-prendarios/supervisores')->assertOk();
 
     expect(collect($response->json('data'))->pluck('id')->sort()->values()->all())
-        ->toBe(collect([$this->adminAgencia->id, $supervisor->id])->sort()->values()->all());
+        ->toBe(collect([$this->adminAgencia->id, $this->supervisor->id, $supervisor->id])->sort()->values()->all());
 });
 
 it('forbids listing supervisado_por options without creditos_prendarios.crear', function () {
@@ -134,8 +142,22 @@ it('rejects a vehicular crédito when the cliente has no dirección/referencia',
         ->assertJsonPath('message', 'Para un crédito vehicular el cliente debe tener dirección y referencia registradas.');
 });
 
-it('lets an asesor override the interes on a vehicular crédito via a solicitud especial with a motivo', function () {
+it('denies an asesor from overriding the interes on a vehicular crédito even via a solicitud especial with a motivo', function () {
     Sanctum::actingAs($this->asesor, ['*']);
+
+    $this->postJson('/api/creditos-vehiculares', [
+        'vehiculo_ids' => [$this->vehiculo->id],
+        'supervisado_por' => $this->adminAgencia->id,
+        'monto_prestamo' => 5000,
+        'tipo_cuota' => 'mensual',
+        'interes' => 6,
+        'interes_solicitud_especial' => true,
+        'motivo_interes' => 'Cliente recurrente con garantía sólida',
+    ])->assertForbidden();
+});
+
+it('lets a supervisor override the interes on a vehicular crédito via a solicitud especial with a motivo', function () {
+    Sanctum::actingAs($this->supervisor, ['*']);
 
     $response = $this->postJson('/api/creditos-vehiculares', [
         'vehiculo_ids' => [$this->vehiculo->id],
@@ -153,7 +175,7 @@ it('lets an asesor override the interes on a vehicular crédito via a solicitud 
 });
 
 it('rejects a vehicular solicitud especial interes distinct from the default without a motivo', function () {
-    Sanctum::actingAs($this->asesor, ['*']);
+    Sanctum::actingAs($this->supervisor, ['*']);
 
     $this->postJson('/api/creditos-vehiculares', [
         'vehiculo_ids' => [$this->vehiculo->id],

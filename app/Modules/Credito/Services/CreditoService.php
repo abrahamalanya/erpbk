@@ -8,6 +8,7 @@ use App\Modules\Caja\Models\CajaCiclo;
 use App\Modules\Caja\Models\CajaMovimiento;
 use App\Modules\Cobranza\Models\Cobro;
 use App\Modules\Credito\Events\CreditoActualizado;
+use App\Modules\Credito\Models\ConfiguracionCredito;
 use App\Modules\Credito\Models\Credito;
 use App\Modules\Credito\Models\CuotaCredito;
 use App\Modules\Credito\Models\DocumentoCredito;
@@ -17,6 +18,7 @@ use App\Modules\Credito\Notifications\CreditoAprobadoNotification;
 use App\Modules\Credito\Notifications\CreditoCondicionesActualizadasNotification;
 use App\Modules\Credito\Notifications\CreditoConformidadRegistradaNotification;
 use App\Modules\Credito\Notifications\CreditoCuotaPagadaNotification;
+use App\Modules\Credito\Notifications\CreditoCuotasPagadasDiarioNotification;
 use App\Modules\Credito\Notifications\CreditoDesembolsadoNotification;
 use App\Modules\Credito\Notifications\CreditoEnVentaNotification;
 use App\Modules\Credito\Notifications\CreditoFechaDesembolsoActualizadaNotification;
@@ -221,20 +223,19 @@ final class CreditoService
             // Generated here (not at aprobar()) so the admin can already
             // review the actual contrato/declaración while the crédito is
             // still pendiente, instead of deciding blind on raw fields.
-            $this->documentos->generarContrato($credito, $actor);
-            $this->documentos->generarDeclaracion($credito, $actor);
-
-            // Diario no tiene una prenda física que fotografiar ni etiquetar
-            // (la garantía es un placeholder invisible).
+            // Diario no genera ninguno de los dos: su único documento de
+            // deuda es el pagaré, generado recién al desembolsar (ver
+            // desembolsar()) porque necesita el cronograma ya real.
             if ($tipoClave !== 'diario') {
+                $this->documentos->generarContrato($credito, $actor);
+                $this->documentos->generarDeclaracion($credito, $actor);
+            }
+
+            if ($tipo->generaFotosGarantia()) {
                 $this->documentos->generarFotos($credito, $actor);
             }
 
-            // El sticker se pega sobre el bien/vehículo físico en tienda; un
-            // hipotecario no tiene un artículo que etiquetar (la garantía es
-            // el inmueble, que no pasa por tienda), y diario tampoco tiene
-            // prenda física, así que no aplica.
-            if (! in_array($tipoClave, ['hipotecario', 'diario'], true)) {
+            if ($tipo->generaStickerGarantia()) {
                 $this->documentos->generarSticker($credito, $actor);
             }
 
@@ -435,10 +436,7 @@ final class CreditoService
             throw new DomainException('Debes indicar el número de cuotas antes de cambiar a interés compuesto.');
         }
 
-        // Diario no tiene una garantía real que limite el monto (su
-        // "garantía" es un placeholder invisible, ver CreditoDiarioTipo) —
-        // este tope solo aplica a los tipos con prenda real.
-        if ($montoPrestamo !== null && $credito->tipo_credito !== 'diario') {
+        if ($montoPrestamo !== null && $this->tipos->paraCredito($credito)->limitaMontoPorValorizacionGarantia()) {
             $sumaValorizaciones = $this->garantiasDe($credito)->get()->reduce(
                 fn (string $carry, $garantia): string => bcadd($carry, (string) $garantia->valorizacion, 2),
                 '0'
@@ -717,6 +715,13 @@ final class CreditoService
                 'saldo_caja' => $esAdenda ? null : $ciclo->fresh()->saldoActual(),
             ]);
 
+            // El pagaré de diario recién se genera acá (no en registrar())
+            // porque necesita el cronograma ya real y persistido —
+            // generarCronograma() ya corrió un par de líneas arriba.
+            if ($credito->tipo_credito === 'diario') {
+                $this->documentos->generarPagare($credito, $actor);
+            }
+
             $this->notificar($credito);
             $this->notificaciones->enviar(collect([$credito->registradoPor]), new CreditoDesembolsadoNotification($credito));
 
@@ -969,6 +974,10 @@ final class CreditoService
             throw new DomainException('Este crédito es de interés compuesto: usa "pagar cuota" en vez de refrendar.');
         }
 
+        if ($credito->tipo_credito === 'diario') {
+            throw new DomainException('Los créditos diarios no se refrendan: usa "pagar cuotas" para pagar cuotas pendientes.');
+        }
+
         $calculo = $this->calcularMontoRefrendo($credito);
         $interes = $calculo['interes'];
         $mora = $calculo['mora'];
@@ -994,11 +1003,12 @@ final class CreditoService
             throw new DomainException("Este crédito ya alcanzó el máximo de {$configuracion->max_refrendos} refrendos permitidos; debe liquidarse el capital.");
         }
 
-        $modeloGarantia = $this->tipos->paraCredito($credito)->garantiaModelo();
+        $tipo = $this->tipos->paraCredito($credito);
+        $modeloGarantia = $tipo->garantiaModelo();
         $ciclo = $this->resolverCicloParaCobro($actor);
         $estadoAnterior = $credito->estado;
 
-        return DB::transaction(function () use ($credito, $actor, $siguienteNumero, $nuevoCapital, $interes, $mora, $descuento, $motivoDescuento, $abonoCapital, $ciclo, $montoPagado, $medio, $comprobante, $modeloGarantia, $estadoAnterior): Credito {
+        return DB::transaction(function () use ($credito, $actor, $siguienteNumero, $nuevoCapital, $interes, $mora, $descuento, $motivoDescuento, $abonoCapital, $ciclo, $montoPagado, $medio, $comprobante, $modeloGarantia, $estadoAnterior, $tipo): Credito {
             $credito->update(['estado' => 'refrendado']);
 
             $n = self::CUOTAS_POR_TIPO[$credito->tipo_cuota];
@@ -1033,7 +1043,7 @@ final class CreditoService
             $this->documentos->generarContrato($nuevo, $actor);
             $this->documentos->generarDeclaracion($nuevo, $actor);
 
-            if ($credito->tipo_credito !== 'diario') {
+            if ($tipo->generaFotosGarantia()) {
                 $this->documentos->generarFotos($nuevo, $actor);
             }
 
@@ -1042,7 +1052,7 @@ final class CreditoService
                 $this->documentos->generarNotificacionPago($nuevo, $actor);
                 $this->documentos->generarAvisoPrejudicial($nuevo, $actor);
                 $this->documentos->generarExpediente($nuevo, $actor);
-            } elseif ($credito->tipo_credito !== 'diario') {
+            } elseif ($tipo->generaStickerGarantia()) {
                 $this->documentos->generarSticker($nuevo, $actor);
             }
 
@@ -1117,6 +1127,10 @@ final class CreditoService
             throw new DomainException('Este crédito es de interés compuesto: usa "pagar cuota" en vez de adendar.');
         }
 
+        if ($credito->tipo_credito === 'diario') {
+            throw new DomainException('Los créditos diarios no se adendan: usa "pagar cuotas" para pagar cuotas pendientes.');
+        }
+
         $calculo = $this->calcularMontoRefrendo($credito);
         $interes = $calculo['interes'];
         $mora = $calculo['mora'];
@@ -1135,11 +1149,12 @@ final class CreditoService
         $abonoCapital = bcsub($montoPagado, $interesConMora, 2);
         $nuevoCapital = bcsub((string) $credito->monto_prestamo, $abonoCapital, 2);
         $configuracion = $this->configuracion->resolverPara($credito->agencia, $credito->tipo_credito);
-        $modeloGarantia = $this->tipos->paraCredito($credito)->garantiaModelo();
+        $tipo = $this->tipos->paraCredito($credito);
+        $modeloGarantia = $tipo->garantiaModelo();
         $ciclo = $this->resolverCicloParaCobro($actor);
         $estadoAnterior = $credito->estado;
 
-        return DB::transaction(function () use ($credito, $actor, $nuevoInteres, $nuevoTipoCuota, $nuevoCapital, $interes, $mora, $descuento, $motivoDescuento, $abonoCapital, $configuracion, $ciclo, $montoPagado, $medio, $comprobante, $modeloGarantia, $estadoAnterior): Credito {
+        return DB::transaction(function () use ($credito, $actor, $nuevoInteres, $nuevoTipoCuota, $nuevoCapital, $interes, $mora, $descuento, $motivoDescuento, $abonoCapital, $configuracion, $ciclo, $montoPagado, $medio, $comprobante, $modeloGarantia, $estadoAnterior, $tipo): Credito {
             $credito->update(['estado' => 'adendado']);
 
             $nuevo = Credito::query()->create([
@@ -1172,7 +1187,7 @@ final class CreditoService
             $this->documentos->generarContrato($nuevo, $actor);
             $this->documentos->generarDeclaracion($nuevo, $actor);
 
-            if ($credito->tipo_credito !== 'diario') {
+            if ($tipo->generaFotosGarantia()) {
                 $this->documentos->generarFotos($nuevo, $actor);
             }
 
@@ -1181,7 +1196,7 @@ final class CreditoService
                 $this->documentos->generarNotificacionPago($nuevo, $actor);
                 $this->documentos->generarAvisoPrejudicial($nuevo, $actor);
                 $this->documentos->generarExpediente($nuevo, $actor);
-            } elseif ($credito->tipo_credito !== 'diario') {
+            } elseif ($tipo->generaStickerGarantia()) {
                 $this->documentos->generarSticker($nuevo, $actor);
             }
 
@@ -1378,6 +1393,169 @@ final class CreditoService
     }
 
     /**
+     * Mora acumulada por UNA cuota vencida individual — la usa el pago de
+     * cuotas de un crédito diario, donde cada CuotaCredito acumula su propia
+     * mora desde SU fecha_vencimiento, sin esperar a que venza el crédito
+     * completo (a diferencia de calcularMora(), que solo penaliza una vez
+     * que el crédito ENTERO cae en estado 'vencido').
+     */
+    private function moraDeCuota(CuotaCredito $cuota, ConfiguracionCredito $configuracion): string
+    {
+        $vencimiento = $cuota->fecha_vencimiento->copy()->startOfDay();
+        $hoy = now()->startOfDay();
+
+        if ($vencimiento->gte($hoy)) {
+            return '0.00';
+        }
+
+        $dias = (int) $vencimiento->diffInDays($hoy);
+        $tasaDiaria = bcdiv((string) $configuracion->tasa_mora_diaria, '100', 4);
+
+        return bcmul(bcmul((string) $cuota->monto_total, $tasaDiaria, 4), (string) $dias, 2);
+    }
+
+    /**
+     * Suma la mora individual (moraDeCuota()) de todas las cuotas pendientes
+     * de un crédito diario — reemplaza a calcularMora() (mora "a nivel
+     * crédito completo") para este tipo, ya que sus cuotas vencen y acumulan
+     * mora una por una mucho antes de que el plazo completo del crédito lo
+     * haga.
+     */
+    private function moraPendienteDiario(Credito $credito): string
+    {
+        $configuracion = $this->configuracion->resolverPara($credito->agencia, $credito->tipo_credito);
+
+        return $credito->cuotas()->pendientes()->get()
+            ->reduce(fn (string $carry, CuotaCredito $cuota): string => bcadd($carry, $this->moraDeCuota($cuota, $configuracion), 2), '0.00');
+    }
+
+    /**
+     * Preview de cuánto cuesta pagar las próximas `$numeroCuotas` cuotas
+     * pendientes (siempre las más antiguas, consecutivas) de un crédito
+     * diario — lo consume tanto el endpoint de preview como
+     * pagarCuotasDiario() para no duplicar el cálculo.
+     *
+     * @return array{cuotas: list<array{numero_cuota: int, fecha_vencimiento: string, monto_total: string, mora: string}>, monto_cuotas: string, mora: string, total: string, es_ultima_cuota: bool}
+     */
+    public function calcularMontoPagoCuotasDiario(Credito $credito, int $numeroCuotas): array
+    {
+        if ($credito->tipo_credito !== 'diario') {
+            throw new DomainException('Solo los créditos diarios se pagan por cuotas — usa refrendar o liquidar.');
+        }
+
+        if (! in_array($credito->estado, ['activo', 'vencido'], true)) {
+            throw new DomainException('Solo se puede pagar cuotas de un crédito activo o vencido.');
+        }
+
+        $configuracion = $this->configuracion->resolverPara($credito->agencia, $credito->tipo_credito);
+        $pendientes = $credito->cuotas()->pendientes()->orderBy('numero_cuota')->get();
+
+        if ($pendientes->isEmpty()) {
+            throw new DomainException('Este crédito no tiene cuotas pendientes.');
+        }
+
+        if ($numeroCuotas > $pendientes->count()) {
+            throw new DomainException("Solo quedan {$pendientes->count()} cuota(s) pendiente(s), no se pueden pagar {$numeroCuotas}.");
+        }
+
+        $objetivo = $pendientes->take($numeroCuotas);
+
+        $detalle = $objetivo->map(function (CuotaCredito $cuota) use ($configuracion): array {
+            return [
+                'numero_cuota' => $cuota->numero_cuota,
+                'fecha_vencimiento' => $cuota->fecha_vencimiento->toDateString(),
+                'monto_total' => (string) $cuota->monto_total,
+                'mora' => $this->moraDeCuota($cuota, $configuracion),
+            ];
+        })->values()->all();
+
+        $montoCuotas = $objetivo->reduce(fn (string $carry, CuotaCredito $cuota): string => bcadd($carry, (string) $cuota->monto_total, 2), '0.00');
+        $mora = array_reduce($detalle, fn (string $carry, array $c): string => bcadd($carry, $c['mora'], 2), '0.00');
+
+        return [
+            'cuotas' => $detalle,
+            'monto_cuotas' => $montoCuotas,
+            'mora' => $mora,
+            'total' => bcadd($montoCuotas, $mora, 2),
+            'es_ultima_cuota' => $numeroCuotas === $pendientes->count(),
+        ];
+    }
+
+    /**
+     * Paga `$numeroCuotas` cuotas (siempre las más antiguas pendientes,
+     * consecutivas) de un crédito diario, marcándolas pagadas dentro del
+     * MISMO crédito — a diferencia de refrendar()/adendar()/pagarCuota(), no
+     * encadena un crédito sucesor. Si con este pago ya no queda ninguna
+     * cuota pendiente, el crédito pasa a liquidado_pendiente igual que
+     * liquidar() (queda a la espera de la firma de la devolución).
+     */
+    public function pagarCuotasDiario(Credito $credito, User $actor, int $numeroCuotas, string $montoPagado, string $medio, ?UploadedFile $comprobante): Credito
+    {
+        $calculo = $this->calcularMontoPagoCuotasDiario($credito, $numeroCuotas);
+
+        if (bccomp($montoPagado, $calculo['total'], 2) < 0) {
+            throw new DomainException("El monto pagado ({$montoPagado}) es menor al total de las cuotas + mora a pagar calculado ({$calculo['total']}).");
+        }
+
+        $vuelto = bcsub($montoPagado, $calculo['total'], 2);
+        $numerosCuota = array_column($calculo['cuotas'], 'numero_cuota');
+        $ciclo = $this->resolverCicloParaCobro($actor);
+        $estadoAnterior = $credito->estado;
+        $esUltimaCuota = $calculo['es_ultima_cuota'];
+
+        return DB::transaction(function () use ($credito, $actor, $calculo, $numerosCuota, $ciclo, $montoPagado, $medio, $comprobante, $estadoAnterior, $vuelto, $esUltimaCuota): Credito {
+            if ($esUltimaCuota) {
+                // Diario no tiene garantía física que devolver — salta
+                // directo a 'liquidado' + carta de no adeudo, sin el paso de
+                // 'liquidado_pendiente' + acta de devolución que usan los
+                // demás tipos (mismo criterio que liquidar()).
+                $credito->update(['estado' => 'liquidado']);
+
+                $modeloGarantia = $this->tipos->paraCredito($credito)->garantiaModelo();
+                $modeloGarantia::query()->whereIn('id', $this->garantiasDe($credito)->get()->pluck('id'))->update(['estado' => 'recuperado']);
+
+                $this->documentos->generarCartaNoAdeudo($credito, $actor);
+            }
+
+            $cobro = $this->registrarCobroEnCaja($ciclo, $actor, $credito, $montoPagado, $medio, $comprobante, 'Pago de cuotas — crédito diario #'.$credito->id, [
+                'operacion' => 'pago_cuotas_diario',
+                'credito_estado_anterior' => $estadoAnterior,
+                'interes' => $calculo['monto_cuotas'],
+                'mora' => $calculo['mora'],
+                'vuelto' => $vuelto,
+            ]);
+
+            $credito->cuotas()->whereIn('numero_cuota', $numerosCuota)->get()->each(function (CuotaCredito $cuota) use ($cobro, $calculo): void {
+                $moraCuota = collect($calculo['cuotas'])->firstWhere('numero_cuota', $cuota->numero_cuota)['mora'];
+                $cuota->update(['pagada_at' => now(), 'mora_pagada' => $moraCuota, 'cobro_id' => $cobro->id]);
+            });
+
+            $this->documentos->generarVoucherPago($credito, $actor, [
+                'operacion' => 'pago_cuotas_diario',
+                'monto_pagado' => $montoPagado,
+                'medio' => $medio,
+                'cuotas' => $calculo['cuotas'],
+                'mora' => $calculo['mora'],
+                'total' => $calculo['total'],
+                'vuelto' => $vuelto,
+                'credito_id' => $credito->id,
+                'fecha' => now()->toDateString(),
+            ]);
+
+            $credito = $credito->fresh(['garantiasDiarias']);
+            $this->notificar($credito);
+
+            if (! $esUltimaCuota) {
+                $this->notificaciones->enviar(collect([$credito->registradoPor]), new CreditoCuotasPagadasDiarioNotification($credito, count($calculo['cuotas'])));
+            } else {
+                $this->notificaciones->enviar(collect([$credito->registradoPor]), new CreditoLiquidadoNotification($credito));
+            }
+
+            return $credito;
+        });
+    }
+
+    /**
      * Refinancia un crédito hipotecario: el capital del sucesor arranca en
      * capital + interés + mora del actual (todo lo que se debe), no solo el
      * interés como en refrendar/adendar — confirmado explícitamente: puede
@@ -1506,7 +1684,14 @@ final class CreditoService
         $estadoAnterior = $credito->estado;
 
         return DB::transaction(function () use ($credito, $actor, $ciclo, $montoPagado, $medio, $comprobante, $liquidacion, $descuento, $motivoDescuento, $montoCalculado, $estadoAnterior): Credito {
-            $credito->update(['estado' => 'liquidado_pendiente']);
+            // Diario no tiene garantía física que devolver (placeholder
+            // invisible) — a diferencia de los demás tipos, salta directo a
+            // 'liquidado' + carta de no adeudo, sin pasar por
+            // 'liquidado_pendiente' ni pedir firma de un acta de devolución
+            // que no aplica (mismo criterio que pagarCuotasDiario()).
+            $esDiario = $credito->tipo_credito === 'diario';
+
+            $credito->update(['estado' => $esDiario ? 'liquidado' : 'liquidado_pendiente']);
 
             $credito = $credito->fresh(['bienes']);
             $this->registrarCobroEnCaja($ciclo, $actor, $credito, $montoPagado, $medio, $comprobante, "Liquidación de crédito prendario #{$credito->id}", [
@@ -1518,7 +1703,14 @@ final class CreditoService
                 'motivo_descuento' => $motivoDescuento,
                 'vuelto' => bcsub($montoPagado, $montoCalculado, 2),
             ]);
-            $this->documentos->generarDevolucion($credito, $actor);
+
+            if ($esDiario) {
+                $modeloGarantia = $this->tipos->paraCredito($credito)->garantiaModelo();
+                $modeloGarantia::query()->whereIn('id', $this->garantiasDe($credito)->get()->pluck('id'))->update(['estado' => 'recuperado']);
+                $this->documentos->generarCartaNoAdeudo($credito, $actor);
+            } else {
+                $this->documentos->generarDevolucion($credito, $actor);
+            }
 
             $this->documentos->generarVoucherPago($credito, $actor, [
                 'operacion' => 'liquidacion',
@@ -1538,6 +1730,10 @@ final class CreditoService
 
             $this->notificar($credito);
 
+            if ($esDiario) {
+                $this->notificaciones->enviar(collect([$credito->registradoPor]), new CreditoLiquidadoNotification($credito));
+            }
+
             return $credito->fresh(['bienes', 'documentos']);
         });
     }
@@ -1547,16 +1743,19 @@ final class CreditoService
      * refinanciamiento) registrado por error — mismo criterio que
      * BovedaService::eliminarInyeccion(): solo mientras el ciclo de caja
      * donde se cobró sigue siendo el ciclo ABIERTO del actor (nunca uno ya
-     * cerrado). Si la operación generó un crédito sucesor (todo salvo
-     * liquidar()/la última cuota de un compuesto), ese sucesor se borra
-     * entero — a menos que ya se haya movido más allá de lo que este cobro
-     * dejó (tiene sus propios cobros, o ya se desembolsó si nació
-     * "pendiente"), en cuyo caso se rechaza la anulación. El crédito
-     * ORIGINAL vuelve exactamente al estado que tenía antes (activo/
-     * vencido, capturado en `credito_estado_anterior` al momento del
-     * cobro). El movimiento de caja se borra (el saldo se recalcula solo,
-     * ver CajaCiclo::saldoActual()); el Cobro no se borra, queda marcado
-     * "anulado" para la auditoría.
+     * cerrado). administrador_general se salta esta restricción (mismo
+     * criterio que cajas.cerrar_forzado): puede anular un cobro de cualquier
+     * fecha, con el ciclo de caja donde se registró ya cerrado. Si la
+     * operación generó un crédito sucesor (todo salvo liquidar()/la última
+     * cuota de un compuesto), ese sucesor se borra entero — a menos que ya
+     * se haya movido más allá de lo que este cobro dejó (tiene sus propios
+     * cobros, o ya se desembolsó si nació "pendiente"), en cuyo caso se
+     * rechaza la anulación. El crédito ORIGINAL vuelve exactamente al
+     * estado que tenía antes (activo/vencido, capturado en
+     * `credito_estado_anterior` al momento del cobro). El movimiento de
+     * caja se borra (el saldo de su ciclo se recalcula solo, ver
+     * CajaCiclo::saldoActual(), sea el ciclo abierto o uno ya cerrado); el
+     * Cobro no se borra, queda marcado "anulado" para la auditoría.
      */
     public function anularCobro(Cobro $cobro, User $actor, ?string $motivo = null): Credito
     {
@@ -1564,16 +1763,20 @@ final class CreditoService
             throw new DomainException('Este cobro ya está anulado.');
         }
 
-        $ciclo = Caja::query()->where('user_id', $actor->id)->first()?->cicloAbierto()->first();
+        if (! $actor->hasRole('administrador_general')) {
+            $ciclo = Caja::query()->where('user_id', $actor->id)->first()?->cicloAbierto()->first();
 
-        if (! $ciclo || $cobro->caja_ciclo_id !== $ciclo->id) {
-            throw new DomainException('Solo puedes anular un cobro mientras el ciclo de caja donde se registró sigue abierto.');
+            if (! $ciclo || $cobro->caja_ciclo_id !== $ciclo->id) {
+                throw new DomainException('Solo puedes anular un cobro mientras el ciclo de caja donde se registró sigue abierto.');
+            }
         }
 
         $credito = $cobro->credito;
 
         return DB::transaction(function () use ($cobro, $credito, $actor, $motivo): Credito {
-            if ($cobro->credito_sucesor_id) {
+            if ($cobro->operacion === 'pago_cuotas_diario') {
+                $this->deshacerPagoCuotasDiario($cobro, $credito);
+            } elseif ($cobro->credito_sucesor_id) {
                 $this->deshacerSucesorDeCobro($cobro, $credito);
             } else {
                 $this->deshacerLiquidacionDeCobro($credito);
@@ -1667,6 +1870,43 @@ final class CreditoService
     }
 
     /**
+     * Deshace un pago de cuotas de un crédito diario (operación
+     * 'pago_cuotas_diario') — a diferencia de refrendo/adenda/pago de cuota
+     * compuesto, no hay sucesor que borrar: se revierten las CuotaCredito
+     * que este cobro dejó marcadas como pagadas. Rechaza la anulación si ya
+     * se pagó una cuota POSTERIOR con otro cobro más reciente — anular
+     * dejaría un hueco en el cronograma, que las cuotas de un diario nunca
+     * deben tener (siempre se pagan consecutivas desde la más antigua). Si
+     * este cobro pagó la última cuota, el crédito ya saltó directo a
+     * 'liquidado' (sin 'liquidado_pendiente' de por medio, ver
+     * pagarCuotasDiario()) — igual que a los demás tipos una vez liquidados,
+     * ya no se puede deshacer.
+     */
+    private function deshacerPagoCuotasDiario(Cobro $cobro, Credito $credito): void
+    {
+        $maximoPagadoPorEsteCobro = (int) ($cobro->cuotasPagadas()->max('numero_cuota') ?? 0);
+
+        $hayCuotaPosteriorPagada = $credito->cuotas()
+            ->pagadas()
+            ->where('numero_cuota', '>', $maximoPagadoPorEsteCobro)
+            ->exists();
+
+        if ($hayCuotaPosteriorPagada) {
+            throw new DomainException('No se puede anular: ya se pagó una cuota posterior con otro cobro.');
+        }
+
+        if ($credito->estado === 'liquidado') {
+            throw new DomainException('No se puede anular: este crédito ya quedó liquidado (carta de no adeudo generada).');
+        }
+
+        $credito->cuotas()->where('cobro_id', $cobro->id)->update([
+            'pagada_at' => null,
+            'mora_pagada' => null,
+            'cobro_id' => null,
+        ]);
+    }
+
+    /**
      * El pago ya se cobró en liquidar() — lo que falta para que el crédito
      * quede realmente liquidado es la firma del acta de devolución, que
      * confirma que los bienes fueron físicamente entregados de vuelta al
@@ -1736,7 +1976,11 @@ final class CreditoService
     public function calcularMontoLiquidacion(Credito $credito): array
     {
         $prorateo = $this->calcularInteresProrateado($credito);
-        $mora = $this->calcularMora($credito);
+        // Diario acumula mora por cuota individual desde que CADA una vence
+        // (ver moraDeCuota()), no solo cuando el plazo completo del crédito
+        // vence — calcularMora() (mora "a nivel crédito") subestimaría la
+        // mora real de un diario con cuotas intermedias ya atrasadas.
+        $mora = $credito->tipo_credito === 'diario' ? $this->moraPendienteDiario($credito) : $this->calcularMora($credito);
         $total = bcadd(bcadd((string) $credito->monto_prestamo, $prorateo['interes'], 2), $mora, 2);
 
         return [
@@ -2142,7 +2386,7 @@ final class CreditoService
         ?UploadedFile $comprobante,
         string $concepto,
         array $detalleCobro,
-    ): void {
+    ): Cobro {
         $movimiento = CajaMovimiento::query()->create([
             'caja_ciclo_id' => $ciclo->id,
             'empresa_id' => $ciclo->empresa_id,
@@ -2161,7 +2405,7 @@ final class CreditoService
             ]);
         }
 
-        Cobro::query()->create([
+        $cobro = Cobro::query()->create([
             'empresa_id' => $credito->empresa_id,
             'cliente_id' => $credito->cliente_id,
             'credito_id' => $credito->id,
@@ -2181,6 +2425,8 @@ final class CreditoService
         ]);
 
         CajaActualizada::dispatch($ciclo->caja, $ciclo->fresh()->saldoActual());
+
+        return $cobro;
     }
 
     /**

@@ -49,4 +49,15 @@ final class HipotecarioTipo extends CreditoTipoSupervisado
             'tipo_interes' => $datos['tipo_interes'] ?? 'simple',
         ];
     }
+
+    /**
+     * El sticker se pega sobre el bien/vehículo físico en tienda; hipotecario
+     * no tiene un artículo que etiquetar (la garantía es el inmueble, que no
+     * pasa por tienda) — usa ficha socioeconómica/notificación de pago/aviso
+     * prejudicial/expediente en su lugar.
+     */
+    public function generaStickerGarantia(): bool
+    {
+        return false;
+    }
 }

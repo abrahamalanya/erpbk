@@ -9,11 +9,14 @@ use App\Modules\Usuario\Models\User;
 use Illuminate\Support\Collection;
 
 /**
- * Crédito diario: igual que prendario (mismo ciclo de vida, cronograma,
- * refrendo/adenda/liquidación) pero sin ninguna prenda real. La garantía es
- * un placeholder invisible (CreditoDiarioGarantia) que solo existe para
- * satisfacer el motor compartido (CreditoService). Un vencido nunca pasa a
- * tienda/remate — ver pasaATiendaAlVencer().
+ * Crédito diario: igual que prendario en aprobar/rechazar/desembolsar/
+ * liquidar/estados vencidos, pero sin ninguna prenda real y sin refrendo ni
+ * adenda (bloqueados explícitamente en CreditoService::refrendar()/
+ * adendar() — un préstamo de cronograma fijo no se "renueva", se paga por
+ * cuotas vía pagarCuotasDiario()). La garantía es un placeholder invisible
+ * (CreditoDiarioGarantia) que solo existe para satisfacer el motor
+ * compartido (CreditoService). Un vencido nunca pasa a tienda/remate — ver
+ * pasaATiendaAlVencer().
  */
 final class CreditoDiarioTipo implements CreditoTipo
 {
@@ -55,5 +58,20 @@ final class CreditoDiarioTipo implements CreditoTipo
     public function vistaDocumento(string $tipoDocumento): string
     {
         return "modules.credito-prendario.documentos.{$tipoDocumento}";
+    }
+
+    public function generaFotosGarantia(): bool
+    {
+        return false;
+    }
+
+    public function generaStickerGarantia(): bool
+    {
+        return false;
+    }
+
+    public function limitaMontoPorValorizacionGarantia(): bool
+    {
+        return false;
     }
 }

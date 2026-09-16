@@ -43,4 +43,15 @@ class CuotaCreditoFactory extends Factory
             'empresa_id' => $credito->empresa_id,
         ]);
     }
+
+    /**
+     * Marca la cuota como ya pagada, sin pasar por pagarCuotasDiario().
+     */
+    public function pagada(): static
+    {
+        return $this->state(fn (): array => [
+            'pagada_at' => now(),
+            'mora_pagada' => '0.00',
+        ]);
+    }
 }

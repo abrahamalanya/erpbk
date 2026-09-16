@@ -54,4 +54,19 @@ final class PrendarioTipo implements CreditoTipo
     {
         return "modules.credito-prendario.documentos.{$tipoDocumento}";
     }
+
+    public function generaFotosGarantia(): bool
+    {
+        return true;
+    }
+
+    public function generaStickerGarantia(): bool
+    {
+        return true;
+    }
+
+    public function limitaMontoPorValorizacionGarantia(): bool
+    {
+        return true;
+    }
 }

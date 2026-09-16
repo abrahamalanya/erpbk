@@ -20,6 +20,9 @@ beforeEach(function () {
     ConfiguracionCredito::factory()->deEmpresa($this->empresa)->create([
         'tipo_credito' => 'vehicular', 'interes_default' => 8, 'plazo_dias' => 90, 'max_cuotas' => 12,
     ]);
+    ConfiguracionCredito::factory()->deEmpresa($this->empresa)->create([
+        'tipo_credito' => 'diario', 'interes_default' => 20, 'plazo_dias' => 30, 'max_cuotas' => 30,
+    ]);
 
     $this->asesor = User::factory()->forAgencia($this->agencia)->create();
     $this->asesor->assignRole('asesor');
@@ -57,6 +60,20 @@ it('usa el interés y numero de cuotas por defecto de la configuración cuando n
     ])->assertCreated();
 
     expect((float) $response->json('data.interes'))->toBe(8.0);
+});
+
+it('registra una simulación de crédito diario', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $response = $this->postJson('/api/simulaciones-credito', [
+        'tipo_credito' => 'diario',
+        'cliente_id' => $this->cliente->id,
+        'monto_prestamo' => 300,
+        'tipo_cuota' => 'diario',
+    ])->assertCreated();
+
+    expect($response->json('data.cronograma'))->toHaveCount(30)
+        ->and((float) $response->json('data.interes'))->toBe(20.0);
 });
 
 it('rejects a numero_cuotas above the configured max_cuotas for the tipo_credito', function () {

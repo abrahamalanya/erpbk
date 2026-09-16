@@ -36,6 +36,14 @@ beforeEach(function () {
 
     $this->adminAgencia = User::factory()->forAgencia($this->agencia)->create();
     $this->adminAgencia->assignRole('administrador_agencia');
+
+    $this->supervisor = User::factory()->forAgencia($this->agencia)->create();
+    $this->supervisor->assignRole('supervisor');
+    $cajaSupervisor = Caja::factory()->create(['user_id' => $this->supervisor->id, 'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id]);
+    CajaCiclo::query()->create([
+        'caja_id' => $cajaSupervisor->id, 'empresa_id' => $cajaSupervisor->empresa_id, 'fecha' => now()->toDateString(),
+        'estado' => 'abierta', 'saldo_apertura' => 0, 'abierta_at' => now(),
+    ]);
 });
 
 it('allows administrador_agencia to revert an accidental aprobación back to pendiente', function () {
@@ -198,8 +206,18 @@ it('still denies asesor from overriding the interes without flagging it as a sol
     ])->assertForbidden();
 });
 
-it('lets an asesor override the interes when it is flagged as a solicitud especial with a motivo', function () {
+it('denies an asesor from overriding the interes even when flagged as a solicitud especial with a motivo', function () {
     Sanctum::actingAs($this->asesor, ['*']);
+    $this->postJson('/api/creditos-prendarios', [
+        'bien_ids' => [$this->bien->id],
+        'monto_prestamo' => 500, 'interes' => 3, 'tipo_cuota' => 'mensual',
+        'interes_solicitud_especial' => true,
+        'motivo_interes' => 'Cliente exclusivo con historial impecable',
+    ])->assertForbidden();
+});
+
+it('lets a supervisor override the interes when it is flagged as a solicitud especial with a motivo', function () {
+    Sanctum::actingAs($this->supervisor, ['*']);
     $response = $this->postJson('/api/creditos-prendarios', [
         'bien_ids' => [$this->bien->id],
         'monto_prestamo' => 500, 'interes' => 3, 'tipo_cuota' => 'mensual',
@@ -212,8 +230,8 @@ it('lets an asesor override the interes when it is flagged as a solicitud especi
         ->and($response->json('data.motivo_interes'))->toBe('Cliente exclusivo con historial impecable');
 });
 
-it('requires a motivo when a solicitud especial interes differs from the configured default', function () {
-    Sanctum::actingAs($this->asesor, ['*']);
+it('requires a motivo when a supervisor solicitud especial interes differs from the configured default', function () {
+    Sanctum::actingAs($this->supervisor, ['*']);
     $this->postJson('/api/creditos-prendarios', [
         'bien_ids' => [$this->bien->id],
         'monto_prestamo' => 500, 'interes' => 3, 'tipo_cuota' => 'mensual',
@@ -221,8 +239,8 @@ it('requires a motivo when a solicitud especial interes differs from the configu
     ])->assertUnprocessable();
 });
 
-it('does not require a motivo when the flagged interes equals the configured default', function () {
-    Sanctum::actingAs($this->asesor, ['*']);
+it('does not require a motivo when the supervisor flagged interes equals the configured default', function () {
+    Sanctum::actingAs($this->supervisor, ['*']);
     $response = $this->postJson('/api/creditos-prendarios', [
         'bien_ids' => [$this->bien->id],
         'monto_prestamo' => 500, 'interes' => 10, 'tipo_cuota' => 'mensual',
@@ -234,7 +252,7 @@ it('does not require a motivo when the flagged interes equals the configured def
 });
 
 it('exposes the motivo del interés and the solicitud especial flag in the crédito detail', function () {
-    Sanctum::actingAs($this->asesor, ['*']);
+    Sanctum::actingAs($this->supervisor, ['*']);
     $creditoId = $this->postJson('/api/creditos-prendarios', [
         'bien_ids' => [$this->bien->id],
         'monto_prestamo' => 500, 'interes' => 4, 'tipo_cuota' => 'mensual',

@@ -72,4 +72,27 @@ interface CreditoTipo
      * fotos, devolucion, adenda, cronograma).
      */
     public function vistaDocumento(string $tipoDocumento): string;
+
+    /**
+     * Whether this tipo generates a "fotos" documento of the garantía at
+     * registrar()/refrendar()/adendar() time. False for diario, which has
+     * no physical prenda to photograph (its garantía is an invisible
+     * placeholder).
+     */
+    public function generaFotosGarantia(): bool;
+
+    /**
+     * Whether this tipo generates a "sticker" documento of the garantía.
+     * False for hipotecario (uses ficha socioeconómica/notificación de
+     * pago/aviso prejudicial/expediente instead) and diario (no physical
+     * garantía to label).
+     */
+    public function generaStickerGarantia(): bool;
+
+    /**
+     * Whether monto_prestamo is capped to the sum of the garantías'
+     * valorizaciones. False for diario, which has no real garantía to
+     * derive a cap from.
+     */
+    public function limitaMontoPorValorizacionGarantia(): bool;
 }

@@ -31,6 +31,7 @@ use App\Modules\Sistemas\Http\Controllers\PermissionController;
 use App\Modules\Sistemas\Http\Controllers\RoleController;
 use App\Modules\Tienda\Http\Controllers\TiendaArticuloController;
 use App\Modules\Tienda\Http\Controllers\TiendaController;
+use App\Modules\Ubicacion\Http\Controllers\UbicacionAsesorController;
 use App\Modules\Ubigeo\Http\Controllers\UbigeoController;
 use App\Modules\Usuario\Http\Controllers\UserController;
 use App\Nucleo\Http\Controllers\BancoController;
@@ -146,6 +147,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('creditos-prendarios/{credito}/desembolsar', [CreditoController::class, 'desembolsar'])->name('creditos-prendarios.desembolsar');
     Route::post('creditos-prendarios/{credito}/refrendar', [CreditoController::class, 'refrendar'])->name('creditos-prendarios.refrendar');
     Route::post('creditos-prendarios/{credito}/pagar-cuota', [CreditoController::class, 'pagarCuota'])->name('creditos-prendarios.pagar-cuota');
+    Route::post('creditos-prendarios/{credito}/pagar-cuotas-preview', [CreditoController::class, 'pagarCuotasDiarioPreview'])->name('creditos-prendarios.pagar-cuotas-preview');
+    Route::post('creditos-prendarios/{credito}/pagar-cuotas', [CreditoController::class, 'pagarCuotasDiario'])->name('creditos-prendarios.pagar-cuotas');
     Route::post('creditos-prendarios/{credito}/liquidar', [CreditoController::class, 'liquidar'])->name('creditos-prendarios.liquidar');
     Route::post('creditos-prendarios/{credito}/adendar', [CreditoController::class, 'adendar'])->name('creditos-prendarios.adendar');
     Route::post('creditos-prendarios/{credito}/refinanciar', [CreditoController::class, 'refinanciar'])->name('creditos-prendarios.refinanciar');
@@ -172,15 +175,24 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('simulaciones-credito', SimuladorController::class)->only(['index', 'store', 'show', 'destroy'])->parameters(['simulaciones-credito' => 'simulacion']);
 
     Route::get('cobros', [CobroController::class, 'index'])->name('cobros.index');
+    Route::get('cobros/pdf', [CobroController::class, 'pdf'])->name('cobros.pdf');
+    Route::get('cobros/excel', [CobroController::class, 'excel'])->name('cobros.excel');
     Route::get('cobros/creditos-pendientes/{cliente}', [CobroController::class, 'creditosPendientes'])->name('cobros.creditos-pendientes');
     Route::post('cobros/{cobro}/anular', [CobroController::class, 'anular'])->name('cobros.anular');
 
     Route::get('reportes/movimientos-dinero', [ReporteMovimientosController::class, 'movimientosDinero'])->name('reportes.movimientos-dinero');
+    Route::get('reportes/movimientos-dinero/pdf', [ReporteMovimientosController::class, 'movimientosDineroPdf'])->name('reportes.movimientos-dinero.pdf');
+    Route::get('reportes/movimientos-dinero/excel', [ReporteMovimientosController::class, 'movimientosDineroExcel'])->name('reportes.movimientos-dinero.excel');
     Route::get('reportes/cobranza-diaria', [ReporteCobranzaController::class, 'cobranzaDiaria'])->name('reportes.cobranza-diaria');
+    Route::get('reportes/cobranza-diaria/pdf', [ReporteCobranzaController::class, 'cobranzaDiariaPdf'])->name('reportes.cobranza-diaria.pdf');
+    Route::get('reportes/cobranza-diaria/excel', [ReporteCobranzaController::class, 'cobranzaDiariaExcel'])->name('reportes.cobranza-diaria.excel');
 
     Route::get('rutas-cobranza/asesores', [RutaCobranzaController::class, 'asesores'])->name('rutas-cobranza.asesores');
     Route::get('rutas-cobranza', [RutaCobranzaController::class, 'show'])->name('rutas-cobranza.show');
     Route::post('rutas-cobranza/reordenar', [RutaCobranzaController::class, 'reordenar'])->name('rutas-cobranza.reordenar');
+
+    Route::post('ubicaciones-asesores', [UbicacionAsesorController::class, 'store'])->middleware('throttle:30,1')->name('ubicaciones-asesores.store');
+    Route::get('ubicaciones-asesores', [UbicacionAsesorController::class, 'index'])->name('ubicaciones-asesores.index');
 });
 
 // ===== HEALTH CHECK =====

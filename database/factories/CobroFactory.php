@@ -2,8 +2,8 @@
 
 namespace Database\Factories;
 
-use App\Modules\Cobranza\Models\Cobro;
 use App\Modules\Cliente\Models\Cliente;
+use App\Modules\Cobranza\Models\Cobro;
 use App\Modules\Credito\Models\Credito;
 use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Usuario\Models\User;
@@ -28,7 +28,7 @@ class CobroFactory extends Factory
             'credito_sucesor_id' => null,
             'caja_ciclo_id' => null,
             'registrado_por' => User::factory(),
-            'operacion' => fake()->randomElement(['refrendo', 'adenda', 'liquidacion']),
+            'operacion' => fake()->randomElement(['refrendo', 'adenda', 'liquidacion', 'pago_cuotas_diario']),
             'monto_pagado' => fake()->randomFloat(2, 50, 1500),
             'medio' => fake()->randomElement(['efectivo', 'yape', 'plin', 'transferencia']),
             'interes' => fake()->randomFloat(2, 10, 300),

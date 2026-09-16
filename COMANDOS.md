@@ -3,6 +3,9 @@
 ```bash
 /opt/cpanel/ea-php82/root/usr/bin/php /opt/cpanel/composer/bin/composer install
 /opt/cpanel/ea-php82/root/usr/bin/php artisan migrate:fresh --seed
+/opt/cpanel/ea-php82/root/usr/bin/php artisan db:seed --class=RoleSeeder
+/opt/cpanel/ea-php82/root/usr/bin/php artisan db:seed --class=PermissionSeeder
+
 ```
 
 ⚠️ **`migrate:fresh` borra todas las tablas antes de recrearlas.** Solo es seguro mientras el servidor sigue en fase de configuración, sin datos reales. Una vez que producción tenga datos reales (clientes, créditos, movimientos), cambiar a:

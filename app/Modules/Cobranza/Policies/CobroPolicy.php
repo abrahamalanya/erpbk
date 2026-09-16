@@ -31,9 +31,9 @@ class CobroPolicy
 
     /**
      * Misma autoridad que registrar() — el candado real de "solo mientras tu
-     * caja sigue abierta" lo aplica CreditoService::anularCobro() (el ciclo
-     * de caja del cobro es siempre el ciclo propio del actor), así que esto
-     * solo verifica el permiso general.
+     * caja sigue abierta" (con excepción de administrador_general, que puede
+     * anular sin importar la fecha) lo aplica CreditoService::anularCobro(),
+     * así que esto solo verifica el permiso general.
      */
     public function anular(User $user, Cobro $cobro): bool
     {

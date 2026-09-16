@@ -43,14 +43,20 @@
             <th class="num">Capital</th>
             <th class="num">Interés</th>
             <th class="num">Cuota</th>
+            <th class="num">Saldo</th>
+            <th>Fecha de pago</th>
         </tr>
+        @php($saldo = (string) $credito->monto_prestamo)
         @foreach ($credito->cuotas->sortBy('numero_cuota') as $cuota)
+        @php($saldo = bcsub($saldo, (string) $cuota->monto_capital, 2))
         <tr>
             <td>{{ $cuota->numero_cuota }}</td>
             <td>{{ optional($cuota->fecha_vencimiento)->format('d/m/Y') }}</td>
             <td class="num">{{ number_format($cuota->monto_capital, 2) }}</td>
             <td class="num">{{ number_format($cuota->monto_interes, 2) }}</td>
             <td class="num">{{ number_format($cuota->monto_total, 2) }}</td>
+            <td class="num">{{ number_format((float) $saldo, 2) }}</td>
+            <td>{{ optional($cuota->pagada_at)->format('d/m/Y') ?? '—' }}</td>
         </tr>
         @endforeach
         <tr class="totales">
@@ -58,6 +64,8 @@
             <td class="num">{{ number_format($credito->cuotas->sum('monto_capital'), 2) }}</td>
             <td class="num">{{ number_format($credito->cuotas->sum('monto_interes'), 2) }}</td>
             <td class="num">{{ number_format($credito->cuotas->sum('monto_total'), 2) }}</td>
+            <td class="num"></td>
+            <td></td>
         </tr>
     </table>
 </div>

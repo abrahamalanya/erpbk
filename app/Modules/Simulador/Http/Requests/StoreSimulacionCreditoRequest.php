@@ -24,7 +24,7 @@ class StoreSimulacionCreditoRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'tipo_credito' => ['required', Rule::in(['prendario', 'vehicular', 'hipotecario'])],
+            'tipo_credito' => ['required', Rule::in(['prendario', 'vehicular', 'hipotecario', 'diario'])],
             'cliente_id' => ['required', 'integer', 'exists:clientes,id'],
             'monto_prestamo' => ['required', 'numeric', 'min:0.01'],
             'interes' => ['nullable', 'numeric', 'min:0'],

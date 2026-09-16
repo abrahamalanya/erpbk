@@ -106,6 +106,71 @@ it('does not list cobros from another asesor\'s crédito', function () {
     expect($response->json('data.data'))->toHaveCount(0);
 });
 
+it('filters cobros by estado', function () {
+    $credito = Credito::factory()->paraBien($this->bien)
+        ->activo()
+        ->create(['registrado_por' => $this->asesor->id, 'cliente_id' => $this->cliente->id]);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $total = $this->getJson("/api/creditos-prendarios/{$credito->id}")->json('data.monto_liquidacion_sugerido.total');
+    $this->postJson("/api/creditos-prendarios/{$credito->id}/liquidar", ['monto_pagado' => $total, 'medio' => 'efectivo'])
+        ->assertSuccessful();
+
+    $cobro = Cobro::query()->where('credito_id', $credito->id)->firstOrFail();
+    $this->postJson("/api/cobros/{$cobro->id}/anular", [])->assertSuccessful();
+
+    $anulados = $this->getJson('/api/cobros?estado=anulado')->assertSuccessful();
+    expect($anulados->json('data.data'))->toHaveCount(1)
+        ->and($anulados->json('data.data.0.id'))->toBe($cobro->id);
+
+    $registrados = $this->getJson('/api/cobros?estado=registrado')->assertSuccessful();
+    expect($registrados->json('data.data'))->toHaveCount(0);
+});
+
+it('filters cobros by registrado_por', function () {
+    $otroAsesor = User::factory()->forAgencia($this->agencia)->create();
+    $otroAsesor->assignRole('asesor');
+    $adminAgencia = User::factory()->forAgencia($this->agencia)->create();
+    $adminAgencia->assignRole('administrador_agencia');
+
+    $credito = Credito::factory()->paraBien($this->bien)
+        ->activo()
+        ->create(['registrado_por' => $this->asesor->id, 'cliente_id' => $this->cliente->id]);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $total = $this->getJson("/api/creditos-prendarios/{$credito->id}")->json('data.monto_liquidacion_sugerido.total');
+    $this->postJson("/api/creditos-prendarios/{$credito->id}/liquidar", ['monto_pagado' => $total, 'medio' => 'efectivo'])
+        ->assertSuccessful();
+
+    Sanctum::actingAs($adminAgencia, ['*']);
+    $deEsteAsesor = $this->getJson("/api/cobros?registrado_por={$this->asesor->id}")->assertSuccessful();
+    expect($deEsteAsesor->json('data.data'))->toHaveCount(1);
+
+    $deOtroAsesor = $this->getJson("/api/cobros?registrado_por={$otroAsesor->id}")->assertSuccessful();
+    expect($deOtroAsesor->json('data.data'))->toHaveCount(0);
+});
+
+it('filters anulaciones by anulado_desde/anulado_hasta, independent of desde/hasta', function () {
+    $credito = Credito::factory()->paraBien($this->bien)
+        ->activo()
+        ->create(['registrado_por' => $this->asesor->id, 'cliente_id' => $this->cliente->id]);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $total = $this->getJson("/api/creditos-prendarios/{$credito->id}")->json('data.monto_liquidacion_sugerido.total');
+    $this->postJson("/api/creditos-prendarios/{$credito->id}/liquidar", ['monto_pagado' => $total, 'medio' => 'efectivo'])
+        ->assertSuccessful();
+
+    $cobro = Cobro::query()->where('credito_id', $credito->id)->firstOrFail();
+    $this->postJson("/api/cobros/{$cobro->id}/anular", [])->assertSuccessful();
+    $cobro->update(['anulado_at' => now()->subDays(10)]);
+
+    $fueraDeRango = $this->getJson('/api/cobros?estado=anulado&anulado_desde='.now()->subDays(2)->toDateString())->assertSuccessful();
+    expect($fueraDeRango->json('data.data'))->toHaveCount(0);
+
+    $dentroDeRango = $this->getJson('/api/cobros?estado=anulado&anulado_hasta='.now()->subDays(2)->toDateString())->assertSuccessful();
+    expect($dentroDeRango->json('data.data'))->toHaveCount(1);
+});
+
 it('returns a client\'s activo/vencido créditos with suggested amounts', function () {
     $activo = Credito::factory()->paraBien($this->bien)
         ->activo()

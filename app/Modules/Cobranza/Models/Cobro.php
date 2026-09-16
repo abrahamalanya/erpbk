@@ -6,6 +6,7 @@ use App\Modules\Caja\Models\CajaCiclo;
 use App\Modules\Caja\Models\CajaMovimiento;
 use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Credito\Models\Credito;
+use App\Modules\Credito\Models\CuotaCredito;
 use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Usuario\Models\User;
 use App\Nucleo\Concerns\BelongsToTenant;
@@ -13,13 +14,14 @@ use Database\Factories\CobroFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
- * Un cobro registrado sobre un crédito (refrendo, adenda, liquidación,
- * pago de cuota o refinanciamiento). Lo crea CreditoService al recibir el
- * pago; el módulo Cobranzas lo lista y permite anularlo (ver
- * CreditoService::anularCobro()) mientras el ciclo de caja donde se cobró
- * siga abierto.
+ * Un cobro registrado sobre un crédito (refrendo, adenda, liquidación, pago
+ * de cuota de un compuesto, pago de una o varias cuotas de un diario, o
+ * refinanciamiento). Lo crea CreditoService al recibir el pago; el módulo
+ * Cobranzas lo lista y permite anularlo (ver CreditoService::anularCobro())
+ * mientras el ciclo de caja donde se cobró siga abierto.
  */
 class Cobro extends Model
 {
@@ -85,6 +87,11 @@ class Cobro extends Model
     public function creditoSucesor(): BelongsTo
     {
         return $this->belongsTo(Credito::class, 'credito_sucesor_id');
+    }
+
+    public function cuotasPagadas(): HasMany
+    {
+        return $this->hasMany(CuotaCredito::class, 'cobro_id');
     }
 
     public function cajaCiclo(): BelongsTo

@@ -2,8 +2,10 @@
 
 namespace App\Modules\Credito\Models;
 
+use App\Modules\Cobranza\Models\Cobro;
 use App\Nucleo\Concerns\BelongsToTenant;
 use Database\Factories\CuotaCreditoFactory;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -33,6 +35,9 @@ class CuotaCredito extends Model
         'monto_capital',
         'monto_interes',
         'monto_total',
+        'pagada_at',
+        'mora_pagada',
+        'cobro_id',
     ];
 
     /**
@@ -47,12 +52,29 @@ class CuotaCredito extends Model
             'monto_capital' => 'decimal:2',
             'monto_interes' => 'decimal:2',
             'monto_total' => 'decimal:2',
+            'pagada_at' => 'datetime',
+            'mora_pagada' => 'decimal:2',
         ];
     }
 
     public function credito(): BelongsTo
     {
         return $this->belongsTo(Credito::class, 'credito_id');
+    }
+
+    public function cobro(): BelongsTo
+    {
+        return $this->belongsTo(Cobro::class);
+    }
+
+    public function scopePendientes(Builder $query): Builder
+    {
+        return $query->whereNull('pagada_at');
+    }
+
+    public function scopePagadas(Builder $query): Builder
+    {
+        return $query->whereNotNull('pagada_at');
     }
 
     protected static function newFactory(): CuotaCreditoFactory

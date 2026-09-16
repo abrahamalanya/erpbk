@@ -24,7 +24,7 @@ final class DocumentoCreditoService
         'voucher_desembolso', 'voucher_pago', 'sticker',
         'carta_no_adeudo', 'recepcion_vehiculos', 'ficha_socioeconomica',
         'notificacion_pago', 'aviso_prejudicial', 'expediente',
-        'contrato_transferencia',
+        'contrato_transferencia', 'pagare',
     ];
 
     public function __construct(
@@ -40,6 +40,18 @@ final class DocumentoCreditoService
     public function generarDeclaracion(Credito $credito, User $actor): DocumentoCredito
     {
         return $this->generar($credito, $actor, 'declaracion');
+    }
+
+    /**
+     * Pagaré y reconocimiento de deuda — solo crédito diario, reemplaza a
+     * contrato+declaración para ese tipo. Se genera al desembolsar (no al
+     * registrar) porque necesita el cronograma ya real y persistido (montos
+     * y fechas exactos de cada cuota), no uno tentativo — ver
+     * CreditoService::desembolsar().
+     */
+    public function generarPagare(Credito $credito, User $actor): DocumentoCredito
+    {
+        return $this->generar($credito, $actor, 'pagare');
     }
 
     public function generarAdenda(Credito $credito, User $actor): DocumentoCredito

@@ -30,6 +30,7 @@
             'liquidacion' => 'LIQUIDACIÓN',
             'refinanciamiento' => 'REFINANCIAMIENTO',
             'pago_cuota' => 'PAGO DE CUOTA',
+            'pago_cuotas_diario' => 'PAGO DE CUOTAS',
         ][$datos['operacion'] ?? ''] ?? 'PAGO';
         $fecha = $documento->generado_at->locale('es')->translatedFormat('d \\d\\e F \\d\\e\\l Y, H:i');
         $medioLabel = ucfirst(str_replace('_', ' ', $datos['medio'] ?? 'efectivo'));
@@ -72,6 +73,17 @@
             <tr class="tot"><td>Deuda total</td><td class="num">{{ number_format((float) ($datos['deuda_total'] ?? 0), 2) }}</td></tr>
             <tr><td>Pagado ahora</td><td class="num">-{{ number_format((float) ($datos['monto_pagado'] ?? 0), 2) }}</td></tr>
             <tr class="tot"><td>Nuevo capital (crédito sucesor)</td><td class="num">{{ number_format((float) ($datos['nuevo_capital'] ?? 0), 2) }}</td></tr>
+        @elseif (($datos['operacion'] ?? '') === 'pago_cuotas_diario')
+            @foreach ($datos['cuotas'] ?? [] as $cuota)
+                <tr>
+                    <td>Cuota #{{ $cuota['numero_cuota'] }} (vence {{ \Illuminate\Support\Carbon::parse($cuota['fecha_vencimiento'])->format('d/m/Y') }})</td>
+                    <td class="num">{{ number_format((float) $cuota['monto_total'], 2) }}</td>
+                </tr>
+                @if ((float) ($cuota['mora'] ?? 0) > 0)
+                    <tr><td>Mora cuota #{{ $cuota['numero_cuota'] }}</td><td class="num">{{ number_format((float) $cuota['mora'], 2) }}</td></tr>
+                @endif
+            @endforeach
+            <tr class="tot"><td>Total pagado ({{ count($datos['cuotas'] ?? []) }} cuota(s))</td><td class="num">{{ number_format((float) ($datos['total'] ?? 0), 2) }}</td></tr>
         @else
             <tr><td>Interés</td><td class="num">{{ number_format((float) ($datos['interes'] ?? 0), 2) }}</td></tr>
             <tr><td>Mora</td><td class="num">{{ number_format((float) ($datos['mora'] ?? 0), 2) }}</td></tr>

@@ -92,4 +92,24 @@ abstract class CreditoTipoSupervisado implements CreditoTipo
 
         return "modules.{$modulo}.documentos.{$tipoDocumento}";
     }
+
+    public function generaFotosGarantia(): bool
+    {
+        return true;
+    }
+
+    /**
+     * True para vehicular; hipotecario lo sobreescribe a false (usa ficha
+     * socioeconómica/notificación de pago/aviso prejudicial/expediente en
+     * su lugar, ver HipotecarioTipo).
+     */
+    public function generaStickerGarantia(): bool
+    {
+        return true;
+    }
+
+    public function limitaMontoPorValorizacionGarantia(): bool
+    {
+        return true;
+    }
 }

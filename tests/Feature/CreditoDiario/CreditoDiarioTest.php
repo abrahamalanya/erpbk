@@ -6,6 +6,7 @@ use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Credito\Models\ConfiguracionCredito;
 use App\Modules\Credito\Models\Credito;
 use App\Modules\Credito\Services\CreditoService;
+use App\Modules\CreditoDiario\Models\CreditoDiarioGarantia;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Usuario\Models\User;
@@ -75,7 +76,9 @@ it('registers a diario crédito without any garantía real, just a cliente_id', 
         ->and($credito->garantiasDiarias()->count())->toBe(1);
 });
 
-it('generates contrato and declaracion for a diario crédito, but not fotos nor sticker', function () {
+it('generates no contrato/declaracion/fotos/sticker for a diario crédito at registro — only the pagaré, once desembolsado', function () {
+    Storage::fake('public');
+
     Sanctum::actingAs($this->asesor, ['*']);
     $creditoId = $this->postJson('/api/creditos-diarios', [
         'cliente_id' => $this->cliente->id,
@@ -83,11 +86,21 @@ it('generates contrato and declaracion for a diario crédito, but not fotos nor 
         'tipo_cuota' => 'diario',
     ])->assertCreated()->json('data.id');
 
-    $tipos = Credito::find($creditoId)->documentos()->pluck('tipo')->all();
-    expect($tipos)->toContain('contrato')
-        ->and($tipos)->toContain('declaracion')
-        ->and($tipos)->not->toContain('fotos')
-        ->and($tipos)->not->toContain('sticker');
+    $tiposAlRegistrar = Credito::find($creditoId)->documentos()->pluck('tipo')->all();
+    expect($tiposAlRegistrar)->toBe([]);
+
+    aprobarYFirmarDocumentosDiario($this, $creditoId);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar")->assertSuccessful();
+
+    $tiposAlDesembolsar = Credito::find($creditoId)->documentos()->pluck('tipo')->all();
+    expect($tiposAlDesembolsar)->toBe(['voucher_desembolso', 'pagare']);
+
+    $pagare = Credito::find($creditoId)->documentos()->where('tipo', 'pagare')->firstOrFail();
+    $response = $this->get("/api/creditos-prendarios/{$creditoId}/documentos/{$pagare->id}/ver");
+    $response->assertSuccessful();
+    expect($response->headers->get('content-type'))->toContain('application/pdf');
 });
 
 it('runs the full aprobar -> desembolsar -> cronograma lifecycle with tipo_cuota diario', function () {
@@ -203,7 +216,7 @@ it('allows an admin to raise monto_prestamo above the placeholder garantía valo
     ])->assertSuccessful()->assertJsonPath('data.monto_prestamo', '5000.00');
 });
 
-it('creates a chained crédito on refrendo, same as prendario', function () {
+it('denies refrendar for a diario crédito: use pagar-cuotas instead', function () {
     $original = Credito::factory()->diario()
         ->activo()
         ->create([
@@ -215,46 +228,14 @@ it('creates a chained crédito on refrendo, same as prendario', function () {
 
     Sanctum::actingAs($this->asesor, ['*']);
 
-    $sugerido = $this->getJson("/api/creditos-prendarios/{$original->id}")->json('data.monto_refrendo_sugerido.total');
-    $response = $this->postJson("/api/creditos-prendarios/{$original->id}/refrendar", ['monto_pagado' => $sugerido, 'medio' => 'efectivo'])
-        ->assertCreated();
+    $this->postJson("/api/creditos-prendarios/{$original->id}/refrendar", ['monto_pagado' => 100, 'medio' => 'efectivo'])
+        ->assertStatus(422)
+        ->assertJsonPath('message', 'Los créditos diarios no se refrendan: usa "pagar cuotas" para pagar cuotas pendientes.');
 
-    expect($response->json('data.refrendo_de_credito_id'))->toBe($original->id)
-        ->and($response->json('data.tipo_credito'))->toBe('diario')
-        ->and($response->json('data.estado'))->toBe('activo');
-
-    expect($original->fresh()->estado)->toBe('refrendado');
-
-    $tipos = Credito::find($response->json('data.id'))->documentos()->pluck('tipo')->all();
-    expect($tipos)->toEqualCanonicalizing(['contrato', 'declaracion']);
+    expect($original->fresh()->estado)->toBe('activo');
 });
 
-it('also spans the month (30 días) on a semanal refrendo successor', function () {
-    $original = Credito::factory()->diario()
-        ->activo()
-        ->create([
-            'registrado_por' => $this->asesor->id,
-            'empresa_id' => $this->empresa->id,
-            'agencia_id' => $this->agencia->id,
-            'cliente_id' => $this->cliente->id,
-            'tipo_cuota' => 'semanal',
-        ]);
-
-    Sanctum::actingAs($this->asesor, ['*']);
-
-    $sugerido = $this->getJson("/api/creditos-prendarios/{$original->id}")->json('data.monto_refrendo_sugerido.total');
-    $response = $this->postJson("/api/creditos-prendarios/{$original->id}/refrendar", ['monto_pagado' => $sugerido, 'medio' => 'efectivo'])
-        ->assertCreated();
-
-    expect($response->json('data.plazo_dias'))->toBe(30);
-
-    $nuevo = Credito::find($response->json('data.id'));
-    expect($nuevo->cuotas)->toHaveCount(4)
-        ->and($nuevo->cuotas()->orderBy('numero_cuota')->get()->last()->fecha_vencimiento->toDateString())
-        ->toBe($nuevo->fecha_desembolso->copy()->addDays(30)->toDateString());
-});
-
-it('adenda works the same as prendario for diario', function () {
+it('denies adendar for a diario crédito: use pagar-cuotas instead', function () {
     $original = Credito::factory()->diario()
         ->activo()
         ->create([
@@ -266,18 +247,14 @@ it('adenda works the same as prendario for diario', function () {
 
     Sanctum::actingAs($this->asesor, ['*']);
 
-    $sugerido = $this->getJson("/api/creditos-prendarios/{$original->id}")->json('data.monto_refrendo_sugerido.total');
-    $response = $this->postJson("/api/creditos-prendarios/{$original->id}/adendar", ['monto_pagado' => $sugerido, 'medio' => 'efectivo'])
-        ->assertCreated();
+    $this->postJson("/api/creditos-prendarios/{$original->id}/adendar", ['monto_pagado' => 100, 'medio' => 'efectivo'])
+        ->assertStatus(422)
+        ->assertJsonPath('message', 'Los créditos diarios no se adendan: usa "pagar cuotas" para pagar cuotas pendientes.');
 
-    expect($response->json('data.adenda_de_credito_id'))->toBe($original->id)
-        ->and($response->json('data.tipo_credito'))->toBe('diario')
-        ->and($response->json('data.estado'))->toBe('pendiente');
-
-    expect($original->fresh()->estado)->toBe('adendado');
+    expect($original->fresh()->estado)->toBe('activo');
 });
 
-it('liquidates a diario crédito the same as prendario', function () {
+it('liquidates a diario crédito straight to liquidado, skipping the acta de devolución that other types use', function () {
     $credito = Credito::factory()->diario()
         ->activo()
         ->create([
@@ -288,13 +265,29 @@ it('liquidates a diario crédito the same as prendario', function () {
             'monto_prestamo' => 1000,
         ]);
 
+    $garantia = CreditoDiarioGarantia::factory()->create([
+        'empresa_id' => $this->empresa->id,
+        'agencia_id' => $this->agencia->id,
+        'cliente_id' => $this->cliente->id,
+        'valorizacion' => 1000,
+        'estado' => 'en_garantia',
+    ]);
+    $credito->garantiasComo(CreditoDiarioGarantia::class)->attach($garantia->id);
+
     Sanctum::actingAs($this->asesor, ['*']);
 
     $sugerido = $this->getJson("/api/creditos-prendarios/{$credito->id}")->json('data.monto_liquidacion_sugerido.total');
 
     $this->postJson("/api/creditos-prendarios/{$credito->id}/liquidar", ['monto_pagado' => $sugerido, 'medio' => 'efectivo'])
         ->assertSuccessful()
-        ->assertJsonPath('data.estado', 'liquidado_pendiente');
+        ->assertJsonPath('data.estado', 'liquidado');
+
+    $tipos = $credito->fresh()->documentos()->pluck('tipo')->all();
+    expect($tipos)->toContain('carta_no_adeudo')
+        ->and($tipos)->toContain('voucher_pago')
+        ->and($tipos)->not->toContain('devolucion');
+
+    expect($garantia->fresh()->estado)->toBe('recuperado');
 });
 
 it('keeps a vencido diario crédito past its período de espera in vencido — never moves to en_venta', function () {

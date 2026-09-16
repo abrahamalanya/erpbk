@@ -7,13 +7,17 @@ use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Cobranza\Models\Cobro;
 use App\Modules\Credito\Models\ConfiguracionCredito;
 use App\Modules\Credito\Models\Credito;
+use App\Modules\Credito\Models\CuotaCredito;
 use App\Modules\CreditoPrendario\Models\Bien;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Usuario\Models\User;
 use Database\Seeders\PermissionSeeder;
 use Database\Seeders\RoleSeeder;
+use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
+use Tests\TestCase;
 
 beforeEach(function () {
     $this->seed([RoleSeeder::class, PermissionSeeder::class]);
@@ -126,6 +130,55 @@ it('rejects anulando a cobro once the caja ciclo where it was registered is clos
     expect($credito->fresh()->estado)->toBe('liquidado_pendiente');
 });
 
+it('lets administrador_general anular a cobro even after its caja ciclo is closed', function () {
+    $credito = Credito::factory()->paraBien($this->bien)
+        ->activo()
+        ->create(['registrado_por' => $this->asesor->id, 'cliente_id' => $this->cliente->id]);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $total = $this->getJson("/api/creditos-prendarios/{$credito->id}")->json('data.monto_liquidacion_sugerido.total');
+    $this->postJson("/api/creditos-prendarios/{$credito->id}/liquidar", ['monto_pagado' => $total, 'medio' => 'efectivo'])
+        ->assertSuccessful();
+
+    $cobro = Cobro::query()->where('credito_id', $credito->id)->firstOrFail();
+    $this->ciclo->update(['estado' => 'cerrada']);
+
+    $administrador = User::factory()->forAgencia($this->agencia)->create();
+    $administrador->assignRole('administrador_general');
+
+    Sanctum::actingAs($administrador, ['*']);
+    $this->postJson("/api/cobros/{$cobro->id}/anular", ['motivo' => 'Cobro erróneo detectado tarde'])
+        ->assertSuccessful()
+        ->assertJsonPath('data.estado', 'activo');
+
+    expect($credito->fresh()->estado)->toBe('activo')
+        ->and(CajaMovimiento::find($cobro->caja_movimiento_id))->toBeNull();
+
+    $cobro = $cobro->fresh();
+    expect($cobro->estado)->toBe('anulado')
+        ->and($cobro->anulado_por)->toBe($administrador->id);
+});
+
+it('marks puede_anular true for administrador_general even outside their own ciclo', function () {
+    $credito = Credito::factory()->paraBien($this->bien)
+        ->activo()
+        ->create(['registrado_por' => $this->asesor->id, 'cliente_id' => $this->cliente->id]);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $total = $this->getJson("/api/creditos-prendarios/{$credito->id}")->json('data.monto_liquidacion_sugerido.total');
+    $this->postJson("/api/creditos-prendarios/{$credito->id}/liquidar", ['monto_pagado' => $total, 'medio' => 'efectivo'])
+        ->assertSuccessful();
+
+    $this->ciclo->update(['estado' => 'cerrada']);
+
+    $administrador = User::factory()->forAgencia($this->agencia)->create();
+    $administrador->assignRole('administrador_general');
+
+    Sanctum::actingAs($administrador, ['*']);
+    $response = $this->getJson('/api/cobros')->assertSuccessful();
+    expect($response->json('data.data.0.puede_anular'))->toBeTrue();
+});
+
 it('rejects anulando a cobro that is already anulado', function () {
     $credito = Credito::factory()->paraBien($this->bien)
         ->activo()
@@ -200,4 +253,118 @@ it('denies a user without cobranzas.registrar from anulando a cobro', function (
 
     Sanctum::actingAs($sinPermiso, ['*']);
     $this->postJson("/api/cobros/{$cobro->id}/anular", [])->assertForbidden();
+});
+
+function registrarYDesembolsarDiarioParaAnular(TestCase $test): Credito
+{
+    Storage::fake('public');
+    // desembolsar() mueve el monto_prestamo desde la caja del actor — el
+    // ciclo compartido del beforeEach nace en 0 (los tests de refrendar/
+    // liquidar solo cobran, nunca desembolsan), así que aquí sí necesita
+    // saldo suficiente para poder desembolsar el diario.
+    $test->ciclo->update(['saldo_apertura' => 10000]);
+
+    ConfiguracionCredito::factory()->deEmpresa($test->empresa)->create([
+        'tipo_credito' => 'diario',
+        'interes_default' => 15, 'plazo_dias' => 30, 'dias_espera_mora' => 15,
+        'dias_minimo_interes' => 15, 'tasa_mora_diaria' => 1, 'max_cuotas' => 45,
+    ]);
+
+    $adminAgencia = User::factory()->forAgencia($test->agencia)->create();
+    $adminAgencia->assignRole('administrador_agencia');
+
+    Sanctum::actingAs($test->asesor, ['*']);
+    $creditoId = $test->postJson('/api/creditos-diarios', [
+        'cliente_id' => $test->cliente->id,
+        'monto_prestamo' => 500,
+        'tipo_cuota' => 'diario',
+        'numero_cuotas' => 5,
+    ])->assertCreated()->json('data.id');
+
+    Sanctum::actingAs($adminAgencia, ['*']);
+    $test->postJson("/api/creditos-prendarios/{$creditoId}/aprobar")->assertSuccessful();
+
+    Sanctum::actingAs($test->asesor, ['*']);
+    foreach (Credito::find($creditoId)->documentos as $documento) {
+        $test->postJson("/api/creditos-prendarios/{$creditoId}/documentos/{$documento->id}/subir-firmado", [
+            'archivo' => UploadedFile::fake()->create('firmado.pdf', 100, 'application/pdf'),
+        ])->assertSuccessful();
+    }
+
+    $test->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar")->assertSuccessful();
+
+    return Credito::find($creditoId);
+}
+
+it('undoes a pago_cuotas_diario mid-cronograma: reverts the cuotas to pendientes and removes the caja movimiento', function () {
+    $credito = registrarYDesembolsarDiarioParaAnular($this);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $preview = $this->postJson("/api/creditos-prendarios/{$credito->id}/pagar-cuotas-preview", ['numero_cuotas' => 2])
+        ->assertSuccessful()->json('data');
+    $this->postJson("/api/creditos-prendarios/{$credito->id}/pagar-cuotas", [
+        'numero_cuotas' => 2, 'monto_pagado' => $preview['total'], 'medio' => 'efectivo',
+    ])->assertCreated();
+
+    $cobro = Cobro::where('credito_id', $credito->id)->where('operacion', 'pago_cuotas_diario')->firstOrFail();
+    expect($cobro->caja_movimiento_id)->not->toBeNull();
+
+    $this->postJson("/api/cobros/{$cobro->id}/anular", ['motivo' => 'Cobro duplicado'])
+        ->assertSuccessful()
+        ->assertJsonPath('data.estado', 'activo');
+
+    $pagadas = CuotaCredito::where('credito_id', $credito->id)->pagadas()->count();
+    expect($pagadas)->toBe(0)
+        ->and(CajaMovimiento::find($cobro->caja_movimiento_id))->toBeNull();
+
+    $cobro = $cobro->fresh();
+    expect($cobro->estado)->toBe('anulado')
+        ->and($cobro->motivo_anulacion)->toBe('Cobro duplicado');
+});
+
+it('rejects anulando a pago_cuotas_diario once a later cuota was paid by another cobro', function () {
+    $credito = registrarYDesembolsarDiarioParaAnular($this);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $primerPreview = $this->postJson("/api/creditos-prendarios/{$credito->id}/pagar-cuotas-preview", ['numero_cuotas' => 1])
+        ->assertSuccessful()->json('data');
+    $this->postJson("/api/creditos-prendarios/{$credito->id}/pagar-cuotas", [
+        'numero_cuotas' => 1, 'monto_pagado' => $primerPreview['total'], 'medio' => 'efectivo',
+    ])->assertCreated();
+
+    $primerCobro = Cobro::where('credito_id', $credito->id)->where('operacion', 'pago_cuotas_diario')->firstOrFail();
+
+    $segundoPreview = $this->postJson("/api/creditos-prendarios/{$credito->id}/pagar-cuotas-preview", ['numero_cuotas' => 1])
+        ->assertSuccessful()->json('data');
+    $this->postJson("/api/creditos-prendarios/{$credito->id}/pagar-cuotas", [
+        'numero_cuotas' => 1, 'monto_pagado' => $segundoPreview['total'], 'medio' => 'efectivo',
+    ])->assertCreated();
+
+    $this->postJson("/api/cobros/{$primerCobro->id}/anular", [])
+        ->assertUnprocessable()
+        ->assertJsonPath('message', 'No se puede anular: ya se pagó una cuota posterior con otro cobro.');
+});
+
+it('rejects anulando the pago_cuotas_diario that auto-liquidated the crédito — ya no hay acta de devolución que revertir', function () {
+    $credito = registrarYDesembolsarDiarioParaAnular($this);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $preview = $this->postJson("/api/creditos-prendarios/{$credito->id}/pagar-cuotas-preview", ['numero_cuotas' => 5])
+        ->assertSuccessful()->json('data');
+    expect($preview['es_ultima_cuota'])->toBeTrue();
+
+    $this->postJson("/api/creditos-prendarios/{$credito->id}/pagar-cuotas", [
+        'numero_cuotas' => 5, 'monto_pagado' => $preview['total'], 'medio' => 'efectivo',
+    ])->assertCreated();
+
+    expect($credito->fresh()->estado)->toBe('liquidado');
+
+    $cobro = Cobro::where('credito_id', $credito->id)->where('operacion', 'pago_cuotas_diario')->firstOrFail();
+
+    $this->postJson("/api/cobros/{$cobro->id}/anular", [])
+        ->assertUnprocessable()
+        ->assertJsonPath('message', 'No se puede anular: este crédito ya quedó liquidado (carta de no adeudo generada).');
+
+    expect($credito->fresh()->estado)->toBe('liquidado')
+        ->and(CuotaCredito::where('credito_id', $credito->id)->pagadas()->count())->toBe(5);
 });

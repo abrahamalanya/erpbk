@@ -30,7 +30,7 @@ class CreditoHipotecarioController extends Controller
 
         $data = $request->validated();
 
-        if (($data['interes'] ?? null) !== null && ! ($data['interes_solicitud_especial'] ?? false)) {
+        if (($data['interes'] ?? null) !== null && (! ($data['interes_solicitud_especial'] ?? false) || $request->user()->hasRole('asesor'))) {
             Gate::authorize('creditos_prendarios.editar');
         }
 

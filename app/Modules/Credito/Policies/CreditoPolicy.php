@@ -89,6 +89,18 @@ class CreditoPolicy
         return $user->can('creditos_prendarios.pagar_cuota') && $this->hierarchy->puedeVer($user, $credito);
     }
 
+    /**
+     * Mismo permiso que pagarCuota() — es el mismo rol operativo (el
+     * cobrador/asesor de campo) pagando una cuota, solo que para un crédito
+     * diario en vez de uno de interés compuesto. La restricción de que solo
+     * aplica a tipo_credito === 'diario' vive en CreditoService (422), no
+     * aquí — igual que pagarCuota() no filtra por tipo_interes en la Policy.
+     */
+    public function pagarCuotasDiario(User $user, Credito $credito): bool
+    {
+        return $user->can('creditos_prendarios.pagar_cuota') && $this->hierarchy->puedeVer($user, $credito);
+    }
+
     public function liquidar(User $user, Credito $credito): bool
     {
         return $user->can('creditos_prendarios.liquidar') && $this->hierarchy->puedeVer($user, $credito);
