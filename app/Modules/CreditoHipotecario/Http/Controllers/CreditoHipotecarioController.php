@@ -5,6 +5,7 @@ namespace App\Modules\CreditoHipotecario\Http\Controllers;
 use App\Modules\Credito\Services\CreditoService;
 use App\Modules\CreditoHipotecario\Http\Requests\StoreCreditoHipotecarioRequest;
 use App\Modules\CreditoHipotecario\Models\Inmueble;
+use App\Modules\Sistemas\Services\ModuloService;
 use App\Nucleo\Http\Controllers\Controller;
 use App\Nucleo\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
@@ -22,11 +23,13 @@ class CreditoHipotecarioController extends Controller
 
     public function __construct(
         private readonly CreditoService $creditoService,
+        private readonly ModuloService $modulos,
     ) {}
 
     public function store(StoreCreditoHipotecarioRequest $request): JsonResponse
     {
         Gate::authorize('creditos_hipotecarios.crear');
+        $this->modulos->autorizarCreacion($request->user(), 'hipotecario');
 
         $data = $request->validated();
 

@@ -25,6 +25,8 @@ class UpdateRolePermissionsRequest extends FormRequest
         return [
             'permissions' => ['present', 'array'],
             'permissions.*' => ['string', 'exists:permissions,name'],
+            'modulos' => ['sometimes', 'array'],
+            'modulos.*' => ['string', 'exists:modulos,key'],
         ];
     }
 
@@ -38,6 +40,7 @@ class UpdateRolePermissionsRequest extends FormRequest
         return [
             'permissions.present' => 'Debe indicar el arreglo de permisos (puede ser vacío)',
             'permissions.*.exists' => 'Uno de los permisos indicados no existe',
+            'modulos.*.exists' => 'Uno de los módulos indicados no existe',
         ];
     }
 }

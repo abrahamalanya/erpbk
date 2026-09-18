@@ -28,6 +28,7 @@ use App\Modules\Credito\Services\CreditoHierarchyService;
 use App\Modules\Credito\Services\CreditoService;
 use App\Modules\Credito\Services\DocumentoCreditoService;
 use App\Modules\CreditoPrendario\Models\Bien;
+use App\Modules\Sistemas\Services\ModuloService;
 use App\Modules\Usuario\Models\User;
 use App\Nucleo\Http\Controllers\Controller;
 use App\Nucleo\Traits\ApiResponse;
@@ -45,6 +46,7 @@ class CreditoController extends Controller
         private readonly DocumentoCreditoService $documentoService,
         private readonly CreditoHierarchyService $hierarchy,
         private readonly ConfiguracionCreditoService $configuracionService,
+        private readonly ModuloService $modulos,
     ) {}
 
     /**
@@ -160,6 +162,7 @@ class CreditoController extends Controller
     public function store(StoreCreditoRequest $request): JsonResponse
     {
         Gate::authorize('create', Credito::class);
+        $this->modulos->autorizarCreacion($request->user(), 'prendario');
 
         $data = $request->validated();
 

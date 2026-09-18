@@ -23,7 +23,7 @@ class LoginRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'email' => 'required|email',
+            'email' => 'required|string',
             'password' => 'required|min:6',
         ];
     }
@@ -36,8 +36,7 @@ class LoginRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'email.required' => 'El email es requerido',
-            'email.email' => 'El email debe ser válido',
+            'email.required' => 'El email o DNI es requerido',
             'password.required' => 'La contraseña es requerida',
             'password.min' => 'La contraseña debe tener al menos 6 caracteres',
         ];

@@ -6,6 +6,7 @@ use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Credito\Services\CreditoService;
 use App\Modules\CreditoDiario\Http\Requests\StoreCreditoDiarioRequest;
 use App\Modules\CreditoDiario\Models\CreditoDiarioGarantia;
+use App\Modules\Sistemas\Services\ModuloService;
 use App\Nucleo\Http\Controllers\Controller;
 use App\Nucleo\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
@@ -27,11 +28,13 @@ class CreditoDiarioController extends Controller
 
     public function __construct(
         private readonly CreditoService $creditoService,
+        private readonly ModuloService $modulos,
     ) {}
 
     public function store(StoreCreditoDiarioRequest $request): JsonResponse
     {
         Gate::authorize('creditos_diarios.crear');
+        $this->modulos->autorizarCreacion($request->user(), 'diario');
 
         $data = $request->validated();
 

@@ -2,6 +2,7 @@
 
 namespace App\Modules\Caja\Models;
 
+use App\Modules\Cobranza\Models\Cobro;
 use App\Modules\Usuario\Models\User;
 use App\Nucleo\Concerns\BelongsToTenant;
 use Database\Factories\CajaCicloFactory;
@@ -76,6 +77,11 @@ class CajaCiclo extends Model
     public function billetajes(): HasMany
     {
         return $this->hasMany(Billetaje::class);
+    }
+
+    public function cobros(): HasMany
+    {
+        return $this->hasMany(Cobro::class);
     }
 
     /**

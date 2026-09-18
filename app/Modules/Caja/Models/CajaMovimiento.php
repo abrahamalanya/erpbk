@@ -2,6 +2,7 @@
 
 namespace App\Modules\Caja\Models;
 
+use App\Modules\Credito\Models\Credito;
 use App\Modules\Sistemas\Models\Concepto;
 use App\Modules\Usuario\Models\User;
 use App\Nucleo\Concerns\BelongsToTenant;
@@ -32,6 +33,7 @@ class CajaMovimiento extends Model
         'descripcion',
         'concepto_id',
         'billetaje_id',
+        'credito_id',
         'registrado_por',
         'fecha_caja',
     ];
@@ -62,6 +64,14 @@ class CajaMovimiento extends Model
     public function concepto(): BelongsTo
     {
         return $this->belongsTo(Concepto::class);
+    }
+
+    /**
+     * Solo se setea en un egreso de desembolso (ver CreditoService::desembolsar()).
+     */
+    public function credito(): BelongsTo
+    {
+        return $this->belongsTo(Credito::class);
     }
 
     public function registradoPor(): BelongsTo

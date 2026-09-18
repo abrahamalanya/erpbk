@@ -4,6 +4,7 @@ use App\Modules\Credito\Models\Credito;
 use App\Modules\CreditoPrendario\Models\Bien;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
+use App\Modules\Sistemas\Services\ModuloService;
 use App\Modules\Usuario\Models\User;
 use Database\Seeders\PermissionSeeder;
 use Database\Seeders\RoleSeeder;
@@ -70,6 +71,47 @@ it('lets administrador_general see créditos across every agencia of their empre
     $adminGeneral = User::factory()->forEmpresa($this->empresa)->create();
     $adminGeneral->assignRole('administrador_general');
     Sanctum::actingAs($adminGeneral, ['*']);
+
+    $this->getJson('/api/creditos-prendarios')->assertSuccessful()->assertJsonCount(2, 'data.data');
+});
+
+it('hides créditos of a tipo outside the asesor\'s assigned módulos, even ones they registered before being restricted', function () {
+    $asesor = User::factory()->forAgencia($this->agenciaA)->create();
+    $asesor->assignRole('asesor');
+
+    $bien = Bien::factory()->forAgencia($this->agenciaA)->create();
+    $prendario = Credito::factory()->paraBien($bien)->create(['registrado_por' => $asesor->id]);
+    $diario = Credito::factory()->diario()->create([
+        'empresa_id' => $this->empresa->id,
+        'agencia_id' => $this->agenciaA->id,
+        'registrado_por' => $asesor->id,
+    ]);
+
+    app(ModuloService::class)->asignar($asesor, ['prendario']);
+
+    Sanctum::actingAs($asesor, ['*']);
+
+    $this->getJson('/api/creditos-prendarios')
+        ->assertSuccessful()
+        ->assertJsonCount(1, 'data.data')
+        ->assertJsonPath('data.data.0.id', $prendario->id);
+
+    $this->getJson("/api/creditos-prendarios/{$diario->id}")->assertForbidden();
+});
+
+it('keeps seeing every tipo while unrestricted (the default)', function () {
+    $asesor = User::factory()->forAgencia($this->agenciaA)->create();
+    $asesor->assignRole('asesor');
+
+    $bien = Bien::factory()->forAgencia($this->agenciaA)->create();
+    Credito::factory()->paraBien($bien)->create(['registrado_por' => $asesor->id]);
+    Credito::factory()->diario()->create([
+        'empresa_id' => $this->empresa->id,
+        'agencia_id' => $this->agenciaA->id,
+        'registrado_por' => $asesor->id,
+    ]);
+
+    Sanctum::actingAs($asesor, ['*']);
 
     $this->getJson('/api/creditos-prendarios')->assertSuccessful()->assertJsonCount(2, 'data.data');
 });

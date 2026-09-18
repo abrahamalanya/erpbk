@@ -2,6 +2,7 @@
 
 namespace Database\Seeders;
 
+use App\Modules\Sistemas\Models\Modulo;
 use App\Modules\Sistemas\Models\Permission;
 use App\Modules\Sistemas\Models\Role;
 use Illuminate\Database\Seeder;
@@ -82,6 +83,38 @@ class PermissionSeeder extends Seeder
     ];
 
     /**
+     * The app's módulo catalog (see ModuloService). Grows over time as more
+     * business areas become toggleable per rol/usuario — not just créditos.
+     *
+     * @var list<array{key: string, nombre: string, grupo: string}>
+     */
+    private const MODULOS = [
+        ['key' => 'prendario', 'nombre' => 'Créditos prendarios', 'grupo' => 'creditos'],
+        ['key' => 'diario', 'nombre' => 'Créditos diarios', 'grupo' => 'creditos'],
+        ['key' => 'hipotecario', 'nombre' => 'Créditos hipotecarios', 'grupo' => 'creditos'],
+        ['key' => 'vehicular', 'nombre' => 'Créditos vehiculares', 'grupo' => 'creditos'],
+        ['key' => 'solicitudes', 'nombre' => 'Solicitudes', 'grupo' => 'general'],
+        ['key' => 'cajas', 'nombre' => 'Cajas', 'grupo' => 'general'],
+    ];
+
+    /**
+     * Default módulos per rol — editable afterwards from la pantalla de
+     * Roles, pero se re-sincroniza en cada corrida de este seeder (igual que
+     * ROLE_PERMISSIONS). 'sistemas' no necesita entrada: siempre tiene acceso
+     * a todos los módulos (ver ModuloService::modulosEfectivos()).
+     *
+     * @var array<string, list<string>>
+     */
+    private const ROLE_MODULOS = [
+        'administrador_general' => ['prendario', 'diario', 'hipotecario', 'vehicular', 'solicitudes', 'cajas'],
+        'administrador_agencia' => ['prendario', 'diario', 'hipotecario', 'vehicular', 'solicitudes', 'cajas'],
+        'secretaria' => ['prendario', 'diario', 'hipotecario', 'vehicular', 'solicitudes'],
+        'supervisor' => ['prendario', 'diario', 'hipotecario', 'vehicular', 'solicitudes', 'cajas'],
+        'asesor' => ['prendario', 'diario', 'hipotecario', 'vehicular'],
+        'peinadora' => [],
+    ];
+
+    /**
      * Run the database seeds.
      */
     public function run(): void
@@ -104,6 +137,22 @@ class PermissionSeeder extends Seeder
             }
 
             Role::where('name', $roleName)->firstOrFail()->syncPermissions($permissions);
+        }
+
+        $this->seedModulos();
+    }
+
+    private function seedModulos(): void
+    {
+        foreach (self::MODULOS as $modulo) {
+            Modulo::query()->updateOrCreate(['key' => $modulo['key']], $modulo);
+        }
+
+        foreach (self::ROLE_MODULOS as $roleName => $keys) {
+            $role = Role::where('name', $roleName)->firstOrFail();
+            $ids = Modulo::query()->whereIn('key', $keys)->pluck('id');
+
+            $role->modulos()->sync($ids);
         }
     }
 }

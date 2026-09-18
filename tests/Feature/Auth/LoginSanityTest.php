@@ -26,6 +26,23 @@ it('logs in as sistemas and can view /auth/me', function () {
         ->assertJsonPath('data.email', $user->email);
 });
 
+it('logs in with dni instead of email', function () {
+    $user = User::factory()->create(['dni' => '12345678']);
+    $user->assignRole('sistemas');
+
+    $login = $this->postJson('/api/auth/login', [
+        'email' => $user->dni,
+        'password' => 'password',
+    ])->assertSuccessful();
+
+    $token = $login->json('data.access_token');
+
+    $this->withHeader('Authorization', "Bearer {$token}")
+        ->getJson('/api/auth/me')
+        ->assertSuccessful()
+        ->assertJsonPath('data.dni', $user->dni);
+});
+
 it('logs in as a tenant-scoped user and can view /auth/me', function () {
     $agencia = Agencia::factory()->create();
     $user = User::factory()->forAgencia($agencia)->create();
@@ -66,4 +83,27 @@ it('includes the effective permission names on login and /auth/me', function () 
         ->assertSuccessful();
 
     expect($me->json('data.permission_names'))->toContain('clientes.ver');
+});
+
+it('includes the resolved (role-default) módulos on login and /auth/me', function () {
+    $this->seed(PermissionSeeder::class);
+
+    $agencia = Agencia::factory()->create();
+    $user = User::factory()->forAgencia($agencia)->create();
+    $user->assignRole('asesor');
+
+    $login = $this->postJson('/api/auth/login', [
+        'email' => $user->email,
+        'password' => 'password',
+    ])->assertSuccessful();
+
+    expect($login->json('data.user.modulos_efectivos'))->toEqualCanonicalizing(['prendario', 'diario', 'hipotecario', 'vehicular']);
+
+    $token = $login->json('data.access_token');
+
+    $me = $this->withHeader('Authorization', "Bearer {$token}")
+        ->getJson('/api/auth/me')
+        ->assertSuccessful();
+
+    expect($me->json('data.modulos_efectivos'))->toEqualCanonicalizing(['prendario', 'diario', 'hipotecario', 'vehicular']);
 });

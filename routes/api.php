@@ -19,6 +19,7 @@ use App\Modules\CreditoVehicular\Http\Controllers\VehiculoController;
 use App\Modules\Dashboard\Http\Controllers\DashboardController;
 use App\Modules\Empresa\Http\Controllers\AgenciaController;
 use App\Modules\Empresa\Http\Controllers\EmpresaController;
+use App\Modules\Reportes\Http\Controllers\ReporteCajasController;
 use App\Modules\Reportes\Http\Controllers\ReporteCobranzaController;
 use App\Modules\Reportes\Http\Controllers\ReporteMovimientosController;
 use App\Modules\Ruta\Http\Controllers\RutaCobranzaController;
@@ -26,6 +27,7 @@ use App\Modules\Simulador\Http\Controllers\SimuladorController;
 use App\Modules\Sistemas\Http\Controllers\AuthController;
 use App\Modules\Sistemas\Http\Controllers\ConceptoController;
 use App\Modules\Sistemas\Http\Controllers\ConfiguracionSistemaController;
+use App\Modules\Sistemas\Http\Controllers\ModuloController;
 use App\Modules\Sistemas\Http\Controllers\NotificacionController;
 use App\Modules\Sistemas\Http\Controllers\PermissionController;
 use App\Modules\Sistemas\Http\Controllers\RoleController;
@@ -34,6 +36,7 @@ use App\Modules\Tienda\Http\Controllers\TiendaController;
 use App\Modules\Ubicacion\Http\Controllers\UbicacionAsesorController;
 use App\Modules\Ubigeo\Http\Controllers\UbigeoController;
 use App\Modules\Usuario\Http\Controllers\UserController;
+use App\Modules\Usuario\Http\Controllers\UsuarioModuloController;
 use App\Nucleo\Http\Controllers\BancoController;
 use Illuminate\Support\Facades\Route;
 
@@ -65,9 +68,12 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('agencias', AgenciaController::class);
     Route::get('usuarios/consultar-dni/{dni}', [UserController::class, 'consultarDni'])->name('usuarios.consultar-dni');
     Route::get('usuarios/roles-asignables', [UserController::class, 'rolesAsignables'])->name('usuarios.roles-asignables');
+    Route::get('usuarios/{user}/modulos', [UsuarioModuloController::class, 'show'])->name('usuarios.modulos.show');
+    Route::put('usuarios/{user}/modulos', [UsuarioModuloController::class, 'update'])->name('usuarios.modulos.update');
     Route::apiResource('usuarios', UserController::class)->parameters(['usuarios' => 'user']);
     Route::apiResource('roles', RoleController::class)->only(['index', 'show', 'update']);
     Route::apiResource('permisos', PermissionController::class)->only(['index']);
+    Route::apiResource('modulos', ModuloController::class)->only(['index']);
     Route::put('/configuracion', [ConfiguracionSistemaController::class, 'update'])->name('configuracion.update');
 
     Route::get('notificaciones', [NotificacionController::class, 'index'])->name('notificaciones.index');
@@ -186,6 +192,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('reportes/cobranza-diaria', [ReporteCobranzaController::class, 'cobranzaDiaria'])->name('reportes.cobranza-diaria');
     Route::get('reportes/cobranza-diaria/pdf', [ReporteCobranzaController::class, 'cobranzaDiariaPdf'])->name('reportes.cobranza-diaria.pdf');
     Route::get('reportes/cobranza-diaria/excel', [ReporteCobranzaController::class, 'cobranzaDiariaExcel'])->name('reportes.cobranza-diaria.excel');
+    Route::get('reportes/cajas-apertura-cierre', [ReporteCajasController::class, 'aperturasCierres'])->name('reportes.cajas-apertura-cierre');
+    Route::get('reportes/cajas-apertura-cierre/{ciclo}/detalle', [ReporteCajasController::class, 'detalle'])->name('reportes.cajas-apertura-cierre.detalle');
+    Route::get('reportes/cajas-apertura-cierre/pdf', [ReporteCajasController::class, 'aperturasCierresPdf'])->name('reportes.cajas-apertura-cierre.pdf');
+    Route::get('reportes/cajas-apertura-cierre/excel', [ReporteCajasController::class, 'aperturasCierresExcel'])->name('reportes.cajas-apertura-cierre.excel');
 
     Route::get('rutas-cobranza/asesores', [RutaCobranzaController::class, 'asesores'])->name('rutas-cobranza.asesores');
     Route::get('rutas-cobranza', [RutaCobranzaController::class, 'show'])->name('rutas-cobranza.show');

@@ -5,6 +5,7 @@ namespace App\Modules\CreditoVehicular\Http\Controllers;
 use App\Modules\Credito\Services\CreditoService;
 use App\Modules\CreditoVehicular\Http\Requests\StoreCreditoVehicularRequest;
 use App\Modules\CreditoVehicular\Models\Vehiculo;
+use App\Modules\Sistemas\Services\ModuloService;
 use App\Nucleo\Http\Controllers\Controller;
 use App\Nucleo\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
@@ -22,11 +23,13 @@ class CreditoVehicularController extends Controller
 
     public function __construct(
         private readonly CreditoService $creditoService,
+        private readonly ModuloService $modulos,
     ) {}
 
     public function store(StoreCreditoVehicularRequest $request): JsonResponse
     {
         Gate::authorize('creditos_vehiculares.crear');
+        $this->modulos->autorizarCreacion($request->user(), 'vehicular');
 
         $data = $request->validated();
 

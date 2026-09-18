@@ -3,6 +3,7 @@
 namespace App\Modules\Sistemas\Http\Controllers;
 
 use App\Modules\Sistemas\Http\Requests\LoginRequest;
+use App\Modules\Sistemas\Services\ModuloService;
 use App\Modules\Usuario\Models\User;
 use App\Nucleo\Http\Controllers\Controller;
 use App\Nucleo\Traits\ApiResponse;
@@ -14,9 +15,13 @@ class AuthController extends Controller
 {
     use ApiResponse;
 
+    public function __construct(private readonly ModuloService $modulos) {}
+
     public function login(LoginRequest $request): JsonResponse
     {
-        $user = User::where('email', $request->email)->first();
+        $field = filter_var($request->email, FILTER_VALIDATE_EMAIL) ? 'email' : 'dni';
+
+        $user = User::where($field, $request->email)->first();
 
         if (! $user || ! Hash::check($request->password, $user->password)) {
             return $this->errorResponse('Credenciales inválidas', 401);
@@ -56,11 +61,18 @@ class AuthController extends Controller
      * HasRoles trait already defines a "permissions" relationship (direct,
      * non-role permissions) on User — reusing that key would silently be
      * shadowed by the (empty, in this app) relation during serialization.
+     *
+     * Also attaches "modulos_efectivos": the user's *resolved* módulos
+     * (their own override, or else their role's default — see
+     * ModuloService::modulosEfectivos()) so the frontend can gate nav items
+     * without knowing about role defaults itself. Distinct from the
+     * "modulos" column already on $user, which is only the raw override.
      */
     private function withPermissions(User $user): User
     {
         $user->load(['roles', 'empresa']);
         $user->setAttribute('permission_names', $user->getAllPermissions()->pluck('name')->values());
+        $user->setAttribute('modulos_efectivos', $this->modulos->modulosEfectivos($user));
 
         return $user;
     }

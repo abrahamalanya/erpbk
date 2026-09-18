@@ -693,6 +693,7 @@ final class CreditoService
                     'tipo' => 'egreso',
                     'monto' => $credito->monto_prestamo,
                     'concepto' => "Desembolso de crédito prendario #{$credito->id}",
+                    'credito_id' => $credito->id,
                     'registrado_por' => $actor->id,
                     'fecha_caja' => $ciclo->fecha,
                 ]);

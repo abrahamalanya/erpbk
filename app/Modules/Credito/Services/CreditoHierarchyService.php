@@ -3,12 +3,15 @@
 namespace App\Modules\Credito\Services;
 
 use App\Modules\Credito\Models\Credito;
+use App\Modules\Sistemas\Services\ModuloService;
 use App\Modules\Usuario\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 
 final class CreditoHierarchyService
 {
+    public function __construct(private readonly ModuloService $modulos) {}
+
     public function visibleQuery(Builder $query, User $actor): Builder
     {
         if ($actor->hasRole('sistemas') || $actor->hasAnyRole(['administrador_general', 'secretaria'])) {
@@ -20,14 +23,17 @@ final class CreditoHierarchyService
         }
 
         if ($actor->hasRole('supervisor')) {
-            return $query->where(function (Builder $q) use ($actor): void {
-                $q->where('registrado_por', $actor->id)
-                    ->orWhereHas('registradoPor', fn (Builder $sub) => $sub->where('supervisor_id', $actor->id));
-            });
+            return $this->modulos->filtrarPorModulo(
+                $query->where(function (Builder $q) use ($actor): void {
+                    $q->where('registrado_por', $actor->id)
+                        ->orWhereHas('registradoPor', fn (Builder $sub) => $sub->where('supervisor_id', $actor->id));
+                }),
+                $actor,
+            );
         }
 
         if ($actor->hasRole('asesor')) {
-            return $query->where('registrado_por', $actor->id);
+            return $this->modulos->filtrarPorModulo($query->where('registrado_por', $actor->id), $actor);
         }
 
         return $query->whereRaw('1 = 0');
