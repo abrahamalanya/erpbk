@@ -6,9 +6,11 @@ use App\Modules\Caja\Models\Caja;
 use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Cobranza\Http\Requests\AnularCobroRequest;
 use App\Modules\Cobranza\Models\Cobro;
+use App\Modules\Cobranza\Services\VoucherCobroService;
 use App\Modules\Credito\Models\Credito;
 use App\Modules\Credito\Services\CreditoHierarchyService;
 use App\Modules\Credito\Services\CreditoService;
+use App\Modules\Credito\Services\DocumentoCreditoService;
 use App\Modules\Usuario\Models\User;
 use App\Nucleo\Http\Controllers\Controller;
 use App\Nucleo\Services\ExcelGeneratorService;
@@ -39,6 +41,8 @@ class CobroController extends Controller
     public function __construct(
         private readonly CreditoHierarchyService $creditoHierarchy,
         private readonly CreditoService $creditoService,
+        private readonly DocumentoCreditoService $documentoService,
+        private readonly VoucherCobroService $voucherCobroService,
     ) {}
 
     public function index(): JsonResponse
@@ -190,19 +194,49 @@ class CobroController extends Controller
             ->with(['bienes', 'vehiculos', 'inmuebles', 'agencia'])
             ->latest()
             ->get()
-            ->each(function (Credito $credito): void {
-                $credito->setAttribute('monto_liquidacion_sugerido', $this->creditoService->calcularMontoLiquidacion($credito));
-
-                if ($credito->tipo_credito === 'diario') {
-                    if ($credito->cuotas()->pendientes()->exists()) {
-                        $credito->setAttribute('monto_pago_cuotas_sugerido', $this->creditoService->calcularMontoPagoCuotasDiario($credito, 1));
-                    }
-                } else {
-                    $credito->setAttribute('monto_refrendo_sugerido', $this->creditoService->calcularMontoRefrendo($credito));
-                }
-            });
+            ->each(fn (Credito $credito) => $this->creditoService->adjuntarMontosSugeridos($credito));
 
         return $this->successResponse($creditos);
+    }
+
+    /**
+     * Voucher en PDF del cobro, generado por el backend a partir del voucher
+     * de pago que nace junto con él. Lo abren tanto el listado de Cobranzas
+     * como el formulario de cobro de Créditos apenas se registra un pago.
+     * Misma visibilidad que el listado: solo cobros de créditos que el actor
+     * puede ver.
+     */
+    public function voucher(Cobro $cobro): Response
+    {
+        $this->autorizarVerVoucher($cobro);
+
+        $documento = $this->documentoService->voucherDeCobro($cobro);
+
+        abort_if($documento === null, 404, 'Este cobro no tiene voucher (por ejemplo, porque se anuló la liquidación).');
+
+        return $this->documentoService->renderizar($documento);
+    }
+
+    /**
+     * Texto plano del voucher, para compartirlo (WhatsApp, etc.).
+     */
+    public function voucherTexto(Cobro $cobro): JsonResponse
+    {
+        $this->autorizarVerVoucher($cobro);
+
+        return $this->successResponse(['texto' => $this->voucherCobroService->texto($cobro)]);
+    }
+
+    private function autorizarVerVoucher(Cobro $cobro): void
+    {
+        Gate::authorize('viewAny', Cobro::class);
+
+        $visible = Cobro::query()
+            ->whereKey($cobro->id)
+            ->whereHas('credito', fn (Builder $q) => $this->creditoHierarchy->visibleQuery($q, request()->user()))
+            ->exists();
+
+        abort_unless($visible, 403, 'No tienes acceso a este cobro.');
     }
 
     /**

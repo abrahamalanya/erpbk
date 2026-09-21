@@ -2,6 +2,7 @@
 
 namespace App\Modules\Credito\Services;
 
+use App\Modules\Cobranza\Models\Cobro;
 use App\Modules\Credito\Models\Credito;
 use App\Modules\Credito\Models\CuotaCredito;
 use App\Modules\Credito\Models\DocumentoCredito;
@@ -173,7 +174,31 @@ final class DocumentoCreditoService
      */
     public function generarVoucherPago(Credito $credito, User $actor, array $datos): DocumentoCredito
     {
-        return $this->generar($credito, $actor, 'voucher_pago', $datos);
+        return $this->generar($credito, $actor, 'voucher_pago', $datos, $datos['cobro_id'] ?? null);
+    }
+
+    /**
+     * Voucher del cobro `$cobro`: el enlazado por `cobro_id` o, para los
+     * cobros anteriores a ese enlace, el voucher de pago del mismo crédito
+     * generado en el mismo momento (el voucher nace en la misma transacción
+     * que el cobro). Null si no existe — por ejemplo, la liquidación anulada
+     * borra sus vouchers.
+     */
+    public function voucherDeCobro(Cobro $cobro): ?DocumentoCredito
+    {
+        $enlazado = DocumentoCredito::query()->where('tipo', 'voucher_pago')->where('cobro_id', $cobro->id)->first();
+
+        if ($enlazado) {
+            return $enlazado;
+        }
+
+        return DocumentoCredito::query()
+            ->where('tipo', 'voucher_pago')
+            ->where('credito_id', $cobro->credito_id)
+            ->whereNull('cobro_id')
+            ->whereBetween('generado_at', [$cobro->created_at->copy()->subMinute(), $cobro->created_at->copy()->addMinute()])
+            ->orderBy('generado_at')
+            ->first();
     }
 
     /**
@@ -376,10 +401,11 @@ final class DocumentoCreditoService
     /**
      * @param  array<string, mixed>  $datos
      */
-    private function generar(Credito $credito, User $actor, string $tipo, array $datos = []): DocumentoCredito
+    private function generar(Credito $credito, User $actor, string $tipo, array $datos = [], ?int $cobroId = null): DocumentoCredito
     {
         return DocumentoCredito::query()->create([
             'credito_id' => $credito->id,
+            'cobro_id' => $cobroId,
             'empresa_id' => $credito->empresa_id,
             'tipo' => $tipo,
             'datos' => $datos !== [] ? $datos : null,

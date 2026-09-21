@@ -12,6 +12,7 @@ use App\Modules\Sistemas\Models\Concepto;
 use App\Modules\Usuario\Models\User;
 use DomainException;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 
@@ -189,29 +190,59 @@ final class CajaService
     }
 
     /**
-     * The actor's own ingreso/gasto history across every ciclo (not just the
-     * currently open one) — powers the Ingresos/Gastos modules. $tipo is
-     * always 'ingreso' or 'egreso' here (never 'billetaje'), so this never
-     * surfaces billetaje hand-off movimientos; a 'egreso' row with no
-     * concepto_id/billetaje_id is a credito prendario desembolso (see
-     * CreditoService::desembolsar()), which the frontend labels
-     * accordingly.
+     * Historial de ingresos/egresos de las cajas que el actor puede ver, en
+     * todos sus ciclos (no solo el abierto) — alimenta los módulos Ingresos y
+     * Egresos. Un asesor ve solo los de su propia caja; un administrador de
+     * agencia los de su agencia; un administrador general, los de toda la
+     * empresa (misma regla que el módulo Cajas, ver
+     * CajaBovedaHierarchyService::cajasVisibles()). $tipo es siempre
+     * 'ingreso' o 'egreso' (nunca 'billetaje'), así que nunca aparecen los
+     * traspasos de billetaje; un 'egreso' sin concepto_id/billetaje_id es un
+     * desembolso de crédito (ver CreditoService::desembolsar()), que el
+     * frontend etiqueta aparte.
      *
+     * Filtros opcionales en $filtros: concepto_id, solo_desembolsos,
+     * registrado_por, desde y hasta (sobre fecha_caja, ambos inclusive).
+     *
+     * @param  array{concepto_id?: int|null, solo_desembolsos?: bool|null, registrado_por?: int|null, desde?: string|null, hasta?: string|null}  $filtros
      * @return LengthAwarePaginator<int, CajaMovimiento>
      */
-    public function listarMovimientos(User $actor, string $tipo): LengthAwarePaginator
+    public function listarMovimientos(User $actor, string $tipo, array $filtros = []): LengthAwarePaginator
     {
-        $caja = $this->cajaDe($actor);
+        $cajasVisibles = $this->hierarchy->cajasVisibles(Caja::query(), $actor)->select('id');
 
         return CajaMovimiento::query()
-            ->whereHas('cajaCiclo', fn ($query) => $query->where('caja_id', $caja->id))
+            ->whereHas('cajaCiclo', fn ($query) => $query->whereIn('caja_id', $cajasVisibles))
             ->where('tipo', $tipo)
+            ->when($filtros['concepto_id'] ?? null, fn ($query, int $conceptoId) => $query->where('concepto_id', $conceptoId))
+            ->when($filtros['solo_desembolsos'] ?? false, fn ($query) => $query->whereNull('concepto_id')->whereNull('billetaje_id'))
+            ->when($filtros['registrado_por'] ?? null, fn ($query, int $usuarioId) => $query->where('registrado_por', $usuarioId))
+            ->when($filtros['desde'] ?? null, fn ($query, string $desde) => $query->whereDate('fecha_caja', '>=', $desde))
+            ->when($filtros['hasta'] ?? null, fn ($query, string $hasta) => $query->whereDate('fecha_caja', '<=', $hasta))
             // 'concepto' relation deliberately not eager-loaded — see the
             // comment on the same load in resumenCierre() above.
             ->with(['fotos', 'registradoPor'])
             ->latest('fecha_caja')
             ->latest('id')
             ->paginate(15);
+    }
+
+    /**
+     * Usuarios dueños de las cajas que el actor puede ver — las opciones del
+     * filtro "usuario" de Ingresos/Egresos. Si solo devuelve al propio actor
+     * (un asesor), el frontend oculta el filtro y la columna "Registrado por".
+     *
+     * @return Collection<int, User>
+     */
+    public function usuariosConCajaVisible(User $actor): Collection
+    {
+        $cajasVisibles = $this->hierarchy->cajasVisibles(Caja::query(), $actor)->select('user_id');
+
+        return User::query()
+            ->whereIn('id', $cajasVisibles)
+            ->orderBy('nombre')
+            ->orderBy('apellido')
+            ->get(['id', 'nombre', 'apellido']);
     }
 
     public function cerrarForzado(User $superior, Caja $caja, string $montoContado): CajaCiclo

@@ -195,3 +195,107 @@ it('rejects listing movimientos without a valid tipo', function () {
     $this->getJson('/api/caja/movimientos')->assertUnprocessable();
     $this->getJson('/api/caja/movimientos?tipo=billetaje')->assertUnprocessable();
 });
+
+/** Registra un movimiento por API como $usuario (aperturando su caja si hace falta) y devuelve su id. */
+function registrarMovimientoComo(User $usuario, array $datos): int
+{
+    Sanctum::actingAs($usuario, ['*']);
+    test()->postJson('/api/caja/aperturar');
+
+    return test()->postJson('/api/caja/movimientos', $datos)->assertCreated()->json('data.id');
+}
+
+it('shows each asesor only their own movimientos and an administrador de agencia all of their agencia', function () {
+    $otroAsesor = User::factory()->forAgencia($this->agencia)->create();
+    $otroAsesor->assignRole('asesor');
+    $admin = User::factory()->forAgencia($this->agencia)->create();
+    $admin->assignRole('administrador_agencia');
+
+    registrarMovimientoComo($this->asesor, ['tipo' => 'ingreso', 'concepto_id' => $this->conceptoIngreso->id, 'monto' => 10]);
+    registrarMovimientoComo($otroAsesor, ['tipo' => 'ingreso', 'concepto_id' => $this->conceptoIngreso->id, 'monto' => 20]);
+    registrarMovimientoComo($admin, ['tipo' => 'ingreso', 'concepto_id' => $this->conceptoIngreso->id, 'monto' => 30]);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    expect(collect($this->getJson('/api/caja/movimientos?tipo=ingreso')->json('data.data'))->pluck('monto')->all())->toBe(['10.00']);
+
+    Sanctum::actingAs($admin, ['*']);
+    expect(collect($this->getJson('/api/caja/movimientos?tipo=ingreso')->json('data.data'))->pluck('monto')->sort()->values()->all())
+        ->toBe(['10.00', '20.00', '30.00']);
+});
+
+it('does not show an administrador de agencia the movimientos of another agencia', function () {
+    $otraAgencia = Agencia::factory()->for($this->empresa)->create();
+    $ajeno = User::factory()->forAgencia($otraAgencia)->create();
+    $ajeno->assignRole('asesor');
+    $admin = User::factory()->forAgencia($this->agencia)->create();
+    $admin->assignRole('administrador_agencia');
+
+    registrarMovimientoComo($ajeno, ['tipo' => 'ingreso', 'concepto_id' => $this->conceptoIngreso->id, 'monto' => 99]);
+    registrarMovimientoComo($this->asesor, ['tipo' => 'ingreso', 'concepto_id' => $this->conceptoIngreso->id, 'monto' => 10]);
+
+    Sanctum::actingAs($admin, ['*']);
+    expect(collect($this->getJson('/api/caja/movimientos?tipo=ingreso')->json('data.data'))->pluck('monto')->all())->toBe(['10.00']);
+});
+
+it('filters the movimientos by concepto, usuario, fecha and desembolsos', function () {
+    $otroAsesor = User::factory()->forAgencia($this->agencia)->create();
+    $otroAsesor->assignRole('asesor');
+    $admin = User::factory()->forAgencia($this->agencia)->create();
+    $admin->assignRole('administrador_agencia');
+    $otroGasto = Concepto::factory()->paraEmpresa($this->empresa)->create(['tipo' => 'gasto', 'nombre' => 'Combustible']);
+
+    $comprobante = fn () => UploadedFile::fake()->image('comprobante.jpg');
+
+    // Un egreso exige saldo en la caja: se fondea primero.
+    foreach ([$this->asesor, $otroAsesor] as $usuario) {
+        registrarMovimientoComo($usuario, ['tipo' => 'ingreso', 'concepto_id' => $this->conceptoIngreso->id, 'monto' => 1000]);
+    }
+
+    $idUtiles = registrarMovimientoComo($this->asesor, ['tipo' => 'egreso', 'concepto_id' => $this->conceptoGasto->id, 'monto' => 11, 'comprobante' => $comprobante()]);
+    $idCombustible = registrarMovimientoComo($otroAsesor, ['tipo' => 'egreso', 'concepto_id' => $otroGasto->id, 'monto' => 22, 'comprobante' => $comprobante()]);
+    CajaMovimiento::query()->findOrFail($idUtiles)->update(['fecha_caja' => now()->subDays(10)->toDateString()]);
+
+    $desembolso = CajaMovimiento::query()->create([
+        'caja_ciclo_id' => CajaMovimiento::query()->findOrFail($idCombustible)->caja_ciclo_id,
+        'empresa_id' => $this->empresa->id, 'tipo' => 'egreso', 'monto' => 500, 'concepto' => 'Desembolso',
+        'registrado_por' => $otroAsesor->id, 'fecha_caja' => now()->toDateString(),
+    ]);
+
+    Sanctum::actingAs($admin, ['*']);
+    $montos = fn (string $query) => collect($this->getJson("/api/caja/movimientos?tipo=egreso{$query}")->assertSuccessful()->json('data.data'))->pluck('monto')->sort()->values()->all();
+
+    expect($montos(''))->toBe(['11.00', '22.00', '500.00'])
+        ->and($montos("&concepto_id={$this->conceptoGasto->id}"))->toBe(['11.00'])
+        ->and($montos("&registrado_por={$otroAsesor->id}"))->toBe(['22.00', '500.00'])
+        ->and($montos('&desde='.now()->subDays(2)->toDateString()))->toBe(['22.00', '500.00'])
+        ->and($montos('&hasta='.now()->subDays(5)->toDateString()))->toBe(['11.00'])
+        ->and($montos('&solo_desembolsos=1'))->toBe(['500.00'])
+        ->and($desembolso->id)->not->toBeNull();
+});
+
+it('rejects inconsistent movimientos filters', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $this->getJson('/api/caja/movimientos?tipo=ingreso&solo_desembolsos=1')->assertUnprocessable();
+    $this->getJson("/api/caja/movimientos?tipo=egreso&solo_desembolsos=1&concepto_id={$this->conceptoGasto->id}")->assertUnprocessable();
+    $this->getJson('/api/caja/movimientos?tipo=egreso&desde=2026-09-10&hasta=2026-09-01')->assertUnprocessable();
+});
+
+it('lists as filter options only the users whose movimientos the actor can see', function () {
+    $otroAsesor = User::factory()->forAgencia($this->agencia)->create();
+    $otroAsesor->assignRole('asesor');
+    $admin = User::factory()->forAgencia($this->agencia)->create();
+    $admin->assignRole('administrador_agencia');
+
+    foreach ([$this->asesor, $otroAsesor, $admin] as $usuario) {
+        registrarMovimientoComo($usuario, ['tipo' => 'ingreso', 'concepto_id' => $this->conceptoIngreso->id, 'monto' => 5]);
+    }
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    expect(collect($this->getJson('/api/caja/movimientos/usuarios')->assertSuccessful()->json('data'))->pluck('id')->all())
+        ->toBe([$this->asesor->id]);
+
+    Sanctum::actingAs($admin, ['*']);
+    expect(collect($this->getJson('/api/caja/movimientos/usuarios')->json('data'))->pluck('id')->sort()->values()->all())
+        ->toBe(collect([$this->asesor->id, $otroAsesor->id, $admin->id])->sort()->values()->all());
+});

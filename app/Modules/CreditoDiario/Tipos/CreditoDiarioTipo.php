@@ -13,7 +13,7 @@ use Illuminate\Support\Collection;
  * liquidar/estados vencidos, pero sin ninguna prenda real y sin refrendo ni
  * adenda (bloqueados explícitamente en CreditoService::refrendar()/
  * adendar() — un préstamo de cronograma fijo no se "renueva", se paga por
- * cuotas vía pagarCuotasDiario()). La garantía es un placeholder invisible
+ * cuotas vía pagarCuotas()). La garantía es un placeholder invisible
  * (CreditoDiarioGarantia) que solo existe para satisfacer el motor
  * compartido (CreditoService). Un vencido nunca pasa a tienda/remate — ver
  * pasaATiendaAlVencer().

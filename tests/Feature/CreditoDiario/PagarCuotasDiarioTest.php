@@ -181,3 +181,110 @@ it('preview endpoint does not mutate any cuota', function () {
     expect(CuotaCredito::where('credito_id', $this->credito->id)->pagadas()->count())->toBe(0)
         ->and(Cobro::where('credito_id', $this->credito->id)->count())->toBe(0);
 });
+
+it('amortizes a monto covering whole cuotas plus a fraction as an adelanto of the next cuota', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $cuotaTotal = (string) CuotaCredito::where('credito_id', $this->credito->id)->where('numero_cuota', 1)->value('monto_total');
+    $monto = bcadd(bcmul($cuotaTotal, '2', 2), bcdiv($cuotaTotal, '2', 2), 2);
+
+    $preview = $this->postJson("/api/creditos-prendarios/{$this->credito->id}/pagar-cuotas-preview", ['monto_pagado' => $monto])
+        ->assertSuccessful()->json('data');
+
+    expect($preview['cuotas'])->toHaveCount(3)
+        ->and($preview['cuotas'][2]['completa'])->toBeFalse()
+        ->and($preview['vuelto'])->toBe('0.00');
+
+    $this->postJson("/api/creditos-prendarios/{$this->credito->id}/pagar-cuotas", [
+        'monto_pagado' => $monto, 'medio' => 'efectivo',
+    ])->assertCreated();
+
+    $cuotas = CuotaCredito::where('credito_id', $this->credito->id)->orderBy('numero_cuota')->get();
+    expect($cuotas->pluck('pagada_at')->map(fn ($v) => $v !== null)->all())->toBe([true, true, false, false, false])
+        ->and((string) $cuotas[2]->monto_abonado)->toBe(bcdiv($cuotaTotal, '2', 2))
+        ->and((string) Cobro::where('credito_id', $this->credito->id)->value('vuelto'))->toBe('0.00');
+});
+
+it('completes a cuota parcialmente abonada with a later pago and accumulates the abonos', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $cuotaTotal = (string) CuotaCredito::where('credito_id', $this->credito->id)->where('numero_cuota', 1)->value('monto_total');
+    $mitad = bcdiv($cuotaTotal, '2', 2);
+
+    $this->postJson("/api/creditos-prendarios/{$this->credito->id}/pagar-cuotas", ['monto_pagado' => $mitad, 'medio' => 'efectivo'])->assertCreated();
+    expect(CuotaCredito::where('credito_id', $this->credito->id)->pagadas()->count())->toBe(0);
+
+    $this->postJson("/api/creditos-prendarios/{$this->credito->id}/pagar-cuotas", ['monto_pagado' => bcsub($cuotaTotal, $mitad, 2), 'medio' => 'efectivo'])->assertCreated();
+
+    $primera = CuotaCredito::where('credito_id', $this->credito->id)->where('numero_cuota', 1)->first();
+    expect($primera->pagada_at)->not->toBeNull()
+        ->and((string) $primera->monto_abonado)->toBe($cuotaTotal)
+        ->and(Cobro::where('credito_id', $this->credito->id)->count())->toBe(2);
+});
+
+it('applies the amortization to the mora of an overdue cuota before its saldo, without charging that mora twice', function () {
+    CuotaCredito::where('credito_id', $this->credito->id)->where('numero_cuota', 1)->update(['fecha_vencimiento' => now()->subDays(3)]);
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $cuota = CuotaCredito::where('credito_id', $this->credito->id)->where('numero_cuota', 1)->first();
+    $mora = bcmul(bcmul((string) $cuota->monto_total, '0.01', 4), '3', 2);
+
+    $this->postJson("/api/creditos-prendarios/{$this->credito->id}/pagar-cuotas", ['monto_pagado' => bcadd($mora, '10.00', 2), 'medio' => 'efectivo'])->assertCreated();
+
+    $cuota = $cuota->fresh();
+    expect((string) $cuota->mora_pagada)->toBe($mora)
+        ->and((string) $cuota->monto_abonado)->toBe('10.00');
+
+    $preview = $this->postJson("/api/creditos-prendarios/{$this->credito->id}/pagar-cuotas-preview", ['numero_cuotas' => 1])
+        ->assertSuccessful()->json('data');
+
+    expect($preview['mora'])->toBe('0.00')
+        ->and($preview['total'])->toBe(bcsub((string) $cuota->monto_total, '10.00', 2));
+});
+
+it('returns the excedente as vuelto only when the amortization exceeds the whole remaining debt', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $deuda = (string) CuotaCredito::where('credito_id', $this->credito->id)->sum('monto_total');
+
+    $response = $this->postJson("/api/creditos-prendarios/{$this->credito->id}/pagar-cuotas", [
+        'monto_pagado' => bcadd($deuda, '7.00', 2), 'medio' => 'efectivo',
+    ])->assertCreated();
+
+    expect($response->json('data.estado'))->toBe('liquidado')
+        ->and((string) Cobro::where('credito_id', $this->credito->id)->value('vuelto'))->toBe('7.00');
+});
+
+it('undoes an amortization pago reverting the abonos and reopening the cuotas it completed', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $cuotaTotal = (string) CuotaCredito::where('credito_id', $this->credito->id)->where('numero_cuota', 1)->value('monto_total');
+    $monto = bcadd($cuotaTotal, '20.00', 2);
+
+    $this->postJson("/api/creditos-prendarios/{$this->credito->id}/pagar-cuotas", ['monto_pagado' => $monto, 'medio' => 'efectivo'])->assertCreated();
+    $cobro = Cobro::where('credito_id', $this->credito->id)->firstOrFail();
+
+    $this->postJson("/api/cobros/{$cobro->id}/anular", ['motivo' => 'error de digitación'])->assertSuccessful();
+
+    $cuotas = CuotaCredito::where('credito_id', $this->credito->id)->get();
+    expect($cuotas->whereNotNull('pagada_at'))->toHaveCount(0)
+        ->and($cuotas->sum(fn ($c) => (float) $c->monto_abonado))->toBe(0.0)
+        ->and($cobro->fresh()->estado)->toBe('anulado')
+        ->and($cobro->abonosCuotas()->count())->toBe(0);
+});
+
+it('rejects anulando an amortization pago once a later cobro touched the same cuota', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $this->postJson("/api/creditos-prendarios/{$this->credito->id}/pagar-cuotas", ['monto_pagado' => 30, 'medio' => 'efectivo'])->assertCreated();
+    $primero = Cobro::where('credito_id', $this->credito->id)->firstOrFail();
+    $this->postJson("/api/creditos-prendarios/{$this->credito->id}/pagar-cuotas", ['monto_pagado' => 30, 'medio' => 'efectivo'])->assertCreated();
+
+    $this->postJson("/api/cobros/{$primero->id}/anular", ['motivo' => 'error'])->assertStatus(422);
+});
+
+it('requires either numero_cuotas or monto_pagado to preview a pago', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $this->postJson("/api/creditos-prendarios/{$this->credito->id}/pagar-cuotas-preview", [])->assertStatus(422);
+});

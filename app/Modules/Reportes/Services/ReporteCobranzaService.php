@@ -26,7 +26,7 @@ final class ReporteCobranzaService
      * 2 créditos sale en 2 filas, distinguidas por el código del crédito.
      *
      * Las cuotas son un cronograma proyectado — ningún tipo las marca
-     * "pagada" individualmente salvo diario (pagarCuotasDiario()) y el
+     * "pagada" individualmente salvo diario (pagarCuotas()) y el
      * sucesor que crea pagarCuota() — así que para prendario/vehicular/
      * hipotecario/compuesto el monto realmente adeudado no es la suma de
      * esas cuotas sino el mismo cálculo que usa Cobranzas
@@ -76,10 +76,10 @@ final class ReporteCobranzaService
                     'fecha_cuota_mas_antigua' => $masAntigua->fecha_vencimiento->toDateString(),
                     'dias_atraso' => (int) $masAntigua->fecha_vencimiento->diffInDays(now()->startOfDay()),
                     'vence_hoy' => $masAntigua->fecha_vencimiento->toDateString() === $hoy,
-                    'monto_refrendo_sugerido' => $esCompuesto || $esDiario ? null : $this->creditoService->calcularMontoRefrendo($credito),
+                    'monto_refrendo_sugerido' => $esCompuesto || $esDiario || $credito->cuotas()->pagadas()->exists() ? null : $this->creditoService->calcularMontoRefrendo($credito),
                     'monto_liquidacion_sugerido' => $esCompuesto ? null : $this->creditoService->calcularMontoLiquidacion($credito),
                     'monto_pago_cuota_sugerido' => $esCompuesto ? $this->creditoService->calcularMontoPagoCuota($credito) : null,
-                    'monto_pago_cuotas_sugerido' => $esDiario ? $this->creditoService->calcularMontoPagoCuotasDiario($credito, $cuotasVencidas->count()) : null,
+                    'monto_pago_cuotas_sugerido' => $this->creditoService->admitePagoPorCuotas($credito) ? $this->creditoService->calcularMontoPagoCuotas($credito, $cuotasVencidas->count()) : null,
                 ];
             })
             ->sortBy('fecha_cuota_mas_antigua')

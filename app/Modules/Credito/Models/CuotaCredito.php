@@ -35,6 +35,7 @@ class CuotaCredito extends Model
         'monto_capital',
         'monto_interes',
         'monto_total',
+        'monto_abonado',
         'pagada_at',
         'mora_pagada',
         'cobro_id',
@@ -52,6 +53,7 @@ class CuotaCredito extends Model
             'monto_capital' => 'decimal:2',
             'monto_interes' => 'decimal:2',
             'monto_total' => 'decimal:2',
+            'monto_abonado' => 'decimal:2',
             'pagada_at' => 'datetime',
             'mora_pagada' => 'decimal:2',
         ];

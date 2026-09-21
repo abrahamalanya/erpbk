@@ -39,6 +39,15 @@ final class BovedaService
      */
     public const ROLES_AGENCIA = ['administrador_agencia', 'supervisor', 'asesor'];
 
+    /**
+     * Orígenes con los que se etiquetan los movimientos de capital de una
+     * bóveda (inyectar()/retirar()) — los que lista y puede deshacer el
+     * reporte de inyecciones.
+     *
+     * @var list<string>
+     */
+    private const ORIGENES_CAPITAL = ['inyeccion', 'traspaso', 'retiro', 'devolucion'];
+
     public function __construct(private readonly CuentaBancariaService $cuentaBancariaService) {}
 
     public function principalDe(int $empresaId): Boveda
@@ -223,6 +232,102 @@ final class BovedaService
 
             return $this->crearMovimiento($cicloAgencia, $actor, 'ingreso', $monto, $concepto ?? 'Traspaso desde bóveda principal', 'traspaso', $grupoId);
         });
+    }
+
+    /**
+     * Espejo de inyectar(): saca dinero de la bóveda. En la principal es una
+     * salida externa de capital (origen 'retiro', sin contrapartida); en una
+     * de agencia es una devolución a la principal (origen 'devolucion', par
+     * enlazado por grupo_id igual que un traspaso, para que deshacerlo no
+     * deje el libro a medias). Sale del efectivo del ciclo abierto o, con
+     * $medio 'cuenta_bancaria', de la cuenta $cuentaBancariaId de ESTA
+     * bóveda; en la devolución por banco, $cuentaBancariaDestinoId es la
+     * cuenta de la principal que recibe. Ambos medios validan saldo
+     * suficiente. Devuelve el movimiento de salida de esta bóveda.
+     */
+    public function retirar(Boveda $boveda, User $actor, string $monto, ?string $concepto, string $medio = 'efectivo', ?int $cuentaBancariaId = null, ?int $cuentaBancariaDestinoId = null, ?UploadedFile $comprobante = null): BovedaMovimiento|CuentaBancariaMovimiento
+    {
+        if ($boveda->tipo !== 'principal') {
+            return $this->devolverAPrincipal($boveda, $actor, $monto, $concepto, $medio, $cuentaBancariaId, $cuentaBancariaDestinoId, $comprobante);
+        }
+
+        $concepto ??= 'Retiro de capital';
+
+        if ($medio === 'cuenta_bancaria') {
+            return $this->cuentaBancariaService->registrarMovimiento(
+                $this->cuentaBancariaDe($boveda, $cuentaBancariaId, 'de la que saldrá el dinero'),
+                $actor,
+                'egreso',
+                $monto,
+                $concepto,
+                'retiro',
+                null,
+                $comprobante,
+            );
+        }
+
+        return $this->crearMovimiento($this->cicloConSaldoSuficiente($boveda, $monto), $actor, 'egreso', $monto, $concepto, 'retiro');
+    }
+
+    private function devolverAPrincipal(Boveda $agencia, User $actor, string $monto, ?string $concepto, string $medio, ?int $cuentaBancariaId, ?int $cuentaBancariaDestinoId, ?UploadedFile $comprobante): BovedaMovimiento|CuentaBancariaMovimiento
+    {
+        $principal = $this->principalDe($agencia->empresa_id);
+        $porBanco = $medio === 'cuenta_bancaria';
+
+        $cicloAgencia = $cicloPrincipal = null;
+        $cuentaOrigen = $porBanco ? $this->cuentaBancariaDe($agencia, $cuentaBancariaId, 'de la que saldrá el dinero') : null;
+        $cuentaDestino = $porBanco ? $this->cuentaBancariaDe($principal, $cuentaBancariaDestinoId) : null;
+
+        if ($cuentaOrigen) {
+            if (bccomp($monto, $cuentaOrigen->saldoActual(), 2) > 0) {
+                throw new DomainException('La cuenta bancaria no tiene saldo suficiente para esta devolución.');
+            }
+        } else {
+            $cicloAgencia = $this->cicloConSaldoSuficiente($agencia, $monto);
+            $cicloPrincipal = $principal->cicloAbierto()->first();
+
+            if (! $cicloPrincipal) {
+                throw new DomainException('La bóveda principal no tiene un ciclo abierto. Apertúrala primero.');
+            }
+        }
+
+        $grupoId = (string) Str::uuid();
+
+        return DB::transaction(function () use ($actor, $monto, $concepto, $cuentaOrigen, $cuentaDestino, $cicloAgencia, $cicloPrincipal, $grupoId, $comprobante): BovedaMovimiento|CuentaBancariaMovimiento {
+            $conceptoSalida = $concepto ?? 'Devolución a bóveda principal';
+            $conceptoEntrada = $concepto ?? 'Devolución desde bóveda de agencia';
+
+            $salida = $cuentaOrigen
+                ? $this->cuentaBancariaService->registrarMovimiento($cuentaOrigen, $actor, 'egreso', $monto, $conceptoSalida, 'devolucion', $grupoId)
+                : $this->crearMovimiento($cicloAgencia, $actor, 'egreso', $monto, $conceptoSalida, 'devolucion', $grupoId);
+
+            if ($cuentaDestino) {
+                $this->cuentaBancariaService->registrarMovimiento($cuentaDestino, $actor, 'ingreso', $monto, $conceptoEntrada, 'devolucion', $grupoId, $comprobante);
+            } else {
+                $this->crearMovimiento($cicloPrincipal, $actor, 'ingreso', $monto, $conceptoEntrada, 'devolucion', $grupoId);
+            }
+
+            return $salida;
+        });
+    }
+
+    /**
+     * Ciclo de efectivo abierto de $boveda, validando que su saldo alcance
+     * para sacar $monto.
+     */
+    private function cicloConSaldoSuficiente(Boveda $boveda, string $monto): BovedaCiclo
+    {
+        $ciclo = $boveda->cicloAbierto()->first();
+
+        if (! $ciclo) {
+            throw new DomainException('La bóveda no tiene un ciclo abierto. Apertúrala primero.');
+        }
+
+        if (bccomp($monto, $this->calcularSaldo($ciclo), 2) > 0) {
+            throw new DomainException('La bóveda no tiene saldo suficiente en efectivo para este retiro.');
+        }
+
+        return $ciclo;
     }
 
     /**
@@ -484,7 +589,7 @@ final class BovedaService
 
         $cash = BovedaMovimiento::query()
             ->whereHas('bovedaCiclo', fn (Builder $q) => $q->where('boveda_id', $boveda->id))
-            ->whereIn('origen', ['inyeccion', 'traspaso'])
+            ->whereIn('origen', self::ORIGENES_CAPITAL)
             ->when($desde, fn (Builder $q) => $q->whereDate('fecha_boveda', '>=', $desde))
             ->when($hasta, fn (Builder $q) => $q->whereDate('fecha_boveda', '<=', $hasta))
             ->with('registradoPor')
@@ -505,7 +610,7 @@ final class BovedaService
 
         $banco = CuentaBancariaMovimiento::query()
             ->whereHas('cuentaBancaria', fn (Builder $q) => $q->where('boveda_id', $boveda->id))
-            ->whereIn('origen', ['inyeccion', 'traspaso'])
+            ->whereIn('origen', self::ORIGENES_CAPITAL)
             ->when($desde, fn (Builder $q) => $q->whereDate('fecha', '>=', $desde))
             ->when($hasta, fn (Builder $q) => $q->whereDate('fecha', '<=', $hasta))
             ->with(['registradoPor', 'cuentaBancaria.banco', 'fotos'])
@@ -549,7 +654,7 @@ final class BovedaService
 
         $movimiento = BovedaMovimiento::query()
             ->where('boveda_ciclo_id', $ciclo->id)
-            ->whereIn('origen', ['inyeccion', 'traspaso'])
+            ->whereIn('origen', self::ORIGENES_CAPITAL)
             ->find($movimientoId);
 
         if (! $movimiento) {

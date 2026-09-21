@@ -13,6 +13,9 @@ use Illuminate\Support\Facades\DB;
 
 final class RutaCobranzaService
 {
+    /** Valor de `clientes_ruta_orden.tipo_credito` de la ruta sin filtro por tipo. */
+    private const RUTA_GENERAL = 'todos';
+
     /**
      * Clientes de $asesor (cliente.asesor_id) con al menos un crédito
      * activo/vencido que tiene una cuota vencida u hoy — mismo criterio que
@@ -20,19 +23,26 @@ final class RutaCobranzaService
      * vez de por crédito: la ruta visita direcciones, no créditos, así que
      * un cliente con 2 créditos vencidos es una sola parada.
      *
+     * Solo cuentan las cuotas todavía pendientes: una cuota vencida que ya se
+     * cobró (sobre todo con el pago por cuotas) no debe seguir apareciendo
+     * en la ruta. Con `$tipoCredito` la ruta se limita a los créditos de ese
+     * tipo — la ruta se recorre por tipo (diario, prendario, hipotecario,
+     * vehicular) — y los conteos y días de atraso salen solo de ellos.
+     *
      * @return Collection<int, array{cliente: Cliente, dias_atraso_max: int, creditos_vencidos: int, credito_codigos: list<string>}>
      */
-    private function clientesEnMoraDe(User $asesor): Collection
+    private function clientesEnMoraDe(User $asesor, ?string $tipoCredito): Collection
     {
         $hoy = now()->startOfDay()->toDateString();
 
         $creditos = Credito::query()
             ->whereIn('estado', ['activo', 'vencido'])
+            ->when($tipoCredito !== null, fn (Builder $q) => $q->where('tipo_credito', $tipoCredito))
             ->whereHas('cliente', fn (Builder $q) => $q->where('asesor_id', $asesor->id))
-            ->whereHas('cuotas', fn (Builder $q) => $q->whereDate('fecha_vencimiento', '<=', $hoy))
+            ->whereHas('cuotas', fn (Builder $q) => $q->pendientes()->whereDate('fecha_vencimiento', '<=', $hoy))
             ->with(['cliente'])
             ->get()
-            ->load(['cuotas' => fn ($q) => $q->whereDate('fecha_vencimiento', '<=', $hoy)->orderBy('fecha_vencimiento')]);
+            ->load(['cuotas' => fn ($q) => $q->pendientes()->whereDate('fecha_vencimiento', '<=', $hoy)->orderBy('fecha_vencimiento')]);
 
         return $creditos
             ->groupBy('cliente_id')
@@ -59,23 +69,30 @@ final class RutaCobranzaService
      * descendente entre los recién agregados, para que el más urgente quede
      * primero de los nuevos).
      *
+     * Con `$tipoCredito` es la ruta de ese tipo de crédito, con su propio
+     * orden (un cliente con un diario y un prendario en mora está en las dos
+     * rutas, y se ordena por separado en cada una); sin él, la ruta general.
+     *
      * @return Collection<int, array<string, mixed>>
      */
-    public function rutaDe(User $asesor): Collection
+    public function rutaDe(User $asesor, ?string $tipoCredito = null): Collection
     {
-        $clientesEnMora = $this->clientesEnMoraDe($asesor);
+        $clientesEnMora = $this->clientesEnMoraDe($asesor, $tipoCredito);
 
         if ($clientesEnMora->isEmpty()) {
             return collect();
         }
 
+        $ruta = $tipoCredito ?? self::RUTA_GENERAL;
+
         $ordenes = RutaClienteOrden::query()
             ->where('asesor_id', $asesor->id)
+            ->where('tipo_credito', $ruta)
             ->whereIn('cliente_id', $clientesEnMora->pluck('cliente.id'))
             ->get()
             ->keyBy('cliente_id');
 
-        $siguienteOrden = (int) RutaClienteOrden::query()->where('asesor_id', $asesor->id)->max('orden');
+        $siguienteOrden = (int) RutaClienteOrden::query()->where('asesor_id', $asesor->id)->where('tipo_credito', $ruta)->max('orden');
 
         $nuevos = $clientesEnMora
             ->reject(fn (array $fila) => $ordenes->has($fila['cliente']->id))
@@ -88,6 +105,7 @@ final class RutaCobranzaService
                 'empresa_id' => $asesor->empresa_id,
                 'asesor_id' => $asesor->id,
                 'cliente_id' => $fila['cliente']->id,
+                'tipo_credito' => $ruta,
                 'orden' => $siguienteOrden,
             ]));
         }
@@ -114,11 +132,12 @@ final class RutaCobranzaService
      * Reescribe el orden de visita según $clienteIdsEnOrden (la lista
      * completa, ya reordenada, tal como llega del drag & drop). Solo puede
      * reordenar clientes que ya son suyos (cliente.asesor_id === $asesor->id)
-     * — evita que se cuelen ids de otro asesor.
+     * — evita que se cuelen ids de otro asesor. Reordena solo la ruta de
+     * `$tipoCredito` (o la general si es null); las demás no se tocan.
      *
      * @param  list<int>  $clienteIdsEnOrden
      */
-    public function reordenar(User $asesor, array $clienteIdsEnOrden): void
+    public function reordenar(User $asesor, array $clienteIdsEnOrden, ?string $tipoCredito = null): void
     {
         $propios = Cliente::query()
             ->where('asesor_id', $asesor->id)
@@ -129,10 +148,12 @@ final class RutaCobranzaService
             throw new DomainException('Uno o más clientes indicados no pertenecen a tu cartera.');
         }
 
-        DB::transaction(function () use ($asesor, $clienteIdsEnOrden): void {
+        $ruta = $tipoCredito ?? self::RUTA_GENERAL;
+
+        DB::transaction(function () use ($asesor, $clienteIdsEnOrden, $ruta): void {
             foreach ($clienteIdsEnOrden as $posicion => $clienteId) {
                 RutaClienteOrden::query()->updateOrCreate(
-                    ['asesor_id' => $asesor->id, 'cliente_id' => $clienteId],
+                    ['asesor_id' => $asesor->id, 'cliente_id' => $clienteId, 'tipo_credito' => $ruta],
                     ['empresa_id' => $asesor->empresa_id, 'orden' => $posicion + 1]
                 );
             }

@@ -94,6 +94,11 @@ class Cobro extends Model
         return $this->hasMany(CuotaCredito::class, 'cobro_id');
     }
 
+    public function abonosCuotas(): HasMany
+    {
+        return $this->hasMany(CobroCuotaAbono::class);
+    }
+
     public function cajaCiclo(): BelongsTo
     {
         return $this->belongsTo(CajaCiclo::class);

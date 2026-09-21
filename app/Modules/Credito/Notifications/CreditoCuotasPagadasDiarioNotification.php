@@ -31,7 +31,7 @@ class CreditoCuotasPagadasDiarioNotification extends Notification
         $texto = $this->numeroCuotas === 1 ? 'Se pagó 1 cuota' : "Se pagaron {$this->numeroCuotas} cuotas";
 
         return [
-            'mensaje' => "{$texto} del crédito diario #{$this->credito->id}.",
+            'mensaje' => "{$texto} del crédito #{$this->credito->id}.",
             'url' => '/creditos-prendarios',
             'credito_id' => $this->credito->id,
         ];

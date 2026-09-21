@@ -2,6 +2,7 @@
 
 namespace App\Modules\Caja\Http\Controllers;
 
+use App\Modules\Caja\Http\Requests\ListarMovimientosCajaRequest;
 use App\Modules\Caja\Http\Requests\StoreCajaCierreRequest;
 use App\Modules\Caja\Http\Requests\StoreCajaMovimientoRequest;
 use App\Modules\Caja\Models\Caja;
@@ -102,15 +103,26 @@ class CajaController extends Controller
      * modules. ?tipo= is required (ingreso|egreso) since these are two
      * separate frontend pages, never a combined feed.
      */
-    public function movimientos(): JsonResponse
+    public function movimientos(ListarMovimientosCajaRequest $request): JsonResponse
     {
         Gate::authorize('registrarMovimiento', Caja::class);
 
-        request()->validate(['tipo' => ['required', 'string', 'in:ingreso,egreso']]);
+        $filtros = $request->safe()->except('tipo');
 
-        $movimientos = $this->cajaService->listarMovimientos(request()->user(), request()->string('tipo')->value());
+        $movimientos = $this->cajaService->listarMovimientos($request->user(), $request->validated('tipo'), $filtros);
 
         return $this->successResponse($movimientos);
+    }
+
+    /**
+     * Usuarios cuyos movimientos puede ver el actor: las opciones del filtro
+     * "usuario" de Ingresos/Egresos.
+     */
+    public function usuariosMovimientos(): JsonResponse
+    {
+        Gate::authorize('registrarMovimiento', Caja::class);
+
+        return $this->successResponse($this->cajaService->usuariosConCajaVisible(request()->user()));
     }
 
     public function cerrarForzado(StoreCajaCierreRequest $request, Caja $caja): JsonResponse

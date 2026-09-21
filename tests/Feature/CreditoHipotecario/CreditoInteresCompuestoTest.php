@@ -203,3 +203,64 @@ it('completes the last cuota by moving straight to liquidado_pendiente (no succe
 
     expect($credito->fresh()->documentos()->where('tipo', 'devolucion')->exists())->toBeTrue();
 });
+
+it('pays several cuotas at once creating a single sucesor with the saldo insoluto after all of them', function () {
+    $fechaDesembolso = now()->toDateString();
+    $creditoId = registrarYDesembolsarCompuesto($this, fechaDesembolso: $fechaDesembolso);
+    $base = Carbon::parse($fechaDesembolso);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $this->getJson("/api/creditos-prendarios/{$creditoId}")
+        ->assertJsonPath('data.permite_pago_cuotas', true);
+
+    $preview = $this->postJson("/api/creditos-prendarios/{$creditoId}/pagar-cuotas-preview", ['numero_cuotas' => 3])
+        ->assertSuccessful()->json('data');
+
+    expect($preview['cuotas'])->toHaveCount(3)
+        ->and($preview['total'])->toBe('398.10');
+
+    $antes = Credito::query()->count();
+
+    $response = $this->postJson("/api/creditos-prendarios/{$creditoId}/pagar-cuotas", [
+        'numero_cuotas' => 3, 'monto_pagado' => $preview['total'], 'medio' => 'efectivo',
+    ])->assertCreated();
+
+    $capitalPagado = (string) Credito::find($creditoId)->cuotas()->where('numero_cuota', '<=', 3)->sum('monto_capital');
+
+    expect(Credito::query()->count())->toBe($antes + 1)
+        ->and($response->json('data.numero_cuotas'))->toBe(9)
+        ->and((string) $response->json('data.monto_prestamo'))->toBe(bcsub('1000.00', $capitalPagado, 2))
+        ->and($response->json('data.pago_cuota_de_credito_id'))->toBe($creditoId)
+        ->and(Carbon::parse($response->json('data.fecha_desembolso'))->toDateString())->toBe($base->copy()->addMonthsNoOverflow(3)->toDateString())
+        ->and(Credito::find($creditoId)->estado)->toBe('cuota_pagada');
+});
+
+it('rejects a pago a cuenta on a compuesto crédito and paying more cuotas than remain', function () {
+    $creditoId = registrarYDesembolsarCompuesto($this);
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/pagar-cuotas", ['monto_pagado' => 500, 'medio' => 'efectivo'])
+        ->assertUnprocessable();
+
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/pagar-cuotas-preview", ['monto_pagado' => 500])
+        ->assertUnprocessable();
+
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/pagar-cuotas", ['numero_cuotas' => 13, 'monto_pagado' => 5000, 'medio' => 'efectivo'])
+        ->assertUnprocessable();
+});
+
+it('pays all the remaining cuotas at once and moves straight to liquidado_pendiente', function () {
+    $creditoId = registrarYDesembolsarCompuesto($this, numeroCuotas: 3);
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $preview = $this->postJson("/api/creditos-prendarios/{$creditoId}/pagar-cuotas-preview", ['numero_cuotas' => 3])
+        ->assertSuccessful()->json('data');
+
+    $response = $this->postJson("/api/creditos-prendarios/{$creditoId}/pagar-cuotas", [
+        'numero_cuotas' => 3, 'monto_pagado' => $preview['total'], 'medio' => 'efectivo',
+    ])->assertCreated();
+
+    expect($response->json('data.id'))->toBe($creditoId)
+        ->and($response->json('data.estado'))->toBe('liquidado_pendiente');
+});

@@ -10,7 +10,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
  * Posición de un cliente en la ruta de cobranza de un asesor — 1 fila por
- * (asesor, cliente), persistente entre días (ver RutaCobranzaService).
+ * (asesor, cliente, tipo de crédito), persistente entre días (ver
+ * RutaCobranzaService). `tipo_credito` 'todos' es la ruta sin filtro.
  */
 class RutaClienteOrden extends Model
 {
@@ -32,6 +33,7 @@ class RutaClienteOrden extends Model
         'empresa_id',
         'asesor_id',
         'cliente_id',
+        'tipo_credito',
         'orden',
     ];
 

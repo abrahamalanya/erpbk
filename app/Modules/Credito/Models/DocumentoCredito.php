@@ -30,6 +30,7 @@ class DocumentoCredito extends Model
      */
     protected $fillable = [
         'credito_id',
+        'cobro_id',
         'empresa_id',
         'tipo',
         'archivo_firmado_path',

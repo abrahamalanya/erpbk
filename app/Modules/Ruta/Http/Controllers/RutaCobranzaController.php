@@ -3,6 +3,7 @@
 namespace App\Modules\Ruta\Http\Controllers;
 
 use App\Modules\Credito\Models\Credito;
+use App\Modules\Ruta\Http\Requests\MostrarRutaCobranzaRequest;
 use App\Modules\Ruta\Http\Requests\ReordenarRutaCobranzaRequest;
 use App\Modules\Ruta\Services\RutaCobranzaService;
 use App\Modules\Usuario\Models\User;
@@ -27,13 +28,13 @@ class RutaCobranzaController extends Controller
      * Ruta de $asesorId (o la propia del actor si se omite). Un admin/
      * supervisor puede pedir la de cualquier asesor dentro de su alcance.
      */
-    public function show(): JsonResponse
+    public function show(MostrarRutaCobranzaRequest $request): JsonResponse
     {
         Gate::authorize('viewAny', Credito::class);
 
         $asesor = $this->resolverAsesor();
 
-        return $this->successResponse($this->rutaCobranzaService->rutaDe($asesor));
+        return $this->successResponse($this->rutaCobranzaService->rutaDe($asesor, $request->validated('tipo_credito')));
     }
 
     /**
@@ -52,9 +53,11 @@ class RutaCobranzaController extends Controller
      */
     public function reordenar(ReordenarRutaCobranzaRequest $request): JsonResponse
     {
-        $this->rutaCobranzaService->reordenar($request->user(), $request->validated()['cliente_ids']);
+        $tipoCredito = $request->validated('tipo_credito');
 
-        return $this->successResponse($this->rutaCobranzaService->rutaDe($request->user()), 'Ruta actualizada');
+        $this->rutaCobranzaService->reordenar($request->user(), $request->validated()['cliente_ids'], $tipoCredito);
+
+        return $this->successResponse($this->rutaCobranzaService->rutaDe($request->user(), $tipoCredito), 'Ruta actualizada');
     }
 
     private function resolverAsesor(): User

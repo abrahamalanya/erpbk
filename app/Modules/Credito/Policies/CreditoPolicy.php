@@ -96,7 +96,7 @@ class CreditoPolicy
      * aplica a tipo_credito === 'diario' vive en CreditoService (422), no
      * aquí — igual que pagarCuota() no filtra por tipo_interes en la Policy.
      */
-    public function pagarCuotasDiario(User $user, Credito $credito): bool
+    public function pagarCuotas(User $user, Credito $credito): bool
     {
         return $user->can('creditos_prendarios.pagar_cuota') && $this->hierarchy->puedeVer($user, $credito);
     }

@@ -4,6 +4,7 @@ namespace App\Modules\Caja\Http\Controllers;
 
 use App\Modules\Caja\Http\Requests\StoreBovedaAperturaRequest;
 use App\Modules\Caja\Http\Requests\StoreBovedaInyeccionRequest;
+use App\Modules\Caja\Http\Requests\StoreBovedaRetiroRequest;
 use App\Modules\Caja\Http\Requests\StoreCajaCierreRequest;
 use App\Modules\Caja\Models\Boveda;
 use App\Modules\Caja\Models\BovedaCiclo;
@@ -114,6 +115,27 @@ class BovedaController extends Controller
         );
 
         return $this->successResponse($movimiento, 'Capital inyectado', 201);
+    }
+
+    public function retirar(StoreBovedaRetiroRequest $request, Boveda $boveda): JsonResponse
+    {
+        Gate::authorize('retirar', $boveda);
+
+        $cuentaBancariaId = $request->validated('cuenta_bancaria_id');
+        $cuentaBancariaDestinoId = $request->validated('cuenta_bancaria_destino_id');
+
+        $movimiento = $this->bovedaService->retirar(
+            $boveda,
+            $request->user(),
+            (string) $request->validated('monto'),
+            $request->validated('concepto'),
+            $request->validated('medio', 'efectivo'),
+            $cuentaBancariaId !== null ? (int) $cuentaBancariaId : null,
+            $cuentaBancariaDestinoId !== null ? (int) $cuentaBancariaDestinoId : null,
+            $request->file('comprobante'),
+        );
+
+        return $this->successResponse($movimiento, 'Dinero retirado', 201);
     }
 
     /**

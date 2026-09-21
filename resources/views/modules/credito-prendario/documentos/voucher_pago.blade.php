@@ -75,15 +75,27 @@
             <tr class="tot"><td>Nuevo capital (crédito sucesor)</td><td class="num">{{ number_format((float) ($datos['nuevo_capital'] ?? 0), 2) }}</td></tr>
         @elseif (($datos['operacion'] ?? '') === 'pago_cuotas_diario')
             @foreach ($datos['cuotas'] ?? [] as $cuota)
+                @php
+                    $cuotaCompleta = $cuota['completa'] ?? true;
+                    $abonoCuota = (float) ($cuota['abono'] ?? $cuota['monto_total']);
+                @endphp
                 <tr>
-                    <td>Cuota #{{ $cuota['numero_cuota'] }} (vence {{ \Illuminate\Support\Carbon::parse($cuota['fecha_vencimiento'])->format('d/m/Y') }})</td>
-                    <td class="num">{{ number_format((float) $cuota['monto_total'], 2) }}</td>
+                    <td>
+                        Cuota #{{ $cuota['numero_cuota'] }} (vence {{ \Illuminate\Support\Carbon::parse($cuota['fecha_vencimiento'])->format('d/m/Y') }})
+                        @if (! $cuotaCompleta)
+                            — abono parcial, queda S/ {{ number_format((float) ($cuota['saldo_restante'] ?? 0), 2) }}
+                        @endif
+                    </td>
+                    <td class="num">{{ number_format($abonoCuota, 2) }}</td>
                 </tr>
                 @if ((float) ($cuota['mora'] ?? 0) > 0)
                     <tr><td>Mora cuota #{{ $cuota['numero_cuota'] }}</td><td class="num">{{ number_format((float) $cuota['mora'], 2) }}</td></tr>
                 @endif
             @endforeach
-            <tr class="tot"><td>Total pagado ({{ count($datos['cuotas'] ?? []) }} cuota(s))</td><td class="num">{{ number_format((float) ($datos['total'] ?? 0), 2) }}</td></tr>
+            @php
+                $cuotasCompletas = collect($datos['cuotas'] ?? [])->filter(fn ($c) => $c['completa'] ?? true)->count();
+            @endphp
+            <tr class="tot"><td>Total aplicado ({{ $cuotasCompletas }} cuota(s) completa(s))</td><td class="num">{{ number_format((float) ($datos['total'] ?? 0), 2) }}</td></tr>
         @else
             <tr><td>Interés</td><td class="num">{{ number_format((float) ($datos['interes'] ?? 0), 2) }}</td></tr>
             <tr><td>Mora</td><td class="num">{{ number_format((float) ($datos['mora'] ?? 0), 2) }}</td></tr>

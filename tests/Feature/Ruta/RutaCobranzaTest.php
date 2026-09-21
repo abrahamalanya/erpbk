@@ -166,3 +166,110 @@ it('lists only the visible asesores for the ruta selector', function () {
 
     expect(collect($response->json('data'))->pluck('id')->all())->toBe([$this->asesor->id]);
 });
+
+/** Crédito prendario activo con una única cuota ya vencida hace $diasAtraso días. */
+function prendarioEnMoraParaRuta(Empresa $empresa, Agencia $agencia, Cliente $cliente, User $asesor, int $diasAtraso): Credito
+{
+    $credito = Credito::factory()->create([
+        'registrado_por' => $asesor->id,
+        'empresa_id' => $empresa->id,
+        'agencia_id' => $agencia->id,
+        'cliente_id' => $cliente->id,
+        'tipo_credito' => 'prendario',
+        'estado' => 'activo',
+    ]);
+
+    CuotaCredito::factory()->paraCredito($credito)->create([
+        'numero_cuota' => 1,
+        'fecha_vencimiento' => now()->subDays($diasAtraso)->toDateString(),
+        'monto_capital' => 100, 'monto_interes' => 10, 'monto_total' => 110,
+    ]);
+
+    return $credito;
+}
+
+it('filters the ruta by tipo de crédito', function () {
+    $clienteDiario = Cliente::factory()->asignadoA($this->asesor)->create();
+    $clientePrendario = Cliente::factory()->asignadoA($this->asesor)->create();
+    creditoEnMoraParaRuta($this->empresa, $this->agencia, $clienteDiario, $this->asesor, 4);
+    prendarioEnMoraParaRuta($this->empresa, $this->agencia, $clientePrendario, $this->asesor, 6);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    expect(collect($this->getJson('/api/rutas-cobranza')->json('data'))->pluck('cliente_id')->sort()->values()->all())
+        ->toBe(collect([$clienteDiario->id, $clientePrendario->id])->sort()->values()->all());
+
+    expect(collect($this->getJson('/api/rutas-cobranza?tipo_credito=diario')->json('data'))->pluck('cliente_id')->all())
+        ->toBe([$clienteDiario->id]);
+
+    expect(collect($this->getJson('/api/rutas-cobranza?tipo_credito=prendario')->json('data'))->pluck('cliente_id')->all())
+        ->toBe([$clientePrendario->id]);
+
+    expect($this->getJson('/api/rutas-cobranza?tipo_credito=hipotecario')->json('data'))->toBe([]);
+});
+
+it('counts only the créditos of the requested tipo for a cliente with several tipos en mora', function () {
+    $cliente = Cliente::factory()->asignadoA($this->asesor)->create();
+    $diario = creditoEnMoraParaRuta($this->empresa, $this->agencia, $cliente, $this->asesor, 3);
+    $prendario = prendarioEnMoraParaRuta($this->empresa, $this->agencia, $cliente, $this->asesor, 9);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $general = $this->getJson('/api/rutas-cobranza')->json('data.0');
+    expect($general['creditos_vencidos'])->toBe(2)
+        ->and($general['dias_atraso_max'])->toBe(9);
+
+    $soloDiario = $this->getJson('/api/rutas-cobranza?tipo_credito=diario')->json('data.0');
+    expect($soloDiario['creditos_vencidos'])->toBe(1)
+        ->and($soloDiario['credito_codigos'])->toBe([$diario->codigo])
+        ->and($soloDiario['dias_atraso_max'])->toBe(2);
+
+    $soloPrendario = $this->getJson('/api/rutas-cobranza?tipo_credito=prendario')->json('data.0');
+    expect($soloPrendario['credito_codigos'])->toBe([$prendario->codigo]);
+});
+
+it('keeps an independent order for each tipo de crédito route', function () {
+    $clienteA = Cliente::factory()->asignadoA($this->asesor)->create();
+    $clienteB = Cliente::factory()->asignadoA($this->asesor)->create();
+    creditoEnMoraParaRuta($this->empresa, $this->agencia, $clienteA, $this->asesor, 3);
+    creditoEnMoraParaRuta($this->empresa, $this->agencia, $clienteB, $this->asesor, 10);
+    prendarioEnMoraParaRuta($this->empresa, $this->agencia, $clienteA, $this->asesor, 3);
+    prendarioEnMoraParaRuta($this->empresa, $this->agencia, $clienteB, $this->asesor, 10);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $orden = fn (?string $tipo) => collect($this->getJson('/api/rutas-cobranza'.($tipo ? "?tipo_credito={$tipo}" : ''))->json('data'))->pluck('cliente_id')->all();
+
+    // Por defecto en cada ruta el más atrasado (B) va primero.
+    expect($orden('diario'))->toBe([$clienteB->id, $clienteA->id])
+        ->and($orden('prendario'))->toBe([$clienteB->id, $clienteA->id]);
+
+    $this->postJson('/api/rutas-cobranza/reordenar', ['tipo_credito' => 'diario', 'cliente_ids' => [$clienteA->id, $clienteB->id]])
+        ->assertSuccessful()
+        ->assertJsonPath('data.0.cliente_id', $clienteA->id);
+
+    expect($orden('diario'))->toBe([$clienteA->id, $clienteB->id])
+        ->and($orden('prendario'))->toBe([$clienteB->id, $clienteA->id])
+        ->and($orden(null))->toBe([$clienteB->id, $clienteA->id]);
+});
+
+it('rejects an unknown tipo de crédito', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $this->getJson('/api/rutas-cobranza?tipo_credito=hipoteca')->assertUnprocessable();
+    $this->postJson('/api/rutas-cobranza/reordenar', ['tipo_credito' => 'otro', 'cliente_ids' => [1]])->assertUnprocessable();
+});
+
+it('no longer lists a cliente whose overdue cuotas were already paid', function () {
+    $cliente = Cliente::factory()->asignadoA($this->asesor)->create();
+    $credito = creditoEnMoraParaRuta($this->empresa, $this->agencia, $cliente, $this->asesor, 3);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    expect($this->getJson('/api/rutas-cobranza')->json('data'))->toHaveCount(1);
+
+    CuotaCredito::where('credito_id', $credito->id)
+        ->whereDate('fecha_vencimiento', '<=', now()->toDateString())
+        ->update(['pagada_at' => now()]);
+
+    expect($this->getJson('/api/rutas-cobranza')->json('data'))->toBe([]);
+});

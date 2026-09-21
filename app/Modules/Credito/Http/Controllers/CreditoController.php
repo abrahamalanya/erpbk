@@ -12,8 +12,8 @@ use App\Modules\Credito\Http\Requests\DesembolsarCreditoRequest;
 use App\Modules\Credito\Http\Requests\EnviarATiendaRequest;
 use App\Modules\Credito\Http\Requests\LiquidarCreditoRequest;
 use App\Modules\Credito\Http\Requests\PagarCuotaCreditoRequest;
-use App\Modules\Credito\Http\Requests\PagarCuotasDiarioPreviewRequest;
-use App\Modules\Credito\Http\Requests\PagarCuotasDiarioRequest;
+use App\Modules\Credito\Http\Requests\PagarCuotasPreviewRequest;
+use App\Modules\Credito\Http\Requests\PagarCuotasRequest;
 use App\Modules\Credito\Http\Requests\PreviewCronogramaRequest;
 use App\Modules\Credito\Http\Requests\RechazarCreditoRequest;
 use App\Modules\Credito\Http\Requests\RefinanciarCreditoRequest;
@@ -184,17 +184,7 @@ class CreditoController extends Controller
         $credito->load(['bienes.fotos', 'vehiculos.fotos', 'inmuebles', 'cliente', 'aval', 'aval2', 'registradoPor', 'supervisadoPor', 'aprobadoPor', 'documentos', 'cuotas', 'expedienteDocumentos']);
 
         if (in_array($credito->estado, ['activo', 'vencido'], true)) {
-            $credito->setAttribute('monto_liquidacion_sugerido', $this->creditoService->calcularMontoLiquidacion($credito));
-
-            if ($credito->tipo_credito === 'diario') {
-                if ($credito->cuotas()->pendientes()->exists()) {
-                    $credito->setAttribute('monto_pago_cuotas_sugerido', $this->creditoService->calcularMontoPagoCuotasDiario($credito, 1));
-                }
-            } elseif ($credito->tipo_interes === 'compuesto') {
-                $credito->setAttribute('monto_pago_cuota_sugerido', $this->creditoService->calcularMontoPagoCuota($credito));
-            } else {
-                $credito->setAttribute('monto_refrendo_sugerido', $this->creditoService->calcularMontoRefrendo($credito));
-            }
+            $this->creditoService->adjuntarMontosSugeridos($credito);
         }
 
         if ($credito->estado === 'vencido') {
@@ -297,25 +287,29 @@ class CreditoController extends Controller
         return $this->successResponse($nuevo, 'Cuota pagada', 201);
     }
 
-    public function pagarCuotasDiarioPreview(PagarCuotasDiarioPreviewRequest $request, Credito $credito): JsonResponse
+    public function pagarCuotasPreview(PagarCuotasPreviewRequest $request, Credito $credito): JsonResponse
     {
-        Gate::authorize('pagarCuotasDiario', $credito);
+        Gate::authorize('pagarCuotas', $credito);
 
-        $preview = $this->creditoService->calcularMontoPagoCuotasDiario($credito, (int) $request->validated('numero_cuotas'));
+        $data = $request->validated();
+
+        $preview = isset($data['numero_cuotas'])
+            ? $this->creditoService->calcularMontoPagoCuotas($credito, (int) $data['numero_cuotas'])
+            : $this->creditoService->calcularAmortizacion($credito, (string) $data['monto_pagado']);
 
         return $this->successResponse($preview);
     }
 
-    public function pagarCuotasDiario(PagarCuotasDiarioRequest $request, Credito $credito): JsonResponse
+    public function pagarCuotas(PagarCuotasRequest $request, Credito $credito): JsonResponse
     {
-        Gate::authorize('pagarCuotasDiario', $credito);
+        Gate::authorize('pagarCuotas', $credito);
 
         $data = $request->validated();
 
-        $credito = $this->creditoService->pagarCuotasDiario(
+        $credito = $this->creditoService->pagarCuotas(
             $credito,
             $request->user(),
-            (int) $data['numero_cuotas'],
+            isset($data['numero_cuotas']) ? (int) $data['numero_cuotas'] : null,
             (string) $data['monto_pagado'],
             $data['medio'],
             $request->file('comprobante'),

@@ -5,7 +5,7 @@ namespace App\Modules\Ruta\Http\Requests;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
 
-class ReordenarRutaCobranzaRequest extends FormRequest
+class MostrarRutaCobranzaRequest extends FormRequest
 {
     public function authorize(): bool
     {
@@ -18,8 +18,7 @@ class ReordenarRutaCobranzaRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'cliente_ids' => ['required', 'array', 'min:1'],
-            'cliente_ids.*' => ['integer', 'distinct', 'exists:clientes,id'],
+            'asesor_id' => ['nullable', 'integer'],
             'tipo_credito' => ['nullable', 'string', 'in:diario,prendario,hipotecario,vehicular'],
         ];
     }
@@ -30,9 +29,6 @@ class ReordenarRutaCobranzaRequest extends FormRequest
     public function messages(): array
     {
         return [
-            'cliente_ids.required' => 'Debes indicar el nuevo orden de los clientes',
-            'cliente_ids.*.distinct' => 'No repitas el mismo cliente',
-            'cliente_ids.*.exists' => 'Uno de los clientes indicados no existe',
             'tipo_credito.in' => 'El tipo de crédito debe ser diario, prendario, hipotecario o vehicular',
         ];
     }

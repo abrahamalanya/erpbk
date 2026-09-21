@@ -7,6 +7,7 @@ use App\Modules\Caja\Models\Caja;
 use App\Modules\Caja\Models\CajaCiclo;
 use App\Modules\Caja\Models\CajaMovimiento;
 use App\Modules\Cobranza\Models\Cobro;
+use App\Modules\Cobranza\Models\CobroCuotaAbono;
 use App\Modules\Credito\Events\CreditoActualizado;
 use App\Modules\Credito\Models\ConfiguracionCredito;
 use App\Modules\Credito\Models\Credito;
@@ -967,6 +968,8 @@ final class CreditoService
         ?string $descuento = null,
         ?string $motivoDescuento = null,
     ): Credito {
+        $this->asegurarSinCuotasPagadas($credito, 'refrendar');
+
         if (! in_array($credito->estado, ['activo', 'vencido'], true)) {
             throw new DomainException('Solo se puede refrendar un crédito activo o vencido.');
         }
@@ -1059,7 +1062,7 @@ final class CreditoService
 
             $nuevo = $nuevo->fresh(['bienes']);
             $this->generarCronograma($nuevo, $n, $plazoTotal);
-            $this->registrarCobroEnCaja($ciclo, $actor, $credito, $montoPagado, $medio, $comprobante, "Refrendo de crédito prendario #{$credito->id}", [
+            $cobro = $this->registrarCobroEnCaja($ciclo, $actor, $credito, $montoPagado, $medio, $comprobante, "Refrendo de crédito prendario #{$credito->id}", [
                 'operacion' => 'refrendo',
                 'credito_estado_anterior' => $estadoAnterior,
                 'interes' => $interes,
@@ -1070,6 +1073,7 @@ final class CreditoService
             ]);
 
             $this->documentos->generarVoucherPago($credito, $actor, [
+                'cobro_id' => $cobro->id,
                 'operacion' => 'refrendo',
                 'monto_pagado' => $montoPagado,
                 'medio' => $medio,
@@ -1088,7 +1092,7 @@ final class CreditoService
             $this->notificar($nuevo);
             $this->notificaciones->enviar(collect([$nuevo->registradoPor]), new CreditoRefrendadoNotification($nuevo));
 
-            return $nuevo;
+            return $this->conCobro($nuevo, $cobro);
         });
     }
 
@@ -1120,6 +1124,8 @@ final class CreditoService
         ?string $descuento = null,
         ?string $motivoDescuento = null,
     ): Credito {
+        $this->asegurarSinCuotasPagadas($credito, 'adendar');
+
         if (! in_array($credito->estado, ['activo', 'vencido'], true)) {
             throw new DomainException('Solo se puede hacer una adenda a un crédito activo o vencido.');
         }
@@ -1202,7 +1208,7 @@ final class CreditoService
             }
 
             $nuevo = $nuevo->fresh(['bienes']);
-            $this->registrarCobroEnCaja($ciclo, $actor, $credito, $montoPagado, $medio, $comprobante, "Adenda de crédito prendario #{$credito->id}", [
+            $cobro = $this->registrarCobroEnCaja($ciclo, $actor, $credito, $montoPagado, $medio, $comprobante, "Adenda de crédito prendario #{$credito->id}", [
                 'operacion' => 'adenda',
                 'credito_estado_anterior' => $estadoAnterior,
                 'interes' => $interes,
@@ -1213,6 +1219,7 @@ final class CreditoService
             ]);
 
             $this->documentos->generarVoucherPago($credito, $actor, [
+                'cobro_id' => $cobro->id,
                 'operacion' => 'adenda',
                 'monto_pagado' => $montoPagado,
                 'medio' => $medio,
@@ -1233,7 +1240,7 @@ final class CreditoService
             $this->notificar($nuevo);
             $this->notificaciones->enviar(collect([$nuevo->registradoPor]), new CreditoAdendadoNotification($nuevo));
 
-            return $nuevo;
+            return $this->conCobro($nuevo, $cobro);
         });
     }
 
@@ -1254,7 +1261,7 @@ final class CreditoService
      * periodos restantes, mismo r) — módulo redondeo, así el monto de cuota
      * se mantiene estable durante toda la vida del crédito.
      */
-    public function pagarCuota(Credito $credito, User $actor, string $montoPagado, string $medio, ?UploadedFile $comprobante): Credito
+    public function pagarCuota(Credito $credito, User $actor, string $montoPagado, string $medio, ?UploadedFile $comprobante, int $numeroCuotas = 1): Credito
     {
         if ($credito->tipo_interes !== 'compuesto') {
             throw new DomainException('Solo los créditos de interés compuesto se pagan por cuota — usa refrendar o liquidar.');
@@ -1264,23 +1271,31 @@ final class CreditoService
             throw new DomainException('Solo se puede pagar una cuota de un crédito activo o vencido.');
         }
 
-        $cuota = $credito->cuotas()->orderBy('numero_cuota')->first();
+        $cuotasAPagar = $credito->cuotas()->orderBy('numero_cuota')->limit($numeroCuotas)->get();
 
-        if (! $cuota) {
+        if ($cuotasAPagar->isEmpty()) {
             throw new DomainException('Este crédito no tiene un cronograma de cuotas generado.');
         }
 
-        $mora = $this->calcularMora($credito);
-        $montoMinimo = bcadd((string) $cuota->monto_total, $mora, 2);
+        if ($cuotasAPagar->count() < $numeroCuotas) {
+            throw new DomainException("Solo quedan {$cuotasAPagar->count()} cuota(s) pendiente(s), no se pueden pagar {$numeroCuotas}.");
+        }
+
+        $cuota = $cuotasAPagar->last();
+        $configuracion = $this->configuracion->resolverPara($credito->agencia, $credito->tipo_credito);
+        $mora = $cuotasAPagar->reduce(fn (string $carry, CuotaCredito $c): string => bcadd($carry, $this->moraDeCuota($c, $configuracion), 2), '0.00');
+        $totalCuotas = $cuotasAPagar->reduce(fn (string $carry, CuotaCredito $c): string => bcadd($carry, (string) $c->monto_total, 2), '0.00');
+        $capitalCuotas = $cuotasAPagar->reduce(fn (string $carry, CuotaCredito $c): string => bcadd($carry, (string) $c->monto_capital, 2), '0.00');
+        $montoMinimo = bcadd($totalCuotas, $mora, 2);
 
         if (bccomp($montoPagado, $montoMinimo, 2) < 0) {
             throw new DomainException("El monto pagado ({$montoPagado}) es menor a la cuota + mora a pagar calculada ({$montoMinimo}).");
         }
 
         $abonoExtra = bcsub($montoPagado, $montoMinimo, 2);
-        $abonoCapital = bcadd((string) $cuota->monto_capital, $abonoExtra, 2);
+        $abonoCapital = bcadd($capitalCuotas, $abonoExtra, 2);
         $nuevoCapital = bcsub((string) $credito->monto_prestamo, $abonoCapital, 2);
-        $nuevoNumeroCuotas = $credito->numero_cuotas - 1;
+        $nuevoNumeroCuotas = $credito->numero_cuotas - $numeroCuotas;
 
         if ($nuevoNumeroCuotas > 0 && bccomp($nuevoCapital, '0', 2) <= 0) {
             throw new DomainException('El abono ingresado cancela todo el saldo pendiente; selecciona Liquidar para cancelar el crédito.');
@@ -1299,7 +1314,7 @@ final class CreditoService
                 $credito->update(['estado' => 'liquidado_pendiente']);
 
                 $credito = $credito->fresh(['inmuebles']);
-                $this->registrarCobroEnCaja($ciclo, $actor, $credito, $montoPagado, $medio, $comprobante, "Pago de última cuota — crédito hipotecario #{$credito->id}", [
+                $cobro = $this->registrarCobroEnCaja($ciclo, $actor, $credito, $montoPagado, $medio, $comprobante, "Pago de última cuota — crédito hipotecario #{$credito->id}", [
                     'operacion' => 'pago_cuota',
                     'credito_estado_anterior' => $estadoAnterior,
                     'interes' => bcsub($montoPagado, bcadd($abonoCapital, $mora, 2), 2),
@@ -1308,6 +1323,7 @@ final class CreditoService
                 $this->documentos->generarDevolucion($credito, $actor);
 
                 $this->documentos->generarVoucherPago($credito, $actor, [
+                    'cobro_id' => $cobro->id,
                     'operacion' => 'pago_cuota',
                     'monto_pagado' => $montoPagado,
                     'medio' => $medio,
@@ -1320,7 +1336,7 @@ final class CreditoService
 
                 $this->notificar($credito);
 
-                return $credito->fresh(['inmuebles', 'documentos']);
+                return $this->conCobro($credito->fresh(['inmuebles', 'documentos']), $cobro);
             }
 
             $credito->update(['estado' => 'cuota_pagada']);
@@ -1366,7 +1382,7 @@ final class CreditoService
 
             $nuevo = $nuevo->fresh(['inmuebles']);
             $this->generarCronograma($nuevo, $nuevoNumeroCuotas);
-            $this->registrarCobroEnCaja($ciclo, $actor, $credito, $montoPagado, $medio, $comprobante, "Pago de cuota — crédito hipotecario #{$credito->id}", [
+            $cobro = $this->registrarCobroEnCaja($ciclo, $actor, $credito, $montoPagado, $medio, $comprobante, "Pago de cuota — crédito hipotecario #{$credito->id}", [
                 'operacion' => 'pago_cuota',
                 'credito_estado_anterior' => $estadoAnterior,
                 'interes' => bcsub($montoPagado, bcadd($abonoCapital, $mora, 2), 2),
@@ -1375,6 +1391,7 @@ final class CreditoService
             ]);
 
             $this->documentos->generarVoucherPago($credito, $actor, [
+                'cobro_id' => $cobro->id,
                 'operacion' => 'pago_cuota',
                 'monto_pagado' => $montoPagado,
                 'medio' => $medio,
@@ -1389,7 +1406,7 @@ final class CreditoService
             $this->notificar($nuevo);
             $this->notificaciones->enviar(collect([$nuevo->registradoPor]), new CreditoCuotaPagadaNotification($nuevo));
 
-            return $nuevo;
+            return $this->conCobro($nuevo, $cobro);
         });
     }
 
@@ -1412,7 +1429,10 @@ final class CreditoService
         $dias = (int) $vencimiento->diffInDays($hoy);
         $tasaDiaria = bcdiv((string) $configuracion->tasa_mora_diaria, '100', 4);
 
-        return bcmul(bcmul((string) $cuota->monto_total, $tasaDiaria, 4), (string) $dias, 2);
+        $moraAcumulada = bcmul(bcmul((string) $cuota->monto_total, $tasaDiaria, 4), (string) $dias, 2);
+        $moraPendiente = bcsub($moraAcumulada, (string) ($cuota->mora_pagada ?? 0), 2);
+
+        return bccomp($moraPendiente, '0', 2) > 0 ? $moraPendiente : '0.00';
     }
 
     /**
@@ -1431,19 +1451,67 @@ final class CreditoService
     }
 
     /**
-     * Preview de cuánto cuesta pagar las próximas `$numeroCuotas` cuotas
-     * pendientes (siempre las más antiguas, consecutivas) de un crédito
-     * diario — lo consume tanto el endpoint de preview como
-     * pagarCuotasDiario() para no duplicar el cálculo.
-     *
-     * @return array{cuotas: list<array{numero_cuota: int, fecha_vencimiento: string, monto_total: string, mora: string}>, monto_cuotas: string, mora: string, total: string, es_ultima_cuota: bool}
+     * Si el crédito admite pagarse por cuotas: un diario siempre que tenga
+     * alguna pendiente; los demás solo si tienen más de una cuota por pagar
+     * (con una sola, refrendar/liquidar/pagar cuota ya lo cubren). Un simple
+     * al que ya se le pagó alguna cuota sigue admitiéndolo con la última,
+     * porque refrendar/adendar/refinanciar quedan bloqueados en cuanto hay
+     * cuotas pagadas dentro del mismo crédito.
      */
-    public function calcularMontoPagoCuotasDiario(Credito $credito, int $numeroCuotas): array
+    public function admitePagoPorCuotas(Credito $credito): bool
     {
-        if ($credito->tipo_credito !== 'diario') {
-            throw new DomainException('Solo los créditos diarios se pagan por cuotas — usa refrendar o liquidar.');
+        if (! in_array($credito->estado, ['activo', 'vencido'], true)) {
+            return false;
         }
 
+        $pendientes = $credito->cuotas()->pendientes()->count();
+
+        return match (true) {
+            $credito->tipo_credito === 'diario' => $pendientes >= 1,
+            $credito->tipo_interes === 'compuesto' => $pendientes > 1,
+            default => $pendientes > 1 || ($pendientes === 1 && $credito->cuotas()->pagadas()->exists()),
+        };
+    }
+
+    /**
+     * Adjunta al crédito los montos sugeridos y las operaciones que admite
+     * hoy (`permite_pago_cuotas`, `permite_refrendo`), para prellenar el
+     * formulario de cobro — lo comparten el detalle del crédito y la lista de
+     * créditos pendientes de Cobranzas, para que ambos ofrezcan lo mismo.
+     */
+    public function adjuntarMontosSugeridos(Credito $credito): void
+    {
+        $credito->setAttribute('monto_liquidacion_sugerido', $this->calcularMontoLiquidacion($credito));
+
+        $admitePagoPorCuotas = $this->admitePagoPorCuotas($credito);
+        $esCompuesto = $credito->tipo_interes === 'compuesto';
+        $permiteRefrendo = $credito->tipo_credito !== 'diario' && ! $esCompuesto && ! $credito->cuotas()->pagadas()->exists();
+
+        $credito->setAttribute('permite_pago_cuotas', $admitePagoPorCuotas);
+        $credito->setAttribute('permite_refrendo', $permiteRefrendo);
+
+        if ($admitePagoPorCuotas) {
+            $credito->setAttribute('monto_pago_cuotas_sugerido', $this->calcularMontoPagoCuotas($credito, 1));
+        }
+
+        if ($esCompuesto && $credito->tipo_credito !== 'diario') {
+            $credito->setAttribute('monto_pago_cuota_sugerido', $this->calcularMontoPagoCuota($credito));
+        }
+
+        if ($permiteRefrendo) {
+            $credito->setAttribute('monto_refrendo_sugerido', $this->calcularMontoRefrendo($credito));
+        }
+    }
+
+    /**
+     * Cuotas pendientes de un crédito más la configuración de mora — valida
+     * que admita pago por cuotas. Compartido por el preview de "N cuotas" y
+     * por la amortización por monto.
+     *
+     * @return array{0: Collection<int, CuotaCredito>, 1: ConfiguracionCredito}
+     */
+    private function cuotasPendientesParaPago(Credito $credito): array
+    {
         if (! in_array($credito->estado, ['activo', 'vencido'], true)) {
             throw new DomainException('Solo se puede pagar cuotas de un crédito activo o vencido.');
         }
@@ -1455,70 +1523,193 @@ final class CreditoService
             throw new DomainException('Este crédito no tiene cuotas pendientes.');
         }
 
-        if ($numeroCuotas > $pendientes->count()) {
-            throw new DomainException("Solo quedan {$pendientes->count()} cuota(s) pendiente(s), no se pueden pagar {$numeroCuotas}.");
+        if (! $this->admitePagoPorCuotas($credito)) {
+            throw new DomainException('Este crédito no admite pago por cuotas: necesita más de una cuota pendiente — usa refrendar, pagar cuota o liquidar.');
         }
 
-        $objetivo = $pendientes->take($numeroCuotas);
+        return [$pendientes, $configuracion];
+    }
 
-        $detalle = $objetivo->map(function (CuotaCredito $cuota) use ($configuracion): array {
-            return [
-                'numero_cuota' => $cuota->numero_cuota,
-                'fecha_vencimiento' => $cuota->fecha_vencimiento->toDateString(),
-                'monto_total' => (string) $cuota->monto_total,
-                'mora' => $this->moraDeCuota($cuota, $configuracion),
-            ];
-        })->values()->all();
+    /**
+     * Refrendar/adendar/refinanciar reinician el crédito sobre el capital
+     * original, así que no conviven con cuotas ya pagadas dentro del mismo
+     * crédito (pago por cuotas): desde ahí solo se sigue pagando cuotas o se
+     * liquida.
+     */
+    private function asegurarSinCuotasPagadas(Credito $credito, string $operacion): void
+    {
+        if ($credito->cuotas()->pagadas()->exists()) {
+            throw new DomainException("No se puede {$operacion}: este crédito ya tiene cuotas pagadas — usa pagar cuotas o liquidar.");
+        }
+    }
 
-        $montoCuotas = $objetivo->reduce(fn (string $carry, CuotaCredito $cuota): string => bcadd($carry, (string) $cuota->monto_total, 2), '0.00');
+    /**
+     * Arma el detalle de lo que se aplicaría a una cuota: su mora vigente
+     * (ver moraDeCuota()), lo que se abonaría y lo que le quedaría por
+     * pagar.
+     *
+     * @return array{numero_cuota: int, fecha_vencimiento: string, monto_total: string, mora: string, abono: string, saldo_restante: string, completa: bool}
+     */
+    private function detalleAplicacionCuota(CuotaCredito $cuota, string $mora, string $abono): array
+    {
+        $saldo = bcsub((string) $cuota->monto_total, (string) $cuota->monto_abonado, 2);
+        $saldoRestante = bcsub($saldo, $abono, 2);
+
+        return [
+            'numero_cuota' => $cuota->numero_cuota,
+            'fecha_vencimiento' => $cuota->fecha_vencimiento->toDateString(),
+            'monto_total' => (string) $cuota->monto_total,
+            'mora' => $mora,
+            'abono' => $abono,
+            'saldo_restante' => $saldoRestante,
+            'completa' => bccomp($saldoRestante, '0', 2) === 0,
+        ];
+    }
+
+    /**
+     * @param  list<array{numero_cuota: int, fecha_vencimiento: string, monto_total: string, mora: string, abono: string, saldo_restante: string, completa: bool}>  $detalle
+     * @return array{cuotas: list<array{numero_cuota: int, fecha_vencimiento: string, monto_total: string, mora: string, abono: string, saldo_restante: string, completa: bool}>, monto_cuotas: string, mora: string, total: string, vuelto: string, es_ultima_cuota: bool}
+     */
+    private function resumenAplicacion(array $detalle, string $vuelto, int $pendientesTotal): array
+    {
+        $montoCuotas = array_reduce($detalle, fn (string $carry, array $c): string => bcadd($carry, $c['abono'], 2), '0.00');
         $mora = array_reduce($detalle, fn (string $carry, array $c): string => bcadd($carry, $c['mora'], 2), '0.00');
+        $completas = count(array_filter($detalle, fn (array $c): bool => $c['completa']));
 
         return [
             'cuotas' => $detalle,
             'monto_cuotas' => $montoCuotas,
             'mora' => $mora,
             'total' => bcadd($montoCuotas, $mora, 2),
-            'es_ultima_cuota' => $numeroCuotas === $pendientes->count(),
+            'vuelto' => $vuelto,
+            'es_ultima_cuota' => $completas === $pendientesTotal,
         ];
     }
 
     /**
-     * Paga `$numeroCuotas` cuotas (siempre las más antiguas pendientes,
-     * consecutivas) de un crédito diario, marcándolas pagadas dentro del
-     * MISMO crédito — a diferencia de refrendar()/adendar()/pagarCuota(), no
-     * encadena un crédito sucesor. Si con este pago ya no queda ninguna
-     * cuota pendiente, el crédito pasa a liquidado_pendiente igual que
-     * liquidar() (queda a la espera de la firma de la devolución).
+     * Preview de cuánto cuesta pagar las próximas `$numeroCuotas` cuotas
+     * pendientes (siempre las más antiguas, consecutivas) de un crédito
+     * diario, cada una por su saldo restante + mora. Lo consume tanto el
+     * endpoint de preview como pagarCuotas().
+     *
+     * @return array{cuotas: list<array{numero_cuota: int, fecha_vencimiento: string, monto_total: string, mora: string, abono: string, saldo_restante: string, completa: bool}>, monto_cuotas: string, mora: string, total: string, vuelto: string, es_ultima_cuota: bool}
      */
-    public function pagarCuotasDiario(Credito $credito, User $actor, int $numeroCuotas, string $montoPagado, string $medio, ?UploadedFile $comprobante): Credito
+    public function calcularMontoPagoCuotas(Credito $credito, int $numeroCuotas): array
     {
-        $calculo = $this->calcularMontoPagoCuotasDiario($credito, $numeroCuotas);
+        [$pendientes, $configuracion] = $this->cuotasPendientesParaPago($credito);
 
-        if (bccomp($montoPagado, $calculo['total'], 2) < 0) {
-            throw new DomainException("El monto pagado ({$montoPagado}) es menor al total de las cuotas + mora a pagar calculado ({$calculo['total']}).");
+        if ($numeroCuotas > $pendientes->count()) {
+            throw new DomainException("Solo quedan {$pendientes->count()} cuota(s) pendiente(s), no se pueden pagar {$numeroCuotas}.");
         }
 
-        $vuelto = bcsub($montoPagado, $calculo['total'], 2);
-        $numerosCuota = array_column($calculo['cuotas'], 'numero_cuota');
+        $detalle = $pendientes->take($numeroCuotas)->map(function (CuotaCredito $cuota) use ($configuracion): array {
+            $saldo = bcsub((string) $cuota->monto_total, (string) $cuota->monto_abonado, 2);
+
+            return $this->detalleAplicacionCuota($cuota, $this->moraDeCuota($cuota, $configuracion), $saldo);
+        })->values()->all();
+
+        return $this->resumenAplicacion($detalle, '0.00', $pendientes->count());
+    }
+
+    /**
+     * Amortización de un crédito diario: reparte `$monto` sobre las cuotas
+     * pendientes de la más antigua a la más nueva — primero la mora vigente
+     * de cada cuota, luego su saldo. Las que el monto alcanza a cubrir
+     * quedan pagadas; si sobra una fracción, la siguiente cuota queda con un
+     * abono parcial (adelanto). Solo hay `vuelto` cuando el monto supera la
+     * deuda completa del cronograma.
+     *
+     * @return array{cuotas: list<array{numero_cuota: int, fecha_vencimiento: string, monto_total: string, mora: string, abono: string, saldo_restante: string, completa: bool}>, monto_cuotas: string, mora: string, total: string, vuelto: string, es_ultima_cuota: bool}
+     */
+    public function calcularAmortizacion(Credito $credito, string $monto): array
+    {
+        if ($credito->tipo_interes === 'compuesto') {
+            throw new DomainException('Los créditos de interés compuesto solo se pagan por cuotas completas.');
+        }
+
+        [$pendientes, $configuracion] = $this->cuotasPendientesParaPago($credito);
+
+        $restante = $monto;
+        $detalle = [];
+
+        foreach ($pendientes as $cuota) {
+            if (bccomp($restante, '0', 2) <= 0) {
+                break;
+            }
+
+            $mora = $this->moraDeCuota($cuota, $configuracion);
+            $moraAplicada = bccomp($restante, $mora, 2) >= 0 ? $mora : $restante;
+            $restante = bcsub($restante, $moraAplicada, 2);
+
+            $saldo = bcsub((string) $cuota->monto_total, (string) $cuota->monto_abonado, 2);
+            $abono = bccomp($restante, $saldo, 2) >= 0 ? $saldo : $restante;
+            $restante = bcsub($restante, $abono, 2);
+
+            $fila = $this->detalleAplicacionCuota($cuota, $moraAplicada, $abono);
+            $fila['completa'] = $fila['completa'] && bccomp($moraAplicada, $mora, 2) === 0;
+            $detalle[] = $fila;
+        }
+
+        return $this->resumenAplicacion($detalle, $restante, $pendientes->count());
+    }
+
+    /**
+     * Paga un crédito diario dentro del MISMO crédito — a diferencia de
+     * refrendar()/adendar()/pagarCuota(), no encadena un crédito sucesor.
+     * Con `$numeroCuotas` paga esas cuotas más antiguas completas (el
+     * excedente es vuelto); sin él amortiza `$montoPagado` (ver
+     * calcularAmortizacion()), dejando la última cuota tocada con un
+     * abono parcial si el monto no alcanza a cubrirla. Si con este pago ya
+     * no queda ninguna cuota pendiente, el crédito pasa a liquidado igual
+     * que liquidar() (carta de no adeudo, sin acta de devolución).
+     */
+    public function pagarCuotas(Credito $credito, User $actor, ?int $numeroCuotas, string $montoPagado, string $medio, ?UploadedFile $comprobante): Credito
+    {
+        if ($credito->tipo_interes === 'compuesto') {
+            if ($numeroCuotas === null) {
+                throw new DomainException('Los créditos de interés compuesto solo se pagan por cuotas completas: indica cuántas cuotas pagar.');
+            }
+
+            return $this->pagarCuota($credito, $actor, $montoPagado, $medio, $comprobante, $numeroCuotas);
+        }
+
+        if ($numeroCuotas !== null) {
+            $calculo = $this->calcularMontoPagoCuotas($credito, $numeroCuotas);
+
+            if (bccomp($montoPagado, $calculo['total'], 2) < 0) {
+                throw new DomainException("El monto pagado ({$montoPagado}) es menor al total de las cuotas + mora a pagar calculado ({$calculo['total']}).");
+            }
+
+            $calculo['vuelto'] = bcsub($montoPagado, $calculo['total'], 2);
+        } else {
+            $calculo = $this->calcularAmortizacion($credito, $montoPagado);
+        }
+
+        $vuelto = $calculo['vuelto'];
         $ciclo = $this->resolverCicloParaCobro($actor);
         $estadoAnterior = $credito->estado;
         $esUltimaCuota = $calculo['es_ultima_cuota'];
+        $cuotasCompletas = count(array_filter($calculo['cuotas'], fn (array $c): bool => $c['completa']));
 
-        return DB::transaction(function () use ($credito, $actor, $calculo, $numerosCuota, $ciclo, $montoPagado, $medio, $comprobante, $estadoAnterior, $vuelto, $esUltimaCuota): Credito {
+        $esDiario = $credito->tipo_credito === 'diario';
+
+        return DB::transaction(function () use ($credito, $actor, $calculo, $ciclo, $montoPagado, $medio, $comprobante, $estadoAnterior, $vuelto, $esUltimaCuota, $cuotasCompletas, $esDiario): Credito {
             if ($esUltimaCuota) {
-                // Diario no tiene garantía física que devolver — salta
-                // directo a 'liquidado' + carta de no adeudo, sin el paso de
-                // 'liquidado_pendiente' + acta de devolución que usan los
-                // demás tipos (mismo criterio que liquidar()).
-                $credito->update(['estado' => 'liquidado']);
+                // Mismo final que liquidar(): el diario no tiene garantía
+                // física, salta directo a 'liquidado' + carta de no adeudo;
+                // los demás quedan 'liquidado_pendiente' a la espera de la
+                // firma del acta de devolución (ver más abajo).
+                $credito->update(['estado' => $esDiario ? 'liquidado' : 'liquidado_pendiente']);
 
-                $modeloGarantia = $this->tipos->paraCredito($credito)->garantiaModelo();
-                $modeloGarantia::query()->whereIn('id', $this->garantiasDe($credito)->get()->pluck('id'))->update(['estado' => 'recuperado']);
+                if ($esDiario) {
+                    $modeloGarantia = $this->tipos->paraCredito($credito)->garantiaModelo();
+                    $modeloGarantia::query()->whereIn('id', $this->garantiasDe($credito)->get()->pluck('id'))->update(['estado' => 'recuperado']);
 
-                $this->documentos->generarCartaNoAdeudo($credito, $actor);
+                    $this->documentos->generarCartaNoAdeudo($credito, $actor);
+                }
             }
 
-            $cobro = $this->registrarCobroEnCaja($ciclo, $actor, $credito, $montoPagado, $medio, $comprobante, 'Pago de cuotas — crédito diario #'.$credito->id, [
+            $cobro = $this->registrarCobroEnCaja($ciclo, $actor, $credito, $montoPagado, $medio, $comprobante, "Pago de cuotas — crédito {$credito->tipo_credito} #{$credito->id}", [
                 'operacion' => 'pago_cuotas_diario',
                 'credito_estado_anterior' => $estadoAnterior,
                 'interes' => $calculo['monto_cuotas'],
@@ -1526,12 +1717,30 @@ final class CreditoService
                 'vuelto' => $vuelto,
             ]);
 
-            $credito->cuotas()->whereIn('numero_cuota', $numerosCuota)->get()->each(function (CuotaCredito $cuota) use ($cobro, $calculo): void {
-                $moraCuota = collect($calculo['cuotas'])->firstWhere('numero_cuota', $cuota->numero_cuota)['mora'];
-                $cuota->update(['pagada_at' => now(), 'mora_pagada' => $moraCuota, 'cobro_id' => $cobro->id]);
-            });
+            foreach ($calculo['cuotas'] as $fila) {
+                $cuota = $credito->cuotas()->where('numero_cuota', $fila['numero_cuota'])->firstOrFail();
+
+                $cuota->update([
+                    'monto_abonado' => bcadd((string) $cuota->monto_abonado, $fila['abono'], 2),
+                    'mora_pagada' => bcadd((string) ($cuota->mora_pagada ?? 0), $fila['mora'], 2),
+                    'pagada_at' => $fila['completa'] ? now() : $cuota->pagada_at,
+                    'cobro_id' => $fila['completa'] ? $cobro->id : $cuota->cobro_id,
+                ]);
+
+                $cobro->abonosCuotas()->create([
+                    'cuota_credito_id' => $cuota->id,
+                    'monto_mora' => $fila['mora'],
+                    'monto_cuota' => $fila['abono'],
+                    'completa' => $fila['completa'],
+                ]);
+            }
+
+            if ($esUltimaCuota && ! $esDiario) {
+                $this->documentos->generarDevolucion($credito->fresh(['bienes', 'vehiculos', 'inmuebles']), $actor);
+            }
 
             $this->documentos->generarVoucherPago($credito, $actor, [
+                'cobro_id' => $cobro->id,
                 'operacion' => 'pago_cuotas_diario',
                 'monto_pagado' => $montoPagado,
                 'medio' => $medio,
@@ -1543,16 +1752,16 @@ final class CreditoService
                 'fecha' => now()->toDateString(),
             ]);
 
-            $credito = $credito->fresh(['garantiasDiarias']);
+            $credito = $credito->fresh($esDiario ? ['garantiasDiarias'] : ['documentos']);
             $this->notificar($credito);
 
             if (! $esUltimaCuota) {
-                $this->notificaciones->enviar(collect([$credito->registradoPor]), new CreditoCuotasPagadasDiarioNotification($credito, count($calculo['cuotas'])));
-            } else {
+                $this->notificaciones->enviar(collect([$credito->registradoPor]), new CreditoCuotasPagadasDiarioNotification($credito, $cuotasCompletas));
+            } elseif ($esDiario) {
                 $this->notificaciones->enviar(collect([$credito->registradoPor]), new CreditoLiquidadoNotification($credito));
             }
 
-            return $credito;
+            return $this->conCobro($credito, $cobro);
         });
     }
 
@@ -1574,6 +1783,8 @@ final class CreditoService
         ?string $descuento = null,
         ?string $motivoDescuento = null,
     ): Credito {
+        $this->asegurarSinCuotasPagadas($credito, 'refinanciar');
+
         if ($credito->tipo_credito !== 'hipotecario') {
             throw new DomainException('Solo los créditos hipotecarios pueden refinanciarse.');
         }
@@ -1627,7 +1838,7 @@ final class CreditoService
             $this->documentos->generarExpediente($nuevo, $actor);
 
             $nuevo = $nuevo->fresh(['inmuebles']);
-            $this->registrarCobroRefinanciamiento($actor, $credito, $montoPagado, $medio, $comprobante, [
+            $cobro = $this->registrarCobroRefinanciamiento($actor, $credito, $montoPagado, $medio, $comprobante, [
                 'interes' => $liquidacion['interes'],
                 'credito_estado_anterior' => $estadoAnterior,
                 'mora' => $liquidacion['mora'],
@@ -1637,6 +1848,7 @@ final class CreditoService
             ]);
 
             $this->documentos->generarVoucherPago($credito, $actor, [
+                'cobro_id' => $cobro->id,
                 'operacion' => 'refinanciamiento',
                 'monto_pagado' => $montoPagado,
                 'medio' => $medio,
@@ -1656,7 +1868,7 @@ final class CreditoService
             $this->notificar($nuevo);
             $this->notificaciones->enviar(collect([$nuevo->registradoPor]), new CreditoRefinanciadoNotification($nuevo));
 
-            return $nuevo;
+            return $this->conCobro($nuevo, $cobro);
         });
     }
 
@@ -1689,13 +1901,13 @@ final class CreditoService
             // invisible) — a diferencia de los demás tipos, salta directo a
             // 'liquidado' + carta de no adeudo, sin pasar por
             // 'liquidado_pendiente' ni pedir firma de un acta de devolución
-            // que no aplica (mismo criterio que pagarCuotasDiario()).
+            // que no aplica (mismo criterio que pagarCuotas()).
             $esDiario = $credito->tipo_credito === 'diario';
 
             $credito->update(['estado' => $esDiario ? 'liquidado' : 'liquidado_pendiente']);
 
             $credito = $credito->fresh(['bienes']);
-            $this->registrarCobroEnCaja($ciclo, $actor, $credito, $montoPagado, $medio, $comprobante, "Liquidación de crédito prendario #{$credito->id}", [
+            $cobro = $this->registrarCobroEnCaja($ciclo, $actor, $credito, $montoPagado, $medio, $comprobante, "Liquidación de crédito prendario #{$credito->id}", [
                 'operacion' => 'liquidacion',
                 'credito_estado_anterior' => $estadoAnterior,
                 'interes' => $liquidacion['interes'],
@@ -1714,6 +1926,7 @@ final class CreditoService
             }
 
             $this->documentos->generarVoucherPago($credito, $actor, [
+                'cobro_id' => $cobro->id,
                 'operacion' => 'liquidacion',
                 'monto_pagado' => $montoPagado,
                 'medio' => $medio,
@@ -1735,7 +1948,7 @@ final class CreditoService
                 $this->notificaciones->enviar(collect([$credito->registradoPor]), new CreditoLiquidadoNotification($credito));
             }
 
-            return $credito->fresh(['bienes', 'documentos']);
+            return $this->conCobro($credito->fresh(['bienes', 'documentos']), $cobro);
         });
     }
 
@@ -1776,7 +1989,7 @@ final class CreditoService
 
         return DB::transaction(function () use ($cobro, $credito, $actor, $motivo): Credito {
             if ($cobro->operacion === 'pago_cuotas_diario') {
-                $this->deshacerPagoCuotasDiario($cobro, $credito);
+                $this->deshacerPagoCuotas($cobro, $credito);
             } elseif ($cobro->credito_sucesor_id) {
                 $this->deshacerSucesorDeCobro($cobro, $credito);
             } else {
@@ -1880,11 +2093,19 @@ final class CreditoService
      * deben tener (siempre se pagan consecutivas desde la más antigua). Si
      * este cobro pagó la última cuota, el crédito ya saltó directo a
      * 'liquidado' (sin 'liquidado_pendiente' de por medio, ver
-     * pagarCuotasDiario()) — igual que a los demás tipos una vez liquidados,
+     * pagarCuotas()) — igual que a los demás tipos una vez liquidados,
      * ya no se puede deshacer.
      */
-    private function deshacerPagoCuotasDiario(Cobro $cobro, Credito $credito): void
+    private function deshacerPagoCuotas(Cobro $cobro, Credito $credito): void
     {
+        $abonos = $cobro->abonosCuotas()->with('cuota')->get();
+
+        if ($abonos->isNotEmpty()) {
+            $this->deshacerAbonosCuotas($cobro, $credito, $abonos);
+
+            return;
+        }
+
         $maximoPagadoPorEsteCobro = (int) ($cobro->cuotasPagadas()->max('numero_cuota') ?? 0);
 
         $hayCuotaPosteriorPagada = $credito->cuotas()
@@ -1905,6 +2126,47 @@ final class CreditoService
             'mora_pagada' => null,
             'cobro_id' => null,
         ]);
+    }
+
+    /**
+     * Revierte un cobro de diario registrado con detalle por cuota
+     * (CobroCuotaAbono): resta lo abonado y la mora saldada a cada cuota y
+     * reabre las que este cobro completó. Se rechaza si un cobro posterior
+     * ya tocó esa cuota o una más nueva — anular dejaría el cronograma con
+     * un hueco.
+     *
+     * @param  Collection<int, CobroCuotaAbono>  $abonos
+     */
+    private function deshacerAbonosCuotas(Cobro $cobro, Credito $credito, Collection $abonos): void
+    {
+        if ($credito->estado === 'liquidado') {
+            throw new DomainException('No se puede anular: este crédito ya quedó liquidado (carta de no adeudo generada).');
+        }
+
+        $primeraCuotaTocada = (int) $abonos->min(fn (CobroCuotaAbono $abono): int => $abono->cuota->numero_cuota);
+
+        $hayCobroPosterior = CobroCuotaAbono::query()
+            ->where('cobro_id', '>', $cobro->id)
+            ->whereHas('cuota', fn ($query) => $query->where('credito_id', $credito->id)->where('numero_cuota', '>=', $primeraCuotaTocada))
+            ->exists();
+
+        if ($hayCobroPosterior) {
+            throw new DomainException('No se puede anular: ya se pagó una cuota posterior con otro cobro.');
+        }
+
+        foreach ($abonos as $abono) {
+            $cuota = $abono->cuota;
+            $moraRestante = bcsub((string) ($cuota->mora_pagada ?? 0), (string) $abono->monto_mora, 2);
+
+            $cuota->update([
+                'monto_abonado' => bcsub((string) $cuota->monto_abonado, (string) $abono->monto_cuota, 2),
+                'mora_pagada' => bccomp($moraRestante, '0', 2) > 0 ? $moraRestante : null,
+                'pagada_at' => $abono->completa ? null : $cuota->pagada_at,
+                'cobro_id' => $abono->completa ? null : $cuota->cobro_id,
+            ]);
+        }
+
+        $cobro->abonosCuotas()->delete();
     }
 
     /**
@@ -1972,7 +2234,26 @@ final class CreditoService
     }
 
     /**
-     * @return array{capital: string, interes: string, mora: string, dias_mora: int, total: string, dias_transcurridos: int, dias_minimo: int, dias_cobrados: int, tasa_interes: string}
+     * Capital e interés de las cuotas ya pagadas dentro del crédito, y lo
+     * abonado parcialmente a las que siguen pendientes — todo en 0 mientras
+     * no se haya pagado por cuotas (los compuestos pagan por sucesor y nunca
+     * tienen cuotas pagadas aquí).
+     *
+     * @return array{capital: string, interes: string, abonos: string}
+     */
+    private function cubiertoPorCuotasPagadas(Credito $credito): array
+    {
+        $pagadas = $credito->cuotas()->pagadas();
+
+        return [
+            'capital' => bcadd((string) $pagadas->sum('monto_capital'), '0', 2),
+            'interes' => bcadd((string) $pagadas->sum('monto_interes'), '0', 2),
+            'abonos' => bcadd((string) $credito->cuotas()->pendientes()->sum('monto_abonado'), '0', 2),
+        ];
+    }
+
+    /**
+     * @return array{capital: string, interes: string, abonos_cuotas: string, mora: string, dias_mora: int, total: string, dias_transcurridos: int, dias_minimo: int, dias_cobrados: int, tasa_interes: string}
      */
     public function calcularMontoLiquidacion(Credito $credito): array
     {
@@ -1982,11 +2263,20 @@ final class CreditoService
         // vence — calcularMora() (mora "a nivel crédito") subestimaría la
         // mora real de un diario con cuotas intermedias ya atrasadas.
         $mora = $credito->tipo_credito === 'diario' ? $this->moraPendienteDiario($credito) : $this->calcularMora($credito);
-        $total = bcadd(bcadd((string) $credito->monto_prestamo, $prorateo['interes'], 2), $mora, 2);
+
+        // Lo que ya cubrieron las cuotas pagadas dentro del mismo crédito
+        // (pago por cuotas) no se vuelve a cobrar: se descuenta el capital y
+        // el interés de esas cuotas, y los abonos parciales a las pendientes.
+        $cubierto = $this->cubiertoPorCuotasPagadas($credito);
+        $capital = bcsub((string) $credito->monto_prestamo, $cubierto['capital'], 2);
+        $interesRestante = bcsub($prorateo['interes'], $cubierto['interes'], 2);
+        $interes = bccomp($interesRestante, '0', 2) > 0 ? $interesRestante : '0.00';
+        $total = bcsub(bcadd(bcadd($capital, $interes, 2), $mora, 2), $cubierto['abonos'], 2);
 
         return [
-            'capital' => (string) $credito->monto_prestamo,
-            'interes' => $prorateo['interes'],
+            'capital' => $capital,
+            'interes' => $interes,
+            'abonos_cuotas' => $cubierto['abonos'],
             'mora' => $mora,
             'dias_mora' => $credito->dias_en_mora,
             'total' => $total,
@@ -2446,7 +2736,7 @@ final class CreditoService
         string $medio,
         ?UploadedFile $comprobante,
         array $detalleCobro,
-    ): void {
+    ): Cobro {
         $ciclo = null;
         $movimiento = null;
 
@@ -2472,7 +2762,7 @@ final class CreditoService
             }
         }
 
-        Cobro::query()->create([
+        $cobro = Cobro::query()->create([
             'empresa_id' => $credito->empresa_id,
             'cliente_id' => $credito->cliente_id,
             'credito_id' => $credito->id,
@@ -2494,5 +2784,19 @@ final class CreditoService
         if ($ciclo) {
             CajaActualizada::dispatch($ciclo->caja, $ciclo->fresh()->saldoActual());
         }
+
+        return $cobro;
+    }
+
+    /**
+     * Deja el id del cobro en el crédito que devuelve cada operación de
+     * pago, para que el cliente abra su voucher (GET /cobros/{id}/voucher)
+     * apenas termina de cobrar.
+     */
+    private function conCobro(Credito $credito, Cobro $cobro): Credito
+    {
+        $credito->setAttribute('cobro_id', $cobro->id);
+
+        return $credito;
     }
 }

@@ -82,6 +82,17 @@ class BovedaPolicy
             && $user->empresa_id === $boveda->empresa_id;
     }
 
+    /**
+     * Espejo de inyectar(): retiro externo de la principal o devolución a la
+     * principal desde una bóveda de agencia de la misma empresa.
+     */
+    public function retirar(User $user, Boveda $boveda): bool
+    {
+        return $user->can('bovedas.retirar')
+            && $user->hasRole('administrador_general')
+            && $user->empresa_id === $boveda->empresa_id;
+    }
+
     /** Mismo alcance que cerrar(): administrador_general también reabre la de cualquier agencia. */
     public function reabrir(User $user, Boveda $boveda): bool
     {

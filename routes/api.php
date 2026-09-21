@@ -99,6 +99,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('caja/cerrar', [CajaController::class, 'cerrar'])->name('caja.cerrar');
     Route::get('caja/cierre/resumen', [CajaController::class, 'resumenCierre'])->name('caja.cierre.resumen');
     Route::get('caja/movimientos', [CajaController::class, 'movimientos'])->name('caja.movimientos.index');
+    Route::get('caja/movimientos/usuarios', [CajaController::class, 'usuariosMovimientos'])->name('caja.movimientos.usuarios');
     Route::post('caja/movimientos', [CajaController::class, 'registrarMovimiento'])->name('caja.movimientos.registrar');
     Route::apiResource('cajas', CajaController::class)->only(['index', 'show']);
     Route::post('cajas/{caja}/cerrar-forzado', [CajaController::class, 'cerrarForzado'])->name('cajas.cerrar-forzado');
@@ -111,6 +112,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('bovedas/{boveda}/cerrar-forzado', [BovedaController::class, 'cerrarForzado'])->name('bovedas.cerrar-forzado');
     Route::post('bovedas/{boveda}/aperturar', [BovedaController::class, 'aperturar'])->name('bovedas.aperturar');
     Route::post('bovedas/{boveda}/inyectar', [BovedaController::class, 'inyectar'])->name('bovedas.inyectar');
+    Route::post('bovedas/{boveda}/retirar', [BovedaController::class, 'retirar'])->name('bovedas.retirar');
     Route::get('bovedas/{boveda}/inyecciones', [BovedaController::class, 'inyecciones'])->name('bovedas.inyecciones');
     Route::delete('bovedas/{boveda}/inyecciones/{movimiento}', [BovedaController::class, 'eliminarInyeccion'])->name('bovedas.inyecciones.eliminar');
     Route::post('bovedas/{boveda}/reabrir', [BovedaController::class, 'reabrir'])->name('bovedas.reabrir');
@@ -153,8 +155,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('creditos-prendarios/{credito}/desembolsar', [CreditoController::class, 'desembolsar'])->name('creditos-prendarios.desembolsar');
     Route::post('creditos-prendarios/{credito}/refrendar', [CreditoController::class, 'refrendar'])->name('creditos-prendarios.refrendar');
     Route::post('creditos-prendarios/{credito}/pagar-cuota', [CreditoController::class, 'pagarCuota'])->name('creditos-prendarios.pagar-cuota');
-    Route::post('creditos-prendarios/{credito}/pagar-cuotas-preview', [CreditoController::class, 'pagarCuotasDiarioPreview'])->name('creditos-prendarios.pagar-cuotas-preview');
-    Route::post('creditos-prendarios/{credito}/pagar-cuotas', [CreditoController::class, 'pagarCuotasDiario'])->name('creditos-prendarios.pagar-cuotas');
+    Route::post('creditos-prendarios/{credito}/pagar-cuotas-preview', [CreditoController::class, 'pagarCuotasPreview'])->name('creditos-prendarios.pagar-cuotas-preview');
+    Route::post('creditos-prendarios/{credito}/pagar-cuotas', [CreditoController::class, 'pagarCuotas'])->name('creditos-prendarios.pagar-cuotas');
     Route::post('creditos-prendarios/{credito}/liquidar', [CreditoController::class, 'liquidar'])->name('creditos-prendarios.liquidar');
     Route::post('creditos-prendarios/{credito}/adendar', [CreditoController::class, 'adendar'])->name('creditos-prendarios.adendar');
     Route::post('creditos-prendarios/{credito}/refinanciar', [CreditoController::class, 'refinanciar'])->name('creditos-prendarios.refinanciar');
@@ -184,6 +186,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('cobros/pdf', [CobroController::class, 'pdf'])->name('cobros.pdf');
     Route::get('cobros/excel', [CobroController::class, 'excel'])->name('cobros.excel');
     Route::get('cobros/creditos-pendientes/{cliente}', [CobroController::class, 'creditosPendientes'])->name('cobros.creditos-pendientes');
+    Route::get('cobros/{cobro}/voucher', [CobroController::class, 'voucher'])->name('cobros.voucher');
+    Route::get('cobros/{cobro}/voucher/texto', [CobroController::class, 'voucherTexto'])->name('cobros.voucher.texto');
     Route::post('cobros/{cobro}/anular', [CobroController::class, 'anular'])->name('cobros.anular');
 
     Route::get('reportes/movimientos-dinero', [ReporteMovimientosController::class, 'movimientosDinero'])->name('reportes.movimientos-dinero');
