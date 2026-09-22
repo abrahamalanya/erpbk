@@ -5,6 +5,7 @@ namespace App\Modules\Caja\Models;
 use App\Modules\Credito\Models\Credito;
 use App\Modules\Sistemas\Models\Concepto;
 use App\Modules\Usuario\Models\User;
+use App\Modules\Venta\Models\Venta;
 use App\Nucleo\Concerns\BelongsToTenant;
 use Database\Factories\CajaMovimientoFactory;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
@@ -33,6 +34,7 @@ class CajaMovimiento extends Model
         'descripcion',
         'concepto_id',
         'billetaje_id',
+        'venta_id',
         'credito_id',
         'registrado_por',
         'fecha_caja',
@@ -72,6 +74,14 @@ class CajaMovimiento extends Model
     public function credito(): BelongsTo
     {
         return $this->belongsTo(Credito::class);
+    }
+
+    /**
+     * Solo se setea en un ingreso de una venta de tienda (ver VentaService::registrarPago()).
+     */
+    public function venta(): BelongsTo
+    {
+        return $this->belongsTo(Venta::class);
     }
 
     public function registradoPor(): BelongsTo

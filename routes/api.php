@@ -31,12 +31,17 @@ use App\Modules\Sistemas\Http\Controllers\ModuloController;
 use App\Modules\Sistemas\Http\Controllers\NotificacionController;
 use App\Modules\Sistemas\Http\Controllers\PermissionController;
 use App\Modules\Sistemas\Http\Controllers\RoleController;
+use App\Modules\Tienda\Http\Controllers\InteresArticuloAdminController;
 use App\Modules\Tienda\Http\Controllers\TiendaArticuloController;
 use App\Modules\Tienda\Http\Controllers\TiendaController;
+use App\Modules\Tienda\Http\Controllers\TiendaProductoController;
 use App\Modules\Ubicacion\Http\Controllers\UbicacionAsesorController;
 use App\Modules\Ubigeo\Http\Controllers\UbigeoController;
 use App\Modules\Usuario\Http\Controllers\UserController;
 use App\Modules\Usuario\Http\Controllers\UsuarioModuloController;
+use App\Modules\Venta\Http\Controllers\CatalogoVentaController;
+use App\Modules\Venta\Http\Controllers\ConfiguracionVentaController;
+use App\Modules\Venta\Http\Controllers\VentaController;
 use App\Nucleo\Http\Controllers\BancoController;
 use Illuminate\Support\Facades\Route;
 
@@ -179,6 +184,27 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('configuraciones-credito-prendario', [ConfiguracionCreditoController::class, 'index'])->name('configuraciones-credito-prendario.index');
     Route::put('configuraciones-credito-prendario', [ConfiguracionCreditoController::class, 'update'])->name('configuraciones-credito-prendario.update');
     Route::delete('configuraciones-credito-prendario/{configuracion}', [ConfiguracionCreditoController::class, 'destroy'])->name('configuraciones-credito-prendario.destroy');
+
+    Route::get('configuraciones-venta', [ConfiguracionVentaController::class, 'index'])->name('configuraciones-venta.index');
+    Route::put('configuraciones-venta', [ConfiguracionVentaController::class, 'update'])->name('configuraciones-venta.update');
+    Route::delete('configuraciones-venta/{configuracion}', [ConfiguracionVentaController::class, 'destroy'])->name('configuraciones-venta.destroy');
+
+    Route::get('ventas/catalogo', [CatalogoVentaController::class, 'index'])->name('ventas.catalogo');
+    Route::get('ventas', [VentaController::class, 'index'])->name('ventas.index');
+    Route::post('ventas', [VentaController::class, 'store'])->name('ventas.store');
+    Route::get('ventas/{venta}', [VentaController::class, 'show'])->name('ventas.show');
+    Route::post('ventas/{venta}/cuotas/{cuota}/pagar', [VentaController::class, 'pagarCuota'])->name('ventas.cuotas.pagar');
+    Route::post('ventas/{venta}/abonar', [VentaController::class, 'abonar'])->name('ventas.abonar');
+    Route::post('ventas/{venta}/cancelar', [VentaController::class, 'cancelar'])->name('ventas.cancelar');
+    Route::get('ventas/{venta}/documentos/{documento}', [VentaController::class, 'documento'])->name('ventas.documentos.ver');
+
+    Route::get('tienda-solicitudes', [InteresArticuloAdminController::class, 'index'])->name('tienda-solicitudes.index');
+    Route::post('tienda-solicitudes/{interes}/atender', [InteresArticuloAdminController::class, 'atender'])->name('tienda-solicitudes.atender');
+    Route::delete('tienda-solicitudes/{interes}', [InteresArticuloAdminController::class, 'destroy'])->name('tienda-solicitudes.destroy');
+
+    Route::get('tienda-productos', [TiendaProductoController::class, 'index'])->name('tienda-productos.index');
+    Route::patch('tienda-productos/{tipo}/{id}', [TiendaProductoController::class, 'update'])->name('tienda-productos.update')->whereIn('tipo', ['bien', 'vehiculo', 'inmueble'])->whereNumber('id');
+    Route::post('tienda-productos/{tipo}/{id}/retirar', [TiendaProductoController::class, 'retirar'])->name('tienda-productos.retirar')->whereIn('tipo', ['bien', 'vehiculo', 'inmueble'])->whereNumber('id');
 
     Route::apiResource('simulaciones-credito', SimuladorController::class)->only(['index', 'store', 'show', 'destroy'])->parameters(['simulaciones-credito' => 'simulacion']);
 

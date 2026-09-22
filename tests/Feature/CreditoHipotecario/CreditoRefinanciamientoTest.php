@@ -72,6 +72,19 @@ it('refinancia el 100% de la deuda (capital + interés + mora) sin exigir caja a
         ->and($cobro->operacion)->toBe('refinanciamiento');
 });
 
+it('preserves the original numero_cuotas on the pendiente successor', function () {
+    $credito = creditoHipotecarioVencido($this);
+    $credito->update(['numero_cuotas' => 12]);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $response = $this->postJson("/api/creditos-prendarios/{$credito->id}/refinanciar", [
+        'medio' => 'efectivo',
+    ])->assertCreated();
+
+    expect($response->json('data.numero_cuotas'))->toBe(12);
+});
+
 it('permite pagar una parte ahora y refinanciar solo la diferencia, exigiendo caja aperturada', function () {
     $credito = creditoHipotecarioVencido($this);
 

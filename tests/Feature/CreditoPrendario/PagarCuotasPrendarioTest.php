@@ -64,7 +64,7 @@ function desembolsarPrendarioConCuotas($test, int $numeroCuotas, int $monto = 12
     return $creditoId;
 }
 
-it('offers pago por cuotas only when the crédito has more than one cuota to pay', function () {
+it('offers pago por cuotas even with just one cuota to pay, as a pago a cuenta that stays on the same crédito', function () {
     $conCuotas = desembolsarPrendarioConCuotas($this, 4);
 
     $this->getJson("/api/creditos-prendarios/{$conCuotas}")
@@ -78,13 +78,22 @@ it('offers pago por cuotas only when the crédito has more than one cuota to pay
     $this->bien = $bien2;
     $unaCuota = desembolsarPrendarioConCuotas($this, 1);
 
+    // Con una sola cuota, refrendar también sigue disponible (deja elegir);
+    // pero pagar-cuotas ya no está bloqueado — un pago a cuenta parcial se
+    // queda en el mismo crédito, sin generar un sucesor.
     $this->getJson("/api/creditos-prendarios/{$unaCuota}")
         ->assertSuccessful()
-        ->assertJsonPath('data.permite_pago_cuotas', false)
-        ->assertJsonMissingPath('data.monto_pago_cuotas_sugerido');
+        ->assertJsonPath('data.permite_pago_cuotas', true)
+        ->assertJsonPath('data.permite_refrendo', true);
 
-    $this->postJson("/api/creditos-prendarios/{$unaCuota}/pagar-cuotas", ['numero_cuotas' => 1, 'monto_pagado' => 2000, 'medio' => 'efectivo'])
-        ->assertUnprocessable();
+    $this->postJson("/api/creditos-prendarios/{$unaCuota}/pagar-cuotas", ['monto_pagado' => '100', 'medio' => 'efectivo'])
+        ->assertSuccessful()
+        ->assertJsonPath('data.estado', 'activo')
+        ->assertJsonPath('data.id', $unaCuota);
+
+    $cuota = Credito::find($unaCuota)->cuotas()->first();
+    expect((string) $cuota->monto_abonado)->toBe('100.00')
+        ->and($cuota->pagada_at)->toBeNull();
 });
 
 it('pays N cuotas inside the same crédito without creating a sucesor', function () {

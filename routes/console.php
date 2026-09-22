@@ -10,3 +10,4 @@ Artisan::command('inspire', function () {
 
 Schedule::command('creditos-prendarios:actualizar-estados')->daily();
 Schedule::command('cajas:cerrar-automatico')->daily();
+Schedule::command('ventas:cancelar-apartados-vencidos')->daily();

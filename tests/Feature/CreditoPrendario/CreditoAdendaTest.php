@@ -106,6 +106,24 @@ it('lets an asesor adendar collecting only the interest, keeping the current tas
         ->and($response->json('data.tipo_cuota'))->toBe('mensual');
 });
 
+it('preserves the original numero_cuotas on the pendiente successor', function () {
+    Storage::fake('public');
+
+    $original = Credito::factory()->paraBien($this->bien)
+        ->activo()
+        ->create(['registrado_por' => $this->asesor->id, 'tipo_cuota' => 'mensual', 'numero_cuotas' => 6]);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $sugerido = $this->getJson("/api/creditos-prendarios/{$original->id}")->json('data.monto_refrendo_sugerido.total');
+    $response = $this->postJson("/api/creditos-prendarios/{$original->id}/adendar", [
+        'monto_pagado' => $sugerido,
+        'medio' => 'efectivo',
+    ])->assertCreated();
+
+    expect($response->json('data.numero_cuotas'))->toBe(6);
+});
+
 it('denies an asesor from setting a nueva tasa/tipo_cuota at adendar time (needs creditos_prendarios.editar)', function () {
     $original = Credito::factory()->paraBien($this->bien)
         ->activo()

@@ -47,6 +47,7 @@ class Inmueble extends Model
         'observacion',
         'valorizacion',
         'precio_venta',
+        'precio_oferta',
         'puntaje',
         'foto_cliente_producto_path',
         'video_path',
@@ -69,6 +70,7 @@ class Inmueble extends Model
             'area_construida' => 'decimal:2',
             'valorizacion' => 'decimal:2',
             'precio_venta' => 'decimal:2',
+            'precio_oferta' => 'decimal:2',
         ];
     }
 

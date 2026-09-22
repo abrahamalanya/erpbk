@@ -47,6 +47,7 @@ class Vehiculo extends Model
         'observacion',
         'valorizacion',
         'precio_venta',
+        'precio_oferta',
         'puntaje',
         'foto_cliente_producto_path',
         'video_path',
@@ -70,6 +71,7 @@ class Vehiculo extends Model
             'anio' => 'integer',
             'valorizacion' => 'decimal:2',
             'precio_venta' => 'decimal:2',
+            'precio_oferta' => 'decimal:2',
         ];
     }
 

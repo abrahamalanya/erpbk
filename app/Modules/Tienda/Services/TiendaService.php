@@ -7,6 +7,7 @@ use App\Modules\CreditoPrendario\Models\Bien;
 use App\Modules\CreditoVehicular\Models\Vehiculo;
 use App\Modules\Tienda\Models\InteresArticulo;
 use App\Modules\Usuario\Models\User;
+use DomainException;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
@@ -83,6 +84,74 @@ final class TiendaService
     }
 
     /**
+     * Como resolver(), pero sin filtrar por estado — lo usa el lado admin
+     * (TiendaProductoController) para poder editar/retirar un artículo sin
+     * importar si está publicado ahora mismo.
+     */
+    public function resolverCualquiera(string $tipo, int $id): ?Model
+    {
+        $modelo = self::ARTICULOS[$tipo] ?? null;
+
+        if ($modelo === null) {
+            return null;
+        }
+
+        return $modelo::query()
+            ->with(['fotos', 'agencia:id,empresa_id,nombre', 'empresa:id,nombre'])
+            ->find($id);
+    }
+
+    /**
+     * Edita el precio_venta / precio_oferta / estado de un artículo de
+     * tienda. Solo aplica a artículos que están (o estuvieron) publicados —
+     * no a garantías que siguen respaldando un crédito activo.
+     *
+     * @param  array<string, mixed>  $datos
+     */
+    public function actualizar(Model $articulo, array $datos): Model
+    {
+        $this->asegurarEsArticuloDeTienda($articulo);
+
+        if (isset($datos['estado']) && ! in_array($datos['estado'], ['disponible_venta', 'retirado_venta'], true)) {
+            throw new DomainException("Estado de tienda inválido: {$datos['estado']}");
+        }
+
+        $payload = array_intersect_key($datos, array_flip(['precio_venta', 'precio_oferta', 'estado']));
+
+        $precioVentaFinal = $payload['precio_venta'] ?? $articulo->precio_venta;
+        $precioOfertaFinal = array_key_exists('precio_oferta', $payload) ? $payload['precio_oferta'] : $articulo->precio_oferta;
+
+        if ($precioOfertaFinal !== null && bccomp((string) $precioOfertaFinal, (string) $precioVentaFinal, 2) >= 0) {
+            throw new DomainException('El precio de oferta debe ser menor al precio de venta.');
+        }
+
+        $articulo->update($payload);
+
+        return $articulo->fresh();
+    }
+
+    /**
+     * Quita el artículo de la tienda virtual sin borrar el registro (se
+     * conserva su historial de crédito) — puede volver a publicarse después
+     * con actualizar(estado: disponible_venta).
+     */
+    public function retirar(Model $articulo): Model
+    {
+        $this->asegurarEsArticuloDeTienda($articulo);
+
+        $articulo->update(['estado' => 'retirado_venta']);
+
+        return $articulo->fresh();
+    }
+
+    private function asegurarEsArticuloDeTienda(Model $articulo): void
+    {
+        if (! in_array($articulo->estado, ['disponible_venta', 'retirado_venta'], true)) {
+            throw new DomainException('Este artículo no está publicado en la tienda.');
+        }
+    }
+
+    /**
      * @param  array<string, mixed>  $datos
      */
     public function registrarInteres(Model $articulo, array $datos): InteresArticulo
@@ -113,11 +182,16 @@ final class TiendaService
         $base = [
             'id' => $articulo->id,
             'articulo_tipo' => $articulo->getMorphClass(),
+            // Inofensivo en el storefront público (ahí siempre es
+            // disponible_venta); lo usa el lado admin (TiendaProductosPage)
+            // para distinguir publicado de retirado.
+            'estado' => $articulo->estado,
             'nombre' => $articulo->nombre,
             'marca' => $articulo->marca,
             'modelo' => $articulo->modelo,
             'valorizacion' => $articulo->valorizacion,
             'precio_venta' => $articulo->precio_venta,
+            'precio_oferta' => $articulo->precio_oferta,
             'puntaje' => $articulo->puntaje,
             'foto_cliente_producto_url' => $articulo->foto_cliente_producto_url,
             'video_url' => $articulo->video_url,
@@ -160,5 +234,13 @@ final class TiendaService
     public function tiposDisponibles(): array
     {
         return array_keys(self::ARTICULOS);
+    }
+
+    /**
+     * @return class-string<Model>|null
+     */
+    public function modeloDe(string $tipo): ?string
+    {
+        return self::ARTICULOS[$tipo] ?? null;
     }
 }

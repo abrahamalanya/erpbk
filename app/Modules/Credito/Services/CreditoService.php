@@ -650,12 +650,19 @@ final class CreditoService
                 throw new DomainException('Debes aperturar tu caja antes de desembolsar.');
             }
 
-            if (bccomp($credito->monto_prestamo, $ciclo->saldoActual(), 2) > 0) {
-                throw new DomainException('No tienes saldo suficiente en tu caja para desembolsar este crédito.');
-            }
         }
 
         return DB::transaction(function () use ($credito, $actor, $ciclo, $esAdenda, $numeroCuotas, $interes, $fecha): Credito {
+            // Se valida dentro de la transacción y con el ciclo bloqueado para
+            // que dos desembolsos simultáneos no pasen ambos con el mismo saldo.
+            if (! $esAdenda) {
+                CajaCiclo::query()->whereKey($ciclo->id)->lockForUpdate()->first();
+
+                if (bccomp($credito->monto_prestamo, $ciclo->saldoActual(), 2) > 0) {
+                    throw new DomainException('No tienes saldo suficiente en tu caja para desembolsar este crédito.');
+                }
+            }
+
             if ($interes !== null) {
                 $credito->update(['interes' => $interes]);
             }
@@ -1015,7 +1022,12 @@ final class CreditoService
         return DB::transaction(function () use ($credito, $actor, $siguienteNumero, $nuevoCapital, $interes, $mora, $descuento, $motivoDescuento, $abonoCapital, $ciclo, $montoPagado, $medio, $comprobante, $modeloGarantia, $estadoAnterior, $tipo): Credito {
             $credito->update(['estado' => 'refrendado']);
 
-            $n = self::CUOTAS_POR_TIPO[$credito->tipo_cuota];
+            // Conserva el numero_cuotas del crédito original (p. ej. un
+            // vehicular/hipotecario registrado con un cronograma de varias
+            // cuotas) — antes se perdía en cada refrendo, cayendo siempre al
+            // default de 1 cuota del tipo_cuota y bloqueando para siempre el
+            // pago por cuotas / pago a cuenta en el sucesor.
+            $n = $credito->numero_cuotas ?? self::CUOTAS_POR_TIPO[$credito->tipo_cuota];
             $plazoTotal = $this->plazoTotalPara($credito->tipo_credito, $credito->tipo_cuota, $n);
 
             $fechaDesembolso = now()->startOfDay();
@@ -1032,6 +1044,7 @@ final class CreditoService
                 'monto_prestamo' => $nuevoCapital,
                 'interes' => $credito->interes,
                 'tipo_cuota' => $credito->tipo_cuota,
+                'numero_cuotas' => $credito->numero_cuotas,
                 'plazo_dias' => $plazoTotal,
                 'estado' => 'activo',
                 'fecha_desembolso' => $fechaDesembolso->toDateString(),
@@ -1185,6 +1198,12 @@ final class CreditoService
                 // admin las edita después, ya con el crédito pendiente.
                 'interes' => $nuevoInteres ?? $credito->interes,
                 'tipo_cuota' => $nuevoTipoCuota ?? $credito->tipo_cuota,
+                // Conserva el numero_cuotas del crédito original — igual
+                // que refrendar(), así el desembolso del sucesor pendiente no
+                // cae al default de 1 cuota del tipo_cuota (ver
+                // desembolsar()); si el admin cambia tipo_cuota o quiere otro
+                // número, puede indicarlo de nuevo explícitamente al desembolsar.
+                'numero_cuotas' => $credito->numero_cuotas,
                 'plazo_dias' => $configuracion->plazo_dias,
                 'estado' => 'pendiente',
             ]);
@@ -1451,12 +1470,13 @@ final class CreditoService
     }
 
     /**
-     * Si el crédito admite pagarse por cuotas: un diario siempre que tenga
-     * alguna pendiente; los demás solo si tienen más de una cuota por pagar
-     * (con una sola, refrendar/liquidar/pagar cuota ya lo cubren). Un simple
-     * al que ya se le pagó alguna cuota sigue admitiéndolo con la última,
-     * porque refrendar/adendar/refinanciar quedan bloqueados en cuanto hay
-     * cuotas pagadas dentro del mismo crédito.
+     * Si el crédito admite pagarse por cuotas: cualquier tipo de interés
+     * simple (prendario, vehicular, hipotecario simple, diario) lo admite
+     * con solo tener una cuota pendiente — así un abono parcial (pago a
+     * cuenta) queda registrado en el MISMO crédito, sin generar un sucesor
+     * ni un contrato nuevo como sí hace refrendar/adendar. El compuesto
+     * (solo hipotecario) sigue exigiendo más de una cuota pendiente, porque
+     * con una sola ya se cubre con "pagar cuota"/liquidar.
      */
     public function admitePagoPorCuotas(Credito $credito): bool
     {
@@ -1467,9 +1487,8 @@ final class CreditoService
         $pendientes = $credito->cuotas()->pendientes()->count();
 
         return match (true) {
-            $credito->tipo_credito === 'diario' => $pendientes >= 1,
             $credito->tipo_interes === 'compuesto' => $pendientes > 1,
-            default => $pendientes > 1 || ($pendientes === 1 && $credito->cuotas()->pagadas()->exists()),
+            default => $pendientes >= 1,
         };
     }
 
@@ -1823,6 +1842,9 @@ final class CreditoService
                 'interes' => $credito->interes,
                 'tipo_interes' => $credito->tipo_interes,
                 'tipo_cuota' => $credito->tipo_cuota,
+                // Conserva el numero_cuotas del crédito original — mismo
+                // motivo que en refrendar()/adendar().
+                'numero_cuotas' => $credito->numero_cuotas,
                 'plazo_dias' => $configuracion->plazo_dias,
                 'estado' => 'pendiente',
             ]);
@@ -1999,7 +2021,19 @@ final class CreditoService
             $credito->update(['estado' => $cobro->credito_estado_anterior]);
 
             if ($cobro->caja_movimiento_id) {
-                CajaMovimiento::query()->find($cobro->caja_movimiento_id)?->delete();
+                $movimiento = CajaMovimiento::query()->find($cobro->caja_movimiento_id);
+
+                // Anular quita un ingreso de la caja: si el dinero ya se gastó o
+                // desembolsó, el saldo quedaría negativo.
+                if ($movimiento && $movimiento->tipo !== 'egreso' && $cobro->caja_ciclo_id) {
+                    $cicloCobro = CajaCiclo::query()->whereKey($cobro->caja_ciclo_id)->lockForUpdate()->first();
+
+                    if ($cicloCobro && bccomp(bcsub($cicloCobro->saldoActual(), (string) $movimiento->monto, 2), '0', 2) < 0) {
+                        throw new DomainException('No puedes anular este cobro: la caja no tiene saldo suficiente para revertirlo (ya se usó ese dinero).');
+                    }
+                }
+
+                $movimiento?->delete();
             }
 
             $cobro->update([

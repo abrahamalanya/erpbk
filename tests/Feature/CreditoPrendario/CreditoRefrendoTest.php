@@ -57,6 +57,27 @@ it('creates a new chained crédito on refrendo and marks the original as refrend
     expect($tipos)->toEqualCanonicalizing(['contrato', 'declaracion', 'fotos', 'sticker']);
 });
 
+it('preserves the original numero_cuotas on the successor, so pago por cuotas stays available after refrendar', function () {
+    ConfiguracionCredito::factory()->deEmpresa($this->empresa)->create([
+        'plazo_dias' => 30, 'dias_espera_mora' => 15, 'tasa_mora_diaria' => 1, 'max_refrendos' => null, 'max_cuotas' => 12,
+    ]);
+
+    $original = Credito::factory()->paraBien($this->bien)
+        ->activo()
+        ->create(['registrado_por' => $this->asesor->id, 'tipo_cuota' => 'mensual', 'numero_cuotas' => 6]);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $sugerido = $this->getJson("/api/creditos-prendarios/{$original->id}")->json('data.monto_refrendo_sugerido.total');
+    $response = $this->postJson("/api/creditos-prendarios/{$original->id}/refrendar", ['monto_pagado' => $sugerido, 'medio' => 'efectivo'])
+        ->assertCreated();
+
+    expect($response->json('data.numero_cuotas'))->toBe(6);
+
+    $nuevo = Credito::find($response->json('data.id'));
+    expect($nuevo->cuotas()->count())->toBe(6);
+});
+
 it('rejects refrendo once max_refrendos is reached', function () {
     ConfiguracionCredito::factory()->deEmpresa($this->empresa)->create([
         'plazo_dias' => 30, 'dias_espera_mora' => 15, 'tasa_mora_diaria' => 1, 'max_refrendos' => 1,
