@@ -16,9 +16,9 @@ return new class extends Migration
             $table->string('permiso', 100);
             $table->text('motivo');
             $table->foreignId('concedido_por')->nullable()->constrained('users')->nullOnDelete();
-            $table->timestamp('concedido_at');
-            $table->timestamp('expira_at');
-            $table->timestamp('revocado_at')->nullable();
+            $table->dateTime('concedido_at');
+            $table->dateTime('expira_at');
+            $table->dateTime('revocado_at')->nullable();
             $table->foreignId('revocado_por')->nullable()->constrained('users')->nullOnDelete();
             $table->text('motivo_revocacion')->nullable();
             $table->timestamps();
