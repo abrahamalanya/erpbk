@@ -1,6 +1,8 @@
 <?php
 
 use App\Modules\Caja\Models\CajaMovimiento;
+use App\Modules\Cliente\Models\Cliente;
+use App\Modules\Credito\Models\Credito;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Sistemas\Models\Concepto;
@@ -255,9 +257,23 @@ it('filters the movimientos by concepto, usuario, fecha and desembolsos', functi
     $idCombustible = registrarMovimientoComo($otroAsesor, ['tipo' => 'egreso', 'concepto_id' => $otroGasto->id, 'monto' => 22, 'comprobante' => $comprobante()]);
     CajaMovimiento::query()->findOrFail($idUtiles)->update(['fecha_caja' => now()->subDays(10)->toDateString()]);
 
+    $cliente = Cliente::factory()->forAgencia($this->agencia)->create([
+        'nombre' => 'Cliente',
+        'apellido' => 'Desembolso',
+    ]);
+    $credito = Credito::factory()->create([
+        'empresa_id' => $this->empresa->id,
+        'agencia_id' => $this->agencia->id,
+        'cliente_id' => $cliente->id,
+        'registrado_por' => $otroAsesor->id,
+        'estado' => 'activo',
+        'fecha_desembolso' => now()->toDateString(),
+    ]);
+
     $desembolso = CajaMovimiento::query()->create([
         'caja_ciclo_id' => CajaMovimiento::query()->findOrFail($idCombustible)->caja_ciclo_id,
-        'empresa_id' => $this->empresa->id, 'tipo' => 'egreso', 'monto' => 500, 'concepto' => 'Desembolso',
+        'empresa_id' => $this->empresa->id, 'tipo' => 'egreso', 'monto' => 500, 'concepto' => "Desembolso de crédito prendario #{$credito->id}",
+        'credito_id' => $credito->id,
         'registrado_por' => $otroAsesor->id, 'fecha_caja' => now()->toDateString(),
     ]);
 
@@ -266,18 +282,31 @@ it('filters the movimientos by concepto, usuario, fecha and desembolsos', functi
 
     expect($montos(''))->toBe(['11.00', '22.00', '500.00'])
         ->and($montos("&concepto_id={$this->conceptoGasto->id}"))->toBe(['11.00'])
+        ->and($montos('&excluir_desembolsos=1'))->toBe(['11.00', '22.00'])
         ->and($montos("&registrado_por={$otroAsesor->id}"))->toBe(['22.00', '500.00'])
         ->and($montos('&desde='.now()->subDays(2)->toDateString()))->toBe(['22.00', '500.00'])
         ->and($montos('&hasta='.now()->subDays(5)->toDateString()))->toBe(['11.00'])
         ->and($montos('&solo_desembolsos=1'))->toBe(['500.00'])
         ->and($desembolso->id)->not->toBeNull();
+
+    $desembolsoResponse = $this->getJson('/api/caja/movimientos?tipo=egreso&solo_desembolsos=1')
+        ->assertSuccessful();
+
+    expect($desembolsoResponse->json('data.data.0.credito_id'))->toBe($credito->id)
+        ->and($desembolsoResponse->json('data.data.0.credito.codigo'))->toBe($credito->codigo)
+        ->and($desembolsoResponse->json('data.data.0.credito.tipo_credito'))->toBe($credito->tipo_credito)
+        ->and($desembolsoResponse->json('data.data.0.credito.cliente.nombre'))->toBe('Cliente')
+        ->and($desembolsoResponse->json('data.data.0.credito.cliente.apellido'))->toBe('Desembolso');
 });
 
 it('rejects inconsistent movimientos filters', function () {
     Sanctum::actingAs($this->asesor, ['*']);
 
     $this->getJson('/api/caja/movimientos?tipo=ingreso&solo_desembolsos=1')->assertUnprocessable();
+    $this->getJson('/api/caja/movimientos?tipo=ingreso&excluir_desembolsos=1')->assertUnprocessable();
     $this->getJson("/api/caja/movimientos?tipo=egreso&solo_desembolsos=1&concepto_id={$this->conceptoGasto->id}")->assertUnprocessable();
+    $this->getJson('/api/caja/movimientos?tipo=egreso&solo_desembolsos=1&excluir_desembolsos=1')->assertUnprocessable();
+    $this->getJson("/api/caja/movimientos?tipo=egreso&excluir_desembolsos=1&concepto_id={$this->conceptoGasto->id}")->assertUnprocessable();
     $this->getJson('/api/caja/movimientos?tipo=egreso&desde=2026-09-10&hasta=2026-09-01')->assertUnprocessable();
 });
 

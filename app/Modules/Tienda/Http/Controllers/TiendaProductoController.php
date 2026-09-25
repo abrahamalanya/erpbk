@@ -40,9 +40,11 @@ class TiendaProductoController extends Controller
     ) {}
 
     /**
-     * Lista los artículos publicados (disponible_venta) o retirados
-     * (retirado_venta) — a diferencia del catálogo público, incluye los
-     * retirados para poder re-publicarlos.
+     * Lista los artículos publicados (disponible_venta), retirados
+     * (retirado_venta) o ya vendidos (vendida) — a diferencia del catálogo
+     * público, incluye los retirados (para poder re-publicarlos) y los
+     * vendidos (solo como registro histórico, ver TiendaService::datosPublicos()
+     * y TiendaProductosPage.tsx que los marca como "Vendido" sin acciones).
      */
     public function index(Request $request): JsonResponse
     {
@@ -63,7 +65,7 @@ class TiendaProductoController extends Controller
             }
 
             $query = $modelo::query()
-                ->whereIn('estado', ['disponible_venta', 'retirado_venta'])
+                ->whereIn('estado', ['disponible_venta', 'retirado_venta', 'vendida'])
                 ->with(['fotos', 'agencia:id,empresa_id,nombre', 'empresa:id,nombre']);
 
             return $this->hierarchy->visibleQuery($query, $actor)->get();

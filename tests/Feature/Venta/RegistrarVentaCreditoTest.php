@@ -42,6 +42,7 @@ it('registers a crédito sale with a cronograma using the configured default int
         'forma_venta' => 'credito',
         'inicial' => 200,
         'numero_cuotas' => 4,
+        'tipo_cuota' => 'mensual',
         'medio' => 'efectivo',
     ])->assertCreated();
 
@@ -72,6 +73,7 @@ it('allows a 0 interest rate override (venta a crédito sin interés)', function
         'forma_venta' => 'credito',
         'inicial' => 100,
         'numero_cuotas' => 2,
+        'tipo_cuota' => 'mensual',
         'interes' => 0,
         'medio' => 'efectivo',
     ])->assertCreated();
@@ -79,6 +81,45 @@ it('allows a 0 interest rate override (venta a crédito sin interés)', function
     expect($response->json('data.interes'))->toBe('0.00')
         ->and($response->json('data.cuotas.0.monto_interes'))->toBe('0.00')
         ->and($response->json('data.cuotas.0.monto_total'))->toBe('200.00');
+});
+
+it('spaces cuotas by tipo_cuota and prorates the interest to the period length', function () {
+    $cliente = Cliente::factory()->forAgencia($this->agencia)->create();
+    $bien = Bien::factory()->forAgencia($this->agencia)->create(['estado' => 'disponible_venta', 'precio_venta' => 1000]);
+
+    $response = $this->postJson('/api/ventas', [
+        'tipo' => 'bien',
+        'articulo_id' => $bien->id,
+        'cliente_id' => $cliente->id,
+        'forma_venta' => 'credito',
+        'inicial' => 200,
+        'numero_cuotas' => 4,
+        'tipo_cuota' => 'semanal',
+        'medio' => 'efectivo',
+    ])->assertCreated();
+
+    $hoy = now()->startOfDay();
+
+    expect($response->json('data.tipo_cuota'))->toBe('semanal')
+        ->and(substr((string) $response->json('data.cuotas.0.fecha_vencimiento'), 0, 10))->toBe($hoy->copy()->addDays(7)->toDateString())
+        ->and(substr((string) $response->json('data.cuotas.1.fecha_vencimiento'), 0, 10))->toBe($hoy->copy()->addDays(14)->toDateString())
+        // Interés prorrateado a 7 días en vez de 30: 800 * 5% * 7/30 = 9.33.
+        ->and($response->json('data.cuotas.0.monto_interes'))->toBe('9.33');
+});
+
+it('rejects a venta a crédito without a tipo_cuota', function () {
+    $cliente = Cliente::factory()->forAgencia($this->agencia)->create();
+    $bien = Bien::factory()->forAgencia($this->agencia)->create(['estado' => 'disponible_venta', 'precio_venta' => 500]);
+
+    $this->postJson('/api/ventas', [
+        'tipo' => 'bien',
+        'articulo_id' => $bien->id,
+        'cliente_id' => $cliente->id,
+        'forma_venta' => 'credito',
+        'inicial' => 100,
+        'numero_cuotas' => 2,
+        'medio' => 'efectivo',
+    ])->assertUnprocessable();
 });
 
 it('rejects an inicial greater than or equal to the precio_venta', function () {
@@ -92,6 +133,7 @@ it('rejects an inicial greater than or equal to the precio_venta', function () {
         'forma_venta' => 'credito',
         'inicial' => 500,
         'numero_cuotas' => 2,
+        'tipo_cuota' => 'mensual',
         'medio' => 'efectivo',
     ])->assertUnprocessable();
 });

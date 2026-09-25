@@ -14,8 +14,9 @@ use Illuminate\Support\Facades\Gate;
 
 /**
  * Ficha socioeconómica de un cliente (1:1). Se rige por los permisos del
- * cliente (clientes.ver / clientes.editar) vía ClientePolicy. La consumen
- * los créditos hipotecarios para armar el documento del mismo nombre.
+ * cliente (clientes.ver / clientes.editar o una concesión temporal vigente)
+ * vía ClientePolicy. La consumen los créditos hipotecarios para armar el
+ * documento del mismo nombre.
  */
 class FichaSocioeconomicaController extends Controller
 {

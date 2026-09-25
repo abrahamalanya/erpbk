@@ -43,6 +43,7 @@ class Venta extends Model
         'inicial',
         'interes',
         'numero_cuotas',
+        'tipo_cuota',
         'fecha_limite',
         'saldo_pendiente',
         'pagada_at',

@@ -129,6 +129,10 @@ class CobroController extends Controller
             $query->where('registrado_por', request()->integer('registrado_por'));
         }
 
+        if (request()->filled('cliente_id')) {
+            $query->where('cliente_id', request()->integer('cliente_id'));
+        }
+
         if (request()->filled('desde')) {
             $query->whereDate('created_at', '>=', request()->date('desde'));
         }

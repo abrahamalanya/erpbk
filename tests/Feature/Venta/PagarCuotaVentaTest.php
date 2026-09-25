@@ -41,6 +41,7 @@ beforeEach(function () {
             'forma_venta' => 'credito',
             'inicial' => 60,
             'numero_cuotas' => 3,
+            'tipo_cuota' => 'mensual',
             'medio' => 'efectivo',
         ])->assertCreated()->json('data.id')
     );

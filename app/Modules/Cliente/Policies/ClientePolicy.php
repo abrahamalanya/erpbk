@@ -4,11 +4,15 @@ namespace App\Modules\Cliente\Policies;
 
 use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Cliente\Services\ClienteHierarchyService;
+use App\Modules\Sistemas\Services\PermisoTemporalService;
 use App\Modules\Usuario\Models\User;
 
 class ClientePolicy
 {
-    public function __construct(private readonly ClienteHierarchyService $hierarchy) {}
+    public function __construct(
+        private readonly ClienteHierarchyService $hierarchy,
+        private readonly PermisoTemporalService $permisosTemporales,
+    ) {}
 
     /**
      * Perform pre-authorization checks.
@@ -47,6 +51,11 @@ class ClientePolicy
      */
     public function update(User $user, Cliente $cliente): bool
     {
+        if ($user->hasRole('asesor') && ! $user->hasAnyRole(['sistemas', 'administrador_general', 'administrador_agencia', 'peinadora'])) {
+            return $this->permisosTemporales->puedeEditarCliente($user, $cliente)
+                && $this->hierarchy->canManage($user, $cliente);
+        }
+
         return $user->can('clientes.editar') && $this->hierarchy->canManage($user, $cliente);
     }
 

@@ -28,6 +28,21 @@ use Illuminate\Support\Facades\DB;
  */
 final class VentaService
 {
+    /**
+     * Días fijos por cuota de cada tipo_cuota, usados para espaciar el
+     * cronograma y prorratear el interés (que se configura como tasa
+     * mensual — ver ConfiguracionVenta::interes_mensual_default) — mismo
+     * criterio que CreditoService::DIAS_POR_PERIODO.
+     *
+     * @var array<string, int>
+     */
+    private const DIAS_POR_TIPO_CUOTA = [
+        'diario' => 1,
+        'semanal' => 7,
+        'quincenal' => 15,
+        'mensual' => 30,
+    ];
+
     public function __construct(
         private readonly TiendaService $tienda,
         private readonly ConfiguracionVentaService $configuracion,
@@ -87,12 +102,13 @@ final class VentaService
         }
 
         $numeroCuotas = (int) $datos['numero_cuotas'];
+        $tipoCuota = $datos['tipo_cuota'];
         $interes = isset($datos['interes'])
             ? (string) $datos['interes']
             : (string) $this->configuracion->resolverPara($articulo->agencia)->interes_mensual_default;
 
         $montoFinanciar = bcsub($precio, $inicial, 2);
-        $cronograma = $this->calcularCronograma($montoFinanciar, $interes, $numeroCuotas);
+        $cronograma = $this->calcularCronograma($montoFinanciar, $interes, $numeroCuotas, $tipoCuota);
 
         $venta = $this->crearFila($actor, $cliente, $articulo, [
             'forma_venta' => 'credito',
@@ -101,6 +117,7 @@ final class VentaService
             'inicial' => $inicial,
             'interes' => $interes,
             'numero_cuotas' => $numeroCuotas,
+            'tipo_cuota' => $tipoCuota,
             'saldo_pendiente' => $montoFinanciar,
         ]);
 
@@ -231,13 +248,17 @@ final class VentaService
     }
 
     /**
-     * Registra un abono libre sobre el saldo de un apartado. Marca la venta
-     * como pagada cuando el saldo llega a cero.
+     * Registra un pago a cuenta: sobre el saldo libre de un apartado, o —
+     * igual que un pago a cuenta de crédito (CreditoService::pagarCuotas()
+     * sin indicar número de cuotas) — repartido sobre las cuotas pendientes
+     * de una venta a crédito, de la más antigua a la más nueva, sin
+     * necesitar indicar una cuota puntual (para eso está pagarCuota()).
+     * Marca la venta como pagada cuando el saldo llega a cero.
      */
     public function abonar(Venta $venta, User $actor, string $monto, string $medio): Venta
     {
-        if ($venta->forma_venta !== 'apartado') {
-            throw new DomainException('Solo un apartado admite abonos libres.');
+        if (! in_array($venta->forma_venta, ['credito', 'apartado'], true)) {
+            throw new DomainException('Solo una venta a crédito o un apartado admiten pago a cuenta.');
         }
 
         if ($venta->estado !== 'activa') {
@@ -253,6 +274,10 @@ final class VentaService
         return DB::transaction(function () use ($venta, $actor, $monto, $medio, $ciclo): Venta {
             $this->registrarPago($venta, $ciclo, $actor, 'abono', $monto, $medio, null);
 
+            if ($venta->forma_venta === 'credito') {
+                $this->aplicarAbonoACuotas($venta, $monto);
+            }
+
             $saldo = bcsub($venta->saldo_pendiente, $monto, 2);
             $venta->update(['saldo_pendiente' => $saldo]);
 
@@ -260,8 +285,36 @@ final class VentaService
                 $this->marcarPagada($venta->fresh());
             }
 
-            return $venta->fresh(['pagos', 'documentos']);
+            return $venta->fresh(['cuotas', 'pagos', 'documentos']);
         });
+    }
+
+    /**
+     * Reparte `$monto` sobre las cuotas pendientes de `$venta` (la más
+     * antigua primero), llenando cada una hasta su saldo antes de pasar a la
+     * siguiente — la última cuota tocada puede quedar con un abono parcial.
+     * Usado por abonar() para el pago a cuenta de una venta a crédito.
+     */
+    private function aplicarAbonoACuotas(Venta $venta, string $monto): void
+    {
+        $restante = $monto;
+
+        foreach ($venta->cuotas()->where('estado', '!=', 'pagada')->get() as $cuota) {
+            if (bccomp($restante, '0', 2) <= 0) {
+                break;
+            }
+
+            $pendiente = bcsub($cuota->monto_total, $cuota->monto_abonado, 2);
+            $aplicado = bccomp($restante, $pendiente, 2) >= 0 ? $pendiente : $restante;
+            $nuevoAbonado = bcadd($cuota->monto_abonado, $aplicado, 2);
+
+            $cuota->update([
+                'monto_abonado' => $nuevoAbonado,
+                'estado' => bccomp($nuevoAbonado, $cuota->monto_total, 2) >= 0 ? 'pagada' : 'pendiente',
+            ]);
+
+            $restante = bcsub($restante, $aplicado, 2);
+        }
     }
 
     /**
@@ -388,22 +441,30 @@ final class VentaService
     }
 
     /**
-     * Interés simple mensual (cuotas de 30 días), monto fijo de capital por
-     * cuota y una cuota de interés fija (monto * tasa/100), igual en cada
-     * cuota — mismo criterio que CreditoService::filasCronograma() pero
-     * simplificado a periodos mensuales fijos (Venta no tiene tipos de
-     * cuota diario/semanal). tasa = 0 => cuotas sin interés.
+     * Interés simple (monto fijo de capital por cuota y una cuota de
+     * interés fija, igual en cada cuota), con la fecha y el interés
+     * prorrateados según el tipo_cuota (diario/semanal/quincenal/mensual) —
+     * mismo criterio que CreditoService::filasCronograma(), simplificado a
+     * cuotas fijas sin sistema francés. La tasa se configura sobre base
+     * mensual (ConfiguracionVenta::interes_mensual_default): el interés de
+     * cada cuota es monto * tasa/100 * dias_por_cuota/30. tasa = 0 => cuotas
+     * sin interés.
      *
      * @return list<array{numero_cuota: int, fecha_vencimiento: string, monto_capital: string, monto_interes: string, monto_total: string}>
      */
-    public function calcularCronograma(string $monto, string $tasa, int $n): array
+    public function calcularCronograma(string $monto, string $tasa, int $n, string $tipoCuota = 'mensual'): array
     {
         if ($n < 1) {
             throw new DomainException('El número de cuotas debe ser al menos 1.');
         }
 
+        if (! isset(self::DIAS_POR_TIPO_CUOTA[$tipoCuota])) {
+            throw new DomainException("Tipo de cuota inválido: {$tipoCuota}");
+        }
+
+        $diasPorCuota = self::DIAS_POR_TIPO_CUOTA[$tipoCuota];
         $capitalPorCuota = bcdiv($monto, (string) $n, 2);
-        $interesPorCuota = bcdiv(bcmul($monto, bcdiv($tasa, '100', 10), 10), '1', 2);
+        $interesPorCuota = bcdiv(bcmul(bcmul($monto, $tasa, 10), (string) $diasPorCuota, 10), '3000', 2);
         $saldoCapital = $monto;
         $base = now()->startOfDay();
         $filas = [];
@@ -413,7 +474,7 @@ final class VentaService
 
             $filas[] = [
                 'numero_cuota' => $i,
-                'fecha_vencimiento' => $base->copy()->addDays(30 * $i)->toDateString(),
+                'fecha_vencimiento' => $base->copy()->addDays($diasPorCuota * $i)->toDateString(),
                 'monto_capital' => $capitalCuota,
                 'monto_interes' => $interesPorCuota,
                 'monto_total' => bcadd($capitalCuota, $interesPorCuota, 2),

@@ -8,6 +8,7 @@ use App\Modules\Usuario\Models\User;
 use App\Modules\Venta\Models\Venta;
 use App\Nucleo\Concerns\BelongsToTenant;
 use Database\Factories\CajaMovimientoFactory;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -51,6 +52,22 @@ class CajaMovimiento extends Model
             'monto' => 'decimal:2',
             'fecha_caja' => 'date',
         ];
+    }
+
+    /**
+     * Desembolsos reales: el movimiento de caja conserva el crédito que lo
+     * originó. No se usa la ausencia de concepto porque un egreso manual
+     * siempre lleva concepto y los registros históricos pueden ser inválidos.
+     */
+    public function scopeDesembolsos(Builder $query): Builder
+    {
+        return $query->where('tipo', 'egreso')->whereNotNull('credito_id');
+    }
+
+    /** Egresos que no provienen de un desembolso de crédito. */
+    public function scopeEgresosManuales(Builder $query): Builder
+    {
+        return $query->where('tipo', 'egreso')->whereNull('credito_id');
     }
 
     public function cajaCiclo(): BelongsTo

@@ -18,9 +18,10 @@ beforeEach(function () {
     Sanctum::actingAs($this->admin, ['*']);
 });
 
-it('lists published and retirado products, scoped to the actor’s agencia', function () {
+it('lists published, retirado and vendida products, scoped to the actor’s agencia', function () {
     Bien::factory()->forAgencia($this->agencia)->create(['estado' => 'disponible_venta']);
     Bien::factory()->forAgencia($this->agencia)->create(['estado' => 'retirado_venta']);
+    Bien::factory()->forAgencia($this->agencia)->create(['estado' => 'vendida']);
     Bien::factory()->forAgencia($this->agencia)->create(['estado' => 'en_garantia']);
 
     $otraAgencia = Agencia::factory()->for($this->empresa)->create();
@@ -28,7 +29,17 @@ it('lists published and retirado products, scoped to the actor’s agencia', fun
 
     $response = $this->getJson('/api/tienda-productos')->assertSuccessful();
 
-    expect($response->json('data.total'))->toBe(2);
+    expect($response->json('data.total'))->toBe(3);
+});
+
+it('rejects editing or retiring a bien that was already vendida', function () {
+    $bien = Bien::factory()->forAgencia($this->agencia)->create(['estado' => 'vendida', 'precio_venta' => 500]);
+
+    $this->patchJson("/api/tienda-productos/bien/{$bien->id}", ['precio_venta' => 600])
+        ->assertUnprocessable();
+
+    $this->postJson("/api/tienda-productos/bien/{$bien->id}/retirar")
+        ->assertUnprocessable();
 });
 
 it('updates the precio_venta and precio_oferta of a published bien', function () {

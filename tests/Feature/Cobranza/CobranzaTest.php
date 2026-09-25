@@ -150,6 +150,35 @@ it('filters cobros by registrado_por', function () {
     expect($deOtroAsesor->json('data.data'))->toHaveCount(0);
 });
 
+it('filters cobros by cliente_id', function () {
+    $otroCliente = Cliente::factory()->forAgencia($this->agencia)->create();
+    $otroBien = Bien::factory()->paraCliente($otroCliente)->create(['tipo' => 'electro']);
+
+    $credito = Credito::factory()->paraBien($this->bien)
+        ->activo()
+        ->create(['registrado_por' => $this->asesor->id, 'cliente_id' => $this->cliente->id]);
+    $otroCredito = Credito::factory()->paraBien($otroBien)
+        ->activo()
+        ->create(['registrado_por' => $this->asesor->id, 'cliente_id' => $otroCliente->id]);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $total = $this->getJson("/api/creditos-prendarios/{$credito->id}")->json('data.monto_liquidacion_sugerido.total');
+    $this->postJson("/api/creditos-prendarios/{$credito->id}/liquidar", ['monto_pagado' => $total, 'medio' => 'efectivo'])
+        ->assertSuccessful();
+
+    $otroTotal = $this->getJson("/api/creditos-prendarios/{$otroCredito->id}")->json('data.monto_liquidacion_sugerido.total');
+    $this->postJson("/api/creditos-prendarios/{$otroCredito->id}/liquidar", ['monto_pagado' => $otroTotal, 'medio' => 'efectivo'])
+        ->assertSuccessful();
+
+    $deEsteCliente = $this->getJson("/api/cobros?cliente_id={$this->cliente->id}")->assertSuccessful();
+    expect($deEsteCliente->json('data.data'))->toHaveCount(1)
+        ->and($deEsteCliente->json('data.data.0.credito_id'))->toBe($credito->id);
+
+    $deOtroCliente = $this->getJson("/api/cobros?cliente_id={$otroCliente->id}")->assertSuccessful();
+    expect($deOtroCliente->json('data.data'))->toHaveCount(1)
+        ->and($deOtroCliente->json('data.data.0.credito_id'))->toBe($otroCredito->id);
+});
+
 it('filters anulaciones by anulado_desde/anulado_hasta, independent of desde/hasta', function () {
     $credito = Credito::factory()->paraBien($this->bien)
         ->activo()

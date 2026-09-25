@@ -5,6 +5,7 @@ namespace App\Modules\Cliente\Models;
 use App\Modules\Credito\Models\Credito;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
+use App\Modules\Sistemas\Models\PermisoTemporal;
 use App\Modules\Ubigeo\Models\UbigeoDistrito;
 use App\Modules\Usuario\Models\User;
 use App\Nucleo\Concerns\BelongsToTenant;
@@ -118,6 +119,11 @@ class Cliente extends Model
     public function creditos(): HasMany
     {
         return $this->hasMany(Credito::class);
+    }
+
+    public function permisosTemporales(): HasMany
+    {
+        return $this->hasMany(PermisoTemporal::class);
     }
 
     public function ubigeoDistrito(): BelongsTo

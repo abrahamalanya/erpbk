@@ -3,6 +3,7 @@
 use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
+use App\Modules\Sistemas\Services\PermisoTemporalService;
 use App\Modules\Usuario\Models\User;
 use Database\Seeders\PermissionSeeder;
 use Database\Seeders\RoleSeeder;
@@ -82,6 +83,11 @@ it('lets the asesor immediately view and manage a cliente they just registered t
 
     $this->getJson('/api/clientes')->assertSuccessful()->assertJsonCount(1, 'data.data');
     $this->getJson("/api/clientes/{$clienteId}")->assertSuccessful();
+
+    $admin = User::factory()->forEmpresa($empresa)->create();
+    $admin->assignRole('administrador_general');
+    app(PermisoTemporalService::class)->conceder($admin, Cliente::findOrFail($clienteId), 'Prueba de edición temporal');
+
     $this->putJson("/api/clientes/{$clienteId}", ['nombre' => 'Actualizado'])->assertSuccessful();
 });
 

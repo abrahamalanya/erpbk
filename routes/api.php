@@ -21,6 +21,8 @@ use App\Modules\Empresa\Http\Controllers\AgenciaController;
 use App\Modules\Empresa\Http\Controllers\EmpresaController;
 use App\Modules\Reportes\Http\Controllers\ReporteCajasController;
 use App\Modules\Reportes\Http\Controllers\ReporteCobranzaController;
+use App\Modules\Reportes\Http\Controllers\ReporteCobranzaMensualController;
+use App\Modules\Reportes\Http\Controllers\ReporteFlujoCajaController;
 use App\Modules\Reportes\Http\Controllers\ReporteMovimientosController;
 use App\Modules\Ruta\Http\Controllers\RutaCobranzaController;
 use App\Modules\Simulador\Http\Controllers\SimuladorController;
@@ -29,6 +31,7 @@ use App\Modules\Sistemas\Http\Controllers\ConceptoController;
 use App\Modules\Sistemas\Http\Controllers\ConfiguracionSistemaController;
 use App\Modules\Sistemas\Http\Controllers\ModuloController;
 use App\Modules\Sistemas\Http\Controllers\NotificacionController;
+use App\Modules\Sistemas\Http\Controllers\PermisoTemporalController;
 use App\Modules\Sistemas\Http\Controllers\PermissionController;
 use App\Modules\Sistemas\Http\Controllers\RoleController;
 use App\Modules\Tienda\Http\Controllers\InteresArticuloAdminController;
@@ -79,6 +82,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('roles', RoleController::class)->only(['index', 'show', 'update']);
     Route::apiResource('permisos', PermissionController::class)->only(['index']);
     Route::apiResource('modulos', ModuloController::class)->only(['index']);
+    Route::get('gestion/permisos-temporales', [PermisoTemporalController::class, 'index'])->name('gestion.permisos-temporales.index');
+    Route::post('gestion/permisos-temporales/{cliente}', [PermisoTemporalController::class, 'store'])->name('gestion.permisos-temporales.store');
+    Route::delete('gestion/permisos-temporales/{permisoTemporal}', [PermisoTemporalController::class, 'destroy'])->name('gestion.permisos-temporales.destroy');
     Route::put('/configuracion', [ConfiguracionSistemaController::class, 'update'])->name('configuracion.update');
 
     Route::get('notificaciones', [NotificacionController::class, 'index'])->name('notificaciones.index');
@@ -197,6 +203,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('ventas/{venta}/abonar', [VentaController::class, 'abonar'])->name('ventas.abonar');
     Route::post('ventas/{venta}/cancelar', [VentaController::class, 'cancelar'])->name('ventas.cancelar');
     Route::get('ventas/{venta}/documentos/{documento}', [VentaController::class, 'documento'])->name('ventas.documentos.ver');
+    Route::get('ventas/{venta}/cronograma/ver', [VentaController::class, 'verCronograma'])->name('ventas.cronograma.ver');
 
     Route::get('tienda-solicitudes', [InteresArticuloAdminController::class, 'index'])->name('tienda-solicitudes.index');
     Route::post('tienda-solicitudes/{interes}/atender', [InteresArticuloAdminController::class, 'atender'])->name('tienda-solicitudes.atender');
@@ -222,10 +229,15 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('reportes/cobranza-diaria', [ReporteCobranzaController::class, 'cobranzaDiaria'])->name('reportes.cobranza-diaria');
     Route::get('reportes/cobranza-diaria/pdf', [ReporteCobranzaController::class, 'cobranzaDiariaPdf'])->name('reportes.cobranza-diaria.pdf');
     Route::get('reportes/cobranza-diaria/excel', [ReporteCobranzaController::class, 'cobranzaDiariaExcel'])->name('reportes.cobranza-diaria.excel');
+    Route::get('reportes/cobranza-mensual', [ReporteCobranzaMensualController::class, 'cobranzaMensual'])->name('reportes.cobranza-mensual');
+    Route::get('reportes/cobranza-mensual/anual', [ReporteCobranzaMensualController::class, 'cobranzaAnual'])->name('reportes.cobranza-mensual.anual');
     Route::get('reportes/cajas-apertura-cierre', [ReporteCajasController::class, 'aperturasCierres'])->name('reportes.cajas-apertura-cierre');
     Route::get('reportes/cajas-apertura-cierre/{ciclo}/detalle', [ReporteCajasController::class, 'detalle'])->name('reportes.cajas-apertura-cierre.detalle');
     Route::get('reportes/cajas-apertura-cierre/pdf', [ReporteCajasController::class, 'aperturasCierresPdf'])->name('reportes.cajas-apertura-cierre.pdf');
     Route::get('reportes/cajas-apertura-cierre/excel', [ReporteCajasController::class, 'aperturasCierresExcel'])->name('reportes.cajas-apertura-cierre.excel');
+    Route::get('reportes/flujo-caja', [ReporteFlujoCajaController::class, 'flujoCaja'])->name('reportes.flujo-caja');
+    Route::get('reportes/flujo-caja/anual', [ReporteFlujoCajaController::class, 'flujoCajaAnual'])->name('reportes.flujo-caja.anual');
+    Route::get('reportes/flujo-caja/mensual', [ReporteFlujoCajaController::class, 'flujoCajaMensual'])->name('reportes.flujo-caja.mensual');
 
     Route::get('rutas-cobranza/asesores', [RutaCobranzaController::class, 'asesores'])->name('rutas-cobranza.asesores');
     Route::get('rutas-cobranza', [RutaCobranzaController::class, 'show'])->name('rutas-cobranza.show');

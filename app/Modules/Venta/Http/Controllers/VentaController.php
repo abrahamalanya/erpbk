@@ -33,7 +33,10 @@ class VentaController extends Controller
         Gate::authorize('viewAny', Venta::class);
 
         $actor = $request->user();
-        $query = Venta::query()->with(['cliente', 'articulo', 'vendidoPor'])->latest();
+        $query = Venta::query()
+            ->with(['cliente', 'articulo', 'vendidoPor'])
+            ->withExists(['cuotas as tiene_cuota_vencida' => fn ($q) => $q->vencidas()])
+            ->latest();
 
         if (! $actor->hasRole('sistemas')) {
             $query->where('empresa_id', $actor->empresa_id);
@@ -64,7 +67,10 @@ class VentaController extends Controller
     {
         Gate::authorize('view', $venta);
 
-        return $this->successResponse($venta->load(['cliente', 'articulo', 'vendidoPor', 'cuotas', 'pagos', 'documentos']));
+        $venta->load(['cliente', 'articulo', 'vendidoPor', 'cuotas', 'pagos', 'documentos'])
+            ->loadExists(['cuotas as tiene_cuota_vencida' => fn ($q) => $q->vencidas()]);
+
+        return $this->successResponse($venta);
     }
 
     public function store(StoreVentaRequest $request, TiendaService $tienda): JsonResponse
@@ -121,5 +127,14 @@ class VentaController extends Controller
         abort_unless($documento->venta_id === $venta->id, 404);
 
         return $this->documentoService->renderizar($documento);
+    }
+
+    public function verCronograma(Venta $venta): Response
+    {
+        Gate::authorize('view', $venta);
+
+        abort_unless($venta->forma_venta === 'credito', 404);
+
+        return $this->documentoService->renderizarCronograma($venta);
     }
 }

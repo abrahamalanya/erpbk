@@ -54,8 +54,8 @@ it('lists the ruta of clientes en mora, one row per cliente even with 2 crédito
     $clienteA = Cliente::factory()->asignadoA($this->asesor)->create();
     $clienteB = Cliente::factory()->asignadoA($this->asesor)->create();
 
-    creditoEnMoraParaRuta($this->empresa, $this->agencia, $clienteA, $this->asesor, 5);
-    creditoEnMoraParaRuta($this->empresa, $this->agencia, $clienteA, $this->asesor, 3);
+    $creditoA1 = creditoEnMoraParaRuta($this->empresa, $this->agencia, $clienteA, $this->asesor, 5);
+    $creditoA2 = creditoEnMoraParaRuta($this->empresa, $this->agencia, $clienteA, $this->asesor, 3);
     creditoEnMoraParaRuta($this->empresa, $this->agencia, $clienteB, $this->asesor, 10);
 
     Sanctum::actingAs($this->asesor, ['*']);
@@ -64,7 +64,10 @@ it('lists the ruta of clientes en mora, one row per cliente even with 2 crédito
     expect($response->json('data'))->toHaveCount(2);
 
     $filaA = collect($response->json('data'))->firstWhere('cliente_id', $clienteA->id);
-    expect($filaA['creditos_vencidos'])->toBe(2);
+    expect($filaA['creditos_vencidos'])->toBe(2)
+        ->and(collect($filaA['creditos'])->pluck('id')->sort()->values()->all())
+        ->toBe(collect([$creditoA1->id, $creditoA2->id])->sort()->values()->all())
+        ->and($filaA['creditos'][0])->toHaveKeys(['id', 'codigo', 'tipo_credito']);
 
     // El más atrasado (cliente B, 10 días) entra primero de los nuevos.
     expect($response->json('data.0.cliente_id'))->toBe($clienteB->id);

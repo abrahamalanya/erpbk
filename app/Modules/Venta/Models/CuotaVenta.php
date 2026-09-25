@@ -4,6 +4,7 @@ namespace App\Modules\Venta\Models;
 
 use App\Nucleo\Concerns\BelongsToTenant;
 use Database\Factories\CuotaVentaFactory;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -52,6 +53,17 @@ class CuotaVenta extends Model
     public function venta(): BelongsTo
     {
         return $this->belongsTo(Venta::class);
+    }
+
+    /**
+     * Cuotas no pagadas cuya fecha de vencimiento ya pasó — usado para
+     * mostrar la etiqueta "vencido" en la venta (ver
+     * VentaController::index()/show()), no cambia el estado de la venta ni
+     * de la cuota.
+     */
+    public function scopeVencidas(Builder $query): Builder
+    {
+        return $query->where('estado', '!=', 'pagada')->whereDate('fecha_vencimiento', '<', now()->startOfDay());
     }
 
     protected static function newFactory(): CuotaVentaFactory

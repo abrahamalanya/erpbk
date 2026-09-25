@@ -29,7 +29,7 @@ final class RutaCobranzaService
      * tipo — la ruta se recorre por tipo (diario, prendario, hipotecario,
      * vehicular) — y los conteos y días de atraso salen solo de ellos.
      *
-     * @return Collection<int, array{cliente: Cliente, dias_atraso_max: int, creditos_vencidos: int, credito_codigos: list<string>}>
+     * @return Collection<int, array{cliente: Cliente, dias_atraso_max: int, creditos_vencidos: int, credito_codigos: list<string>, creditos: list<array{id: int, codigo: string, tipo_credito: string}>}>
      */
     private function clientesEnMoraDe(User $asesor, ?string $tipoCredito): Collection
     {
@@ -56,6 +56,11 @@ final class RutaCobranzaService
                     'dias_atraso_max' => $diasAtraso->max(),
                     'creditos_vencidos' => $creditosDelCliente->count(),
                     'credito_codigos' => $creditosDelCliente->pluck('codigo')->all(),
+                    'creditos' => $creditosDelCliente->map(fn (Credito $c): array => [
+                        'id' => $c->id,
+                        'codigo' => $c->codigo,
+                        'tipo_credito' => $c->tipo_credito,
+                    ])->values()->all(),
                 ];
             })
             ->values();
@@ -123,6 +128,7 @@ final class RutaCobranzaService
                 'dias_atraso_max' => $fila['dias_atraso_max'],
                 'creditos_vencidos' => $fila['creditos_vencidos'],
                 'credito_codigos' => $fila['credito_codigos'],
+                'creditos' => $fila['creditos'],
             ])
             ->sortBy('orden')
             ->values();

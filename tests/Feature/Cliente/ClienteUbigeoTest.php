@@ -3,6 +3,7 @@
 use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
+use App\Modules\Sistemas\Services\PermisoTemporalService;
 use App\Modules\Ubigeo\Models\UbigeoDepartamento;
 use App\Modules\Ubigeo\Models\UbigeoDistrito;
 use App\Modules\Ubigeo\Models\UbigeoProvincia;
@@ -64,6 +65,10 @@ it('actualiza el ubigeo del cliente', function () {
     $cliente = Cliente::factory()->forAgencia($this->agencia)->create([
         'ubigeo_distrito_id' => $this->distritoCasa->id, 'asesor_id' => $this->asesor->id,
     ]);
+    $admin = User::factory()->forEmpresa($this->empresa)->create();
+    $admin->assignRole('administrador_general');
+    app(PermisoTemporalService::class)->conceder($admin, $cliente, 'Prueba de edición temporal');
+
     Sanctum::actingAs($this->asesor, ['*']);
 
     $response = $this->putJson("/api/clientes/{$cliente->id}", [

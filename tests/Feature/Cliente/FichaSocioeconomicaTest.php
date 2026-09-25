@@ -4,6 +4,7 @@ use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Cliente\Models\FichaSocioeconomica;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
+use App\Modules\Sistemas\Services\PermisoTemporalService;
 use App\Modules\Usuario\Models\User;
 use Database\Seeders\PermissionSeeder;
 use Database\Seeders\RoleSeeder;
@@ -16,8 +17,11 @@ beforeEach(function () {
 
     $this->asesor = User::factory()->forAgencia($this->agencia)->create();
     $this->asesor->assignRole('asesor');
+    $this->admin = User::factory()->forEmpresa($this->empresa)->create();
+    $this->admin->assignRole('administrador_general');
 
     $this->cliente = Cliente::factory()->asignadoA($this->asesor)->create();
+    app(PermisoTemporalService::class)->conceder($this->admin, $this->cliente, 'Prueba de ficha socioeconómica');
 });
 
 it('creates the ficha with its familiares on first PUT', function () {

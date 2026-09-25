@@ -30,6 +30,7 @@ class StoreVentaRequest extends FormRequest
             'medio' => ['required', Rule::in(['efectivo', 'yape', 'plin', 'transferencia'])],
             'inicial' => [Rule::requiredIf(fn (): bool => in_array($this->input('forma_venta'), ['credito', 'apartado'], true)), 'numeric', 'min:0.01'],
             'numero_cuotas' => [Rule::requiredIf(fn (): bool => $this->input('forma_venta') === 'credito'), 'integer', 'min:1'],
+            'tipo_cuota' => [Rule::requiredIf(fn (): bool => $this->input('forma_venta') === 'credito'), Rule::in(['diario', 'semanal', 'quincenal', 'mensual'])],
             'interes' => ['nullable', 'numeric', 'min:0'],
             'fecha_limite' => [Rule::requiredIf(fn (): bool => $this->input('forma_venta') === 'apartado'), 'date', 'after:today'],
         ];
@@ -43,6 +44,8 @@ class StoreVentaRequest extends FormRequest
         return [
             'inicial.required' => 'Debes indicar el inicial para una venta a crédito o apartado.',
             'numero_cuotas.required' => 'Debes indicar el número de cuotas para una venta a crédito.',
+            'tipo_cuota.required' => 'Debes indicar el tipo de cuota para una venta a crédito.',
+            'tipo_cuota.in' => 'El tipo de cuota no es válido.',
             'fecha_limite.required' => 'Debes indicar la fecha de cancelación para un apartado.',
             'fecha_limite.after' => 'La fecha de cancelación debe ser posterior a hoy.',
         ];

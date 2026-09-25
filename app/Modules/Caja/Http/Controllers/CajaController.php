@@ -99,9 +99,10 @@ class CajaController extends Controller
     }
 
     /**
-     * The actor's own ingreso/gasto history — powers the Ingresos/Gastos
-     * modules. ?tipo= is required (ingreso|egreso) since these are two
-     * separate frontend pages, never a combined feed.
+     * Historial de ingresos, egresos y desembolsos de las cajas visibles para
+     * el actor. ?tipo= es obligatorio (ingreso|egreso); los filtros
+     * solo_desembolsos y excluir_desembolsos separan la proyección de
+     * Desembolsos de los egresos manuales.
      */
     public function movimientos(ListarMovimientosCajaRequest $request): JsonResponse
     {
@@ -116,7 +117,7 @@ class CajaController extends Controller
 
     /**
      * Usuarios cuyos movimientos puede ver el actor: las opciones del filtro
-     * "usuario" de Ingresos/Egresos.
+     * "usuario" de Ingresos/Egresos/Desembolsos.
      */
     public function usuariosMovimientos(): JsonResponse
     {

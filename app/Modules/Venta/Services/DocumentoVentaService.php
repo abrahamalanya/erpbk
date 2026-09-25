@@ -87,6 +87,22 @@ final class DocumentoVentaService
         ]);
     }
 
+    /**
+     * El cronograma no es un DocumentoVenta (no tiene ciclo de vida de
+     * impresión/firma) — se renderiza directo desde las cuotas ya
+     * persistidas de la venta, mismo patrón nunca-guardado que renderizar().
+     * Solo aplica a forma_venta = credito (VentaController::verCronograma()
+     * ya lo valida antes de llamar aquí).
+     */
+    public function renderizarCronograma(Venta $venta): Response
+    {
+        $venta->load(['cuotas', 'cliente', 'articulo', 'empresa']);
+
+        return $this->pdfGenerator->renderizarDesdeVista('modules.venta.documentos.cronograma', [
+            'venta' => $venta,
+        ]);
+    }
+
     public function renderizar(DocumentoVenta $documento): Response
     {
         $vista = self::VISTAS[$documento->tipo] ?? throw new DomainException("Tipo de documento de venta desconocido: {$documento->tipo}");

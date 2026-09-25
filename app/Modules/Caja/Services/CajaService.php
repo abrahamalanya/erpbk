@@ -12,7 +12,9 @@ use App\Modules\Sistemas\Models\Concepto;
 use App\Modules\Usuario\Models\User;
 use DomainException;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 
@@ -191,37 +193,57 @@ final class CajaService
 
     /**
      * Historial de ingresos/egresos de las cajas que el actor puede ver, en
-     * todos sus ciclos (no solo el abierto) — alimenta los módulos Ingresos y
-     * Egresos. Un asesor ve solo los de su propia caja; un administrador de
-     * agencia los de su agencia; un administrador general, los de toda la
-     * empresa (misma regla que el módulo Cajas, ver
+     * todos sus ciclos (no solo el abierto) — alimenta los módulos Ingresos,
+     * Egresos y Desembolsos. Un asesor ve solo los de su propia caja; un
+     * administrador de agencia los de su agencia; un administrador general,
+     * los de toda la empresa (misma regla que el módulo Cajas, ver
      * CajaBovedaHierarchyService::cajasVisibles()). $tipo es siempre
      * 'ingreso' o 'egreso' (nunca 'billetaje'), así que nunca aparecen los
-     * traspasos de billetaje; un 'egreso' sin concepto_id/billetaje_id es un
-     * desembolso de crédito (ver CreditoService::desembolsar()), que el
-     * frontend etiqueta aparte.
+     * traspasos de billetaje.
+     *
+     * Los desembolsos se distinguen por `credito_id`, el vínculo explícito al
+     * crédito que generó el movimiento. `excluir_desembolsos` deja la lista de
+     * egresos manuales; `solo_desembolsos` deja solo los desembolsos reales.
      *
      * Filtros opcionales en $filtros: concepto_id, solo_desembolsos,
-     * registrado_por, desde y hasta (sobre fecha_caja, ambos inclusive).
+     * excluir_desembolsos, registrado_por, desde y hasta (sobre fecha_caja,
+     * ambos inclusive).
      *
-     * @param  array{concepto_id?: int|null, solo_desembolsos?: bool|null, registrado_por?: int|null, desde?: string|null, hasta?: string|null}  $filtros
+     * @param  array{concepto_id?: int|null, solo_desembolsos?: bool|null, excluir_desembolsos?: bool|null, registrado_por?: int|null, desde?: string|null, hasta?: string|null}  $filtros
      * @return LengthAwarePaginator<int, CajaMovimiento>
      */
     public function listarMovimientos(User $actor, string $tipo, array $filtros = []): LengthAwarePaginator
     {
         $cajasVisibles = $this->hierarchy->cajasVisibles(Caja::query(), $actor)->select('id');
+        $soloDesembolsos = (bool) ($filtros['solo_desembolsos'] ?? false);
+        $excluirDesembolsos = (bool) ($filtros['excluir_desembolsos'] ?? false);
 
         return CajaMovimiento::query()
             ->whereHas('cajaCiclo', fn ($query) => $query->whereIn('caja_id', $cajasVisibles))
             ->where('tipo', $tipo)
             ->when($filtros['concepto_id'] ?? null, fn ($query, int $conceptoId) => $query->where('concepto_id', $conceptoId))
-            ->when($filtros['solo_desembolsos'] ?? false, fn ($query) => $query->whereNull('concepto_id')->whereNull('billetaje_id'))
+            ->when($soloDesembolsos, fn (Builder $query) => $query->desembolsos())
+            ->when($excluirDesembolsos, fn (Builder $query) => $query->egresosManuales())
             ->when($filtros['registrado_por'] ?? null, fn ($query, int $usuarioId) => $query->where('registrado_por', $usuarioId))
             ->when($filtros['desde'] ?? null, fn ($query, string $desde) => $query->whereDate('fecha_caja', '>=', $desde))
             ->when($filtros['hasta'] ?? null, fn ($query, string $hasta) => $query->whereDate('fecha_caja', '<=', $hasta))
             // 'concepto' relation deliberately not eager-loaded — see the
             // comment on the same load in resumenCierre() above.
             ->with(['fotos', 'registradoPor'])
+            ->when($soloDesembolsos, fn (Builder $query) => $query->with([
+                'credito' => fn (BelongsTo $credito) => $credito
+                    ->select(['id', 'empresa_id', 'agencia_id', 'cliente_id', 'codigo', 'tipo_credito', 'fecha_desembolso'])
+                    ->with([
+                        'cliente' => fn (BelongsTo $cliente) => $cliente->select([
+                            'id',
+                            'empresa_id',
+                            'agencia_id',
+                            'nombre',
+                            'apellido',
+                            'numero_documento',
+                        ]),
+                    ]),
+            ]))
             ->latest('fecha_caja')
             ->latest('id')
             ->paginate(15);
@@ -229,7 +251,7 @@ final class CajaService
 
     /**
      * Usuarios dueños de las cajas que el actor puede ver — las opciones del
-     * filtro "usuario" de Ingresos/Egresos. Si solo devuelve al propio actor
+     * filtro "usuario" de Ingresos/Egresos/Desembolsos. Si solo devuelve al propio actor
      * (un asesor), el frontend oculta el filtro y la columna "Registrado por".
      *
      * @return Collection<int, User>

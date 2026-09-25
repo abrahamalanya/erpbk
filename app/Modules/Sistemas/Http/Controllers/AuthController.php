@@ -4,6 +4,7 @@ namespace App\Modules\Sistemas\Http\Controllers;
 
 use App\Modules\Sistemas\Http\Requests\LoginRequest;
 use App\Modules\Sistemas\Services\ModuloService;
+use App\Modules\Sistemas\Services\PermisoTemporalService;
 use App\Modules\Usuario\Models\User;
 use App\Nucleo\Http\Controllers\Controller;
 use App\Nucleo\Traits\ApiResponse;
@@ -15,7 +16,10 @@ class AuthController extends Controller
 {
     use ApiResponse;
 
-    public function __construct(private readonly ModuloService $modulos) {}
+    public function __construct(
+        private readonly ModuloService $modulos,
+        private readonly PermisoTemporalService $permisosTemporales,
+    ) {}
 
     public function login(LoginRequest $request): JsonResponse
     {
@@ -73,6 +77,7 @@ class AuthController extends Controller
         $user->load(['roles', 'empresa']);
         $user->setAttribute('permission_names', $user->getAllPermissions()->pluck('name')->values());
         $user->setAttribute('modulos_efectivos', $this->modulos->modulosEfectivos($user));
+        $user->setAttribute('permisos_temporales_clientes', $this->permisosTemporales->activasParaUsuario($user));
 
         return $user;
     }
