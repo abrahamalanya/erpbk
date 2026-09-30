@@ -80,8 +80,8 @@ it('generates a French-system cronograma with real calendar-month dates (1000 @ 
         ->and((string) $cuotas[0]->monto_interes)->toBe('80.00')
         ->and((string) $cuotas[0]->monto_capital)->toBe('52.70')
         ->and($cuotas[1]->fecha_vencimiento->toDateString())->toBe($base->copy()->addMonthsNoOverflow(2)->toDateString())
-        ->and((string) $cuotas[1]->monto_interes)->toBe('75.80')
-        ->and((string) $cuotas[1]->monto_capital)->toBe('56.90')
+        ->and((string) $cuotas[1]->monto_interes)->toBe('75.78')
+        ->and((string) $cuotas[1]->monto_capital)->toBe('56.92')
         // Cuota 5 cae en un mes de día distinto (calendario real), pero el
         // interés sigue la tasa nominal fija (no varía con el mes).
         ->and($cuotas[4]->fecha_vencimiento->toDateString())->toBe($base->copy()->addMonthsNoOverflow(5)->toDateString())
@@ -113,7 +113,7 @@ it('pays a cuota, reduces the saldo insoluto and chains a successor crédito', f
     expect(Credito::find($creditoId)->estado)->toBe('cuota_pagada');
 
     $siguienteCuota = Credito::find($response->json('data.id'))->cuotas()->orderBy('numero_cuota')->first();
-    expect((string) $siguienteCuota->monto_interes)->toBe('75.80')
+    expect((string) $siguienteCuota->monto_interes)->toBe('75.78')
         ->and($siguienteCuota->fecha_vencimiento->toDateString())->toBe($base->copy()->addMonthsNoOverflow(2)->toDateString());
 });
 

@@ -42,18 +42,12 @@ class UserSeeder extends Seeder
         ], 'secretaria');
 
         // ===== CREDIMAS: agencias =====
-        $agenciaPucallpa = Agencia::where('nombre', 'Agencia Pucallpa')->firstOrFail();
-        $this->seedAgencia($agenciaPucallpa, 'Pucallpa', [
+        $agenciaAlameda = Agencia::where('nombre', 'Agencia Alameda')->firstOrFail();
+        $this->seedAgencia($agenciaAlameda, 'Alameda', [
             'nombre' => 'Ejecutivo',
             'apellido' => 'Ventas',
             'email' => 'ejecutivo.abrahamalanya@laravel.com',
         ]);
-
-        $agenciaJuanjui = Agencia::where('nombre', 'Agencia Juanjui')->firstOrFail();
-        $this->seedAgencia($agenciaJuanjui, 'Juanjui');
-
-        $agenciaTocache = Agencia::where('nombre', 'Agencia Tocache')->firstOrFail();
-        $this->seedAgencia($agenciaTocache, 'Tocache');
 
         // ===== Empresa Secundaria =====
         $this->createUser([

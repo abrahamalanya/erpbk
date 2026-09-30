@@ -5,6 +5,7 @@ namespace Database\Seeders;
 use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
+use App\Modules\Ubigeo\Models\UbigeoDistrito;
 use App\Modules\Usuario\Models\User;
 use Illuminate\Database\Seeder;
 use RuntimeException;
@@ -36,11 +37,21 @@ class ProduccionClientesSeeder extends Seeder
                 'nombre' => $datos['nombre'],
                 'apellido' => $datos['apellido'],
                 'tipo_documento' => $datos['tipo_documento'],
+                'fecha_nacimiento' => $datos['fecha_nacimiento'] ?? null,
+                'sexo' => $datos['sexo'] ?? null,
+                'estado_civil' => $datos['estado_civil'] ?? null,
+                'email' => $datos['email'] ?? null,
                 'telefono' => $datos['telefono'],
                 'direccion' => $datos['direccion'],
+                'ubigeo_distrito_id' => $this->resolverDistritoId($datos, 'ubigeo_distrito'),
                 'referencia' => $datos['referencia'],
-                'latitud' => $datos['latitud'],
-                'longitud' => $datos['longitud'],
+                'latitud' => $datos['latitud'] ?? null,
+                'longitud' => $datos['longitud'] ?? null,
+                'direccion_negocio' => $datos['direccion_negocio'] ?? null,
+                'ubigeo_distrito_negocio_id' => $this->resolverDistritoId($datos, 'ubigeo_distrito_negocio'),
+                'referencia_negocio' => $datos['referencia_negocio'] ?? null,
+                'latitud_negocio' => $datos['latitud_negocio'] ?? null,
+                'longitud_negocio' => $datos['longitud_negocio'] ?? null,
                 'foto_cliente_path' => $datos['foto_cliente_path'],
                 'foto_dni_path' => $datos['foto_dni_path'],
                 'foto_dni_reverso_path' => $datos['foto_dni_reverso_path'],
@@ -49,6 +60,27 @@ class ProduccionClientesSeeder extends Seeder
                 'estado' => $datos['estado'],
             ]);
         }
+    }
+
+    /**
+     * Resuelve un distrito por su código natural. El id solo se acepta si
+     * corresponde a una fila existente en la instalación actual.
+     *
+     * @param  array<string, mixed>  $datos
+     */
+    private function resolverDistritoId(array $datos, string $prefijo): ?int
+    {
+        $codigo = $datos["{$prefijo}_codigo"] ?? null;
+
+        if ($codigo !== null) {
+            return UbigeoDistrito::query()->where('codigo', $codigo)->value('id');
+        }
+
+        $id = $datos["{$prefijo}_id"] ?? null;
+
+        return $id !== null && UbigeoDistrito::query()->whereKey($id)->exists()
+            ? (int) $id
+            : null;
     }
 
     private function usuarioId(?string $email): ?int

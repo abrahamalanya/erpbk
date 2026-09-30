@@ -54,7 +54,7 @@ class BienSeeder extends Seeder
      */
     public function run(): void
     {
-        $agencia = Agencia::where('nombre', 'Agencia Pucallpa')->firstOrFail();
+        $agencia = Agencia::where('nombre', 'Agencia Alameda')->firstOrFail();
 
         $clientes = Cliente::where('agencia_id', $agencia->id)->get();
 
@@ -69,6 +69,10 @@ class BienSeeder extends Seeder
     {
         $producto = fake()->randomElement(self::CATALOGO);
         $esElectro = $producto['tipo'] === 'electro';
+        $precioVenta = fake()->randomFloat(2, $producto['valor_min'] * 1.10, $producto['valor_max'] * 1.20);
+        $precioOferta = fake()->boolean(35)
+            ? round($precioVenta * fake()->randomFloat(2, 0.80, 0.95), 2)
+            : null;
 
         $bien = Bien::query()->create([
             'empresa_id' => $cliente->empresa_id,
@@ -82,11 +86,19 @@ class BienSeeder extends Seeder
             'serie' => $esElectro ? fake()->bothify('SN-########') : null,
             'observacion' => fake()->sentence(),
             'valorizacion' => fake()->randomFloat(2, $producto['valor_min'], $producto['valor_max']),
+            'precio_venta' => $precioVenta,
+            'precio_oferta' => $precioOferta,
             'puntaje' => fake()->numberBetween(1, 10),
             'foto_cliente_producto_path' => 'clientes/samples/cliente_producto.jpg',
             'video_path' => fake()->boolean(35) ? 'clientes/samples/video.mp4' : null,
             'estado' => 'en_garantia',
         ]);
+
+        // DatabaseSeeder usa WithoutModelEvents, por lo que el hook que
+        // asigna el código de la garantía no se dispara.
+        $bien->forceFill([
+            'codigo' => 'B-'.str_pad((string) $bien->id, 6, '0', STR_PAD_LEFT),
+        ])->saveQuietly();
 
         $fotos = [$producto['foto'], ...fake()->randomElements(self::FOTOS_ADICIONALES, fake()->numberBetween(1, 3))];
 

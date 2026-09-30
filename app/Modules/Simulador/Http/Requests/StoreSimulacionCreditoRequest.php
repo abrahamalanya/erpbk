@@ -28,6 +28,7 @@ class StoreSimulacionCreditoRequest extends FormRequest
             'cliente_id' => ['required', 'integer', 'exists:clientes,id'],
             'monto_prestamo' => ['required', 'numeric', 'min:0.01'],
             'interes' => ['nullable', 'numeric', 'min:0'],
+            'tipo_interes' => ['nullable', Rule::in(['simple', 'compuesto'])],
             'tipo_cuota' => ['required', Rule::in(['diario', 'semanal', 'quincenal', 'mensual'])],
             'numero_cuotas' => [
                 'nullable', 'integer', 'min:1',

@@ -10,6 +10,8 @@ use App\Modules\Credito\Tipos\CreditoTipoManager;
 use App\Modules\Usuario\Models\User;
 use App\Nucleo\Services\PdfGeneratorService;
 use DomainException;
+use Endroid\QrCode\QrCode;
+use Endroid\QrCode\Writer\PngWriter;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Storage;
@@ -31,6 +33,7 @@ final class DocumentoCreditoService
     public function __construct(
         private readonly PdfGeneratorService $pdfGenerator,
         private readonly CreditoTipoManager $tipos,
+        private readonly ConfiguracionCreditoService $configuracion,
     ) {}
 
     public function generarContrato(Credito $credito, User $actor): DocumentoCredito
@@ -144,8 +147,10 @@ final class DocumentoCreditoService
 
     /**
      * Etiqueta sticker del producto (una por garantía del crédito): nombre
-     * del producto, cliente, monto, fechas de ingreso y vencimiento y el
-     * código único de la garantía. Se genera al registrar el crédito y se
+     * del producto, cliente, monto y fecha de desembolso, fecha de
+     * vencimiento, fecha de remate (vencimiento + días de espera
+     * configurados, ver ConfiguracionCredito::dias_espera_mora) y el código
+     * único de la garantía como QR. Se genera al registrar el crédito y se
      * renderiza en vivo, así que las fechas/monto de desembolso aparecen en
      * cuanto el crédito se desembolsa.
      */
@@ -269,7 +274,49 @@ final class DocumentoCreditoService
             'fotoDataUri' => fn (?string $path, int $maxAncho = 900): ?string => $this->fotoDataUri($path, $maxAncho),
         ];
 
+        if ($documento->tipo === 'sticker') {
+            $datos['fechaRemate'] = $this->fechaRemate($credito);
+            $datos['qrDataUri'] = fn (?string $texto): ?string => $this->qrDataUri($texto);
+        }
+
         return $this->pdfGenerator->renderizarDesdeVista($tipo->vistaDocumento($documento->tipo), $datos);
+    }
+
+    /**
+     * Fecha en que el crédito, si sigue sin pagarse, queda habilitado para
+     * pasar a la tienda: vencimiento + días de espera configurados (mismo
+     * cálculo que CreditoService::fechaLimiteEspera(), acá solo para
+     * mostrarla en el sticker). Null si el crédito aún no tiene fecha de
+     * vencimiento (antes del desembolso).
+     */
+    private function fechaRemate(Credito $credito): ?string
+    {
+        if (! $credito->fecha_vencimiento) {
+            return null;
+        }
+
+        $configuracion = $this->configuracion->resolverPara($credito->agencia, $credito->tipo_credito);
+
+        return $credito->fecha_vencimiento->copy()->addDays($configuracion->dias_espera_mora)->toDateString();
+    }
+
+    /**
+     * QR (PNG) del código de la garantía, como data URI embebible en un
+     * <img> del PDF — mismo patrón que fotoDataUri(). Null si la garantía
+     * no tiene código (dato legado antes de EsGarantia::bootEsGarantia(),
+     * o una fila cargada con WithoutModelEvents sin backfill) — la vista
+     * cae a un texto de reemplazo en vez de romper el sticker entero.
+     */
+    private function qrDataUri(?string $texto): ?string
+    {
+        if (! $texto) {
+            return null;
+        }
+
+        $writer = new PngWriter;
+        $qrCode = new QrCode(data: $texto, size: 200, margin: 4);
+
+        return $writer->write($qrCode)->getDataUri();
     }
 
     /**

@@ -841,12 +841,18 @@ final class CreditoService
      * calendario de turno (confirmado con el usuario: usar el día real aquí
      * desbalanceaba la última cuota). Las FECHAS de vencimiento sí son mes de
      * calendario real (ver fechaCuotaCompuesta()) — solo cambia qué día cae
-     * cada cuota, no cuánto cuesta. El interés se redondea a la décima
-     * (bcRoundMoney10() — solo el capital conserva los centavos, confirmado
-     * con el usuario) y el capital de cada fila es el resto exacto (cuota
-     * fija − interés), para que cada fila cuadre exacto contra la cuota — la
-     * última absorbe el saldo insoluto que quede, para que el crédito cierre
-     * en cero.
+     * cada cuota, no cuánto cuesta.
+     *
+     * Redondeo (calibrado contra las planillas Excel que ya usaban, no una
+     * elección arbitraria): la cuota fija se redondea a los 10 céntimos más
+     * cercanos (bcRoundDecima()); el interés de cada cuota se trunca a
+     * centavos exactos (sin redondear); el capital es el resto exacto (cuota
+     * fija − interés), IGUAL en todas las filas incluida la última — no
+     * absorbe el saldo insoluto restante. Como la cuota redondeada a la
+     * décima es un poco menor que la cuota "pura" del sistema francés, el
+     * crédito no cierra exactamente en cero: queda un remanente de pocos
+     * céntimos de capital sin cobrar tras la última cuota (mismo
+     * comportamiento que las planillas de referencia).
      *
      * @return list<array{numero_cuota: int, dias: int, monto_capital: string, monto_interes: string, monto_total: string}>
      */
@@ -855,7 +861,7 @@ final class CreditoService
         $r = bcdiv(bcmul($interes, (string) self::DIAS_POR_PERIODO[$tipoCuota], 10), '3000', 10);
 
         $factor = bcpow(bcadd('1', $r, 10), (string) $n, 10);
-        $cuotaFija = $this->bcRoundMoney(bcdiv(bcmul($monto, $r, 10), bcsub('1', bcdiv('1', $factor, 10), 10), 10));
+        $cuotaFija = $this->bcRoundDecima(bcdiv(bcmul($monto, $r, 10), bcsub('1', bcdiv('1', $factor, 10), 10), 10));
 
         $saldoInsoluto = $monto;
         $filas = [];
@@ -863,16 +869,15 @@ final class CreditoService
         for ($i = 1; $i <= $n; $i++) {
             $fechaCuota = $this->fechaCuotaCompuesta($fechaBase, $tipoCuota, $i);
 
-            $interesCuota = $this->bcRoundMoney10(bcmul($saldoInsoluto, $r, 10));
-            $capitalCuota = $i === $n ? $saldoInsoluto : bcsub($cuotaFija, $interesCuota, 2);
-            $totalCuota = $i === $n ? bcadd($capitalCuota, $interesCuota, 2) : $cuotaFija;
+            $interesCuota = bcadd(bcmul($saldoInsoluto, $r, 10), '0', 2);
+            $capitalCuota = bcsub($cuotaFija, $interesCuota, 2);
 
             $filas[] = [
                 'numero_cuota' => $i,
                 'dias' => (int) $fechaBase->diffInDays($fechaCuota),
                 'monto_capital' => $capitalCuota,
                 'monto_interes' => $interesCuota,
-                'monto_total' => $totalCuota,
+                'monto_total' => $cuotaFija,
             ];
 
             $saldoInsoluto = bcsub($saldoInsoluto, $capitalCuota, 2);
@@ -882,24 +887,11 @@ final class CreditoService
     }
 
     /**
-     * Redondeo half-up a 2 decimales — a diferencia del resto del módulo
-     * (que trunca, bcdiv/bcmul con scale nunca redondea), la cuota fija del
-     * sistema francés sí necesita redondeo estándar para que coincida con
-     * cualquier tabla de amortización de referencia (calculadora, Excel,
-     * otro banco) — confirmado contra un ejemplo exacto que pasó el usuario.
+     * Redondeo half-up a los 10 céntimos más cercanos (1 decimal), formateado
+     * a 2 — la cuota fija del sistema francés se redondea así (no al centavo
+     * exacto) para calzar con las planillas de referencia del negocio.
      */
-    private function bcRoundMoney(string $numero): string
-    {
-        return bcadd($numero, '0.005', 2);
-    }
-
-    /**
-     * Redondeo half-up a la DÉCIMA más cercana (1 decimal), formateado a 2 —
-     * el interés de cada cuota compuesta se muestra así (solo el capital
-     * conserva los centavos), confirmado explícitamente con el usuario para
-     * que la tabla se lea más simple.
-     */
-    private function bcRoundMoney10(string $numero): string
+    private function bcRoundDecima(string $numero): string
     {
         return bcadd(bcadd($numero, '0.05', 1), '0', 2);
     }
@@ -2830,6 +2822,7 @@ final class CreditoService
     private function conCobro(Credito $credito, Cobro $cobro): Credito
     {
         $credito->setAttribute('cobro_id', $cobro->id);
+        $credito->syncOriginalAttribute('cobro_id');
 
         return $credito;
     }

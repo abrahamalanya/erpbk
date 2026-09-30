@@ -39,6 +39,7 @@ class VentaFactory extends Factory
             'inicial' => $precio,
             'interes' => null,
             'numero_cuotas' => null,
+            'tipo_cuota' => null,
             'fecha_limite' => null,
             'saldo_pendiente' => 0,
             'pagada_at' => now(),

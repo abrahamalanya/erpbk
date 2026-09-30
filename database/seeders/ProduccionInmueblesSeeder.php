@@ -6,6 +6,7 @@ use App\Modules\Cliente\Models\Cliente;
 use App\Modules\CreditoHipotecario\Models\Inmueble;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
+use App\Modules\Ubigeo\Models\UbigeoDistrito;
 use App\Modules\Usuario\Models\User;
 use Illuminate\Database\Seeder;
 use RuntimeException;
@@ -16,8 +17,9 @@ class ProduccionInmueblesSeeder extends Seeder
      * Inmuebles reales ya registrados en producción (ver
      * database/seeders/data/produccion_inmuebles.php). Debe correr después
      * de ProduccionClientesSeeder: cada inmueble se ata a su cliente por
-     * número de documento, no por id. ubigeo_distrito_id no se replica (no
-     * tiene una clave natural simple de resolver) — queda sin distrito.
+     * número de documento, no por id. Si el export incluye el código del
+     * distrito, se resuelve contra el catálogo de Ubigeo; los exports
+     * históricos que no lo incluyen quedan con distrito null.
      */
     public function run(): void
     {
@@ -47,6 +49,7 @@ class ProduccionInmueblesSeeder extends Seeder
                 'oficina_registral' => $datos['oficina_registral'],
                 'tipo_inmueble' => $datos['tipo_inmueble'],
                 'direccion' => $datos['direccion'],
+                'ubigeo_distrito_id' => $this->resolverDistritoId($datos, 'ubigeo_distrito'),
                 'area_terreno' => $datos['area_terreno'],
                 'area_construida' => $datos['area_construida'],
                 'propietario' => $datos['propietario'],
@@ -55,6 +58,7 @@ class ProduccionInmueblesSeeder extends Seeder
                 'observacion' => $datos['observacion'],
                 'valorizacion' => $datos['valorizacion'],
                 'precio_venta' => $datos['precio_venta'],
+                'precio_oferta' => $datos['precio_oferta'] ?? null,
                 'puntaje' => $datos['puntaje'],
                 'foto_cliente_producto_path' => $datos['foto_cliente_producto_path'],
                 'video_path' => $datos['video_path'],
@@ -73,6 +77,28 @@ class ProduccionInmueblesSeeder extends Seeder
                 ])->saveQuietly();
             }
         }
+    }
+
+    /**
+     * Resuelve el distrito por código para no depender del id de la base
+     * desde la que se exportaron los datos. También acepta el id solo cuando
+     * todavía existe en esta instalación.
+     *
+     * @param  array<string, mixed>  $datos
+     */
+    private function resolverDistritoId(array $datos, string $prefijo): ?int
+    {
+        $codigo = $datos["{$prefijo}_codigo"] ?? null;
+
+        if ($codigo !== null) {
+            return UbigeoDistrito::query()->where('codigo', $codigo)->value('id');
+        }
+
+        $id = $datos["{$prefijo}_id"] ?? null;
+
+        return $id !== null && UbigeoDistrito::query()->whereKey($id)->exists()
+            ? (int) $id
+            : null;
     }
 
     /**

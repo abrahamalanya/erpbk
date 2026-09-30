@@ -25,7 +25,7 @@ final class SimuladorService
      * nada — es justamente el punto del simulador, poder jugar con distintas
      * tasas/cuotas frente al cliente.
      *
-     * @param  array{tipo_credito: string, cliente_id: int, monto_prestamo: string, interes?: string|null, tipo_cuota: string, numero_cuotas?: int|null}  $datos
+     * @param  array{tipo_credito: string, cliente_id: int, monto_prestamo: string, interes?: string|null, tipo_interes?: string|null, tipo_cuota: string, numero_cuotas?: int|null}  $datos
      */
     public function simular(User $actor, array $datos): SimulacionCredito
     {
@@ -37,6 +37,7 @@ final class SimuladorService
 
         $configuracion = $this->configuracion->resolverPara($agencia, $datos['tipo_credito']);
         $interes = $datos['interes'] ?? (string) $configuracion->interes_default;
+        $tipoInteres = $datos['tipo_interes'] ?? 'simple';
         $numeroCuotas = isset($datos['numero_cuotas']) && $datos['numero_cuotas'] !== null
             ? (int) $datos['numero_cuotas']
             : null;
@@ -46,6 +47,8 @@ final class SimuladorService
             $interes,
             $datos['tipo_cuota'],
             $numeroCuotas,
+            $tipoInteres,
+            $datos['tipo_credito'],
         );
 
         $montoTotalPagar = collect($preview['cuotas'])->reduce(
@@ -63,6 +66,7 @@ final class SimuladorService
             'registrado_por' => $actor->id,
             'monto_prestamo' => $datos['monto_prestamo'],
             'interes' => $interes,
+            'tipo_interes' => $tipoInteres,
             'tipo_cuota' => $datos['tipo_cuota'],
             'numero_cuotas' => $numeroCuotas,
             'plazo_dias' => $preview['plazo_dias'],

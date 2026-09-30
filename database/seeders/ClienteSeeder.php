@@ -4,6 +4,7 @@ namespace Database\Seeders;
 
 use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Empresa\Models\Agencia;
+use App\Modules\Ubigeo\Models\UbigeoDistrito;
 use App\Modules\Usuario\Models\User;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Storage;
@@ -31,7 +32,7 @@ class ClienteSeeder extends Seeder
      */
     public function run(): void
     {
-        $agencia = Agencia::where('nombre', 'Agencia Pucallpa')->firstOrFail();
+        $agencia = Agencia::where('nombre', 'Agencia Alameda')->firstOrFail();
 
         $asesores = User::role('asesor')->where('agencia_id', $agencia->id)->orderBy('id')->get();
 
@@ -40,6 +41,7 @@ class ClienteSeeder extends Seeder
         }
 
         $fotos = $this->publicarFotosDeMuestra();
+        $distrito = UbigeoDistrito::query()->where('nombre', 'Yarinacocha')->first();
 
         foreach (range(1, 100) as $n) {
             $asesor = $asesores[$n % $asesores->count()];
@@ -48,6 +50,8 @@ class ClienteSeeder extends Seeder
                 ->asignadoA($asesor)
                 ->create([
                     ...$fotos,
+                    'ubigeo_distrito_id' => $distrito?->id,
+                    'ubigeo_distrito_negocio_id' => $distrito?->id,
                     'registrado_por' => $asesor->id,
                 ]);
         }

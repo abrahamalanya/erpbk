@@ -62,8 +62,8 @@ class CreditoPrendarioSeeder extends Seeder
             return;
         }
 
-        $agencia = Agencia::where('nombre', 'Agencia Pucallpa')->firstOrFail();
-        $asesor = User::where('email', 'asesor1.Pucallpa@laravel.com')->firstOrFail();
+        $agencia = Agencia::where('nombre', 'Agencia Alameda')->firstOrFail();
+        $asesor = User::where('email', 'asesor1.Alameda@laravel.com')->firstOrFail();
         $admin = User::where('email', 'ejecutivo.abrahamalanya@laravel.com')->firstOrFail();
 
         foreach (self::ESCENARIOS as $escenario) {
@@ -79,7 +79,9 @@ class CreditoPrendarioSeeder extends Seeder
         for ($i = 1; $i <= self::REPETICIONES_REFRENDO; $i++) {
             $origenRefrendo = $this->crearCreditoActivo($agencia, $asesor, $admin, "Refrendado {$i}", 33);
             $interesRefrendo = $this->creditoService->calcularMontoRefrendo($origenRefrendo)['interes'];
-            $this->creditoService->refrendar($origenRefrendo, $asesor, $interesRefrendo, 'efectivo', null);
+            $this->asignarCodigo(
+                $this->creditoService->refrendar($origenRefrendo, $asesor, $interesRefrendo, 'efectivo', null)
+            );
         }
 
         for ($i = 1; $i <= self::REPETICIONES_LIQUIDACION; $i++) {
@@ -95,7 +97,7 @@ class CreditoPrendarioSeeder extends Seeder
                 'archivo_firmado_path' => 'clientes/samples/dni1.jpeg',
                 'firmado_at' => now(),
             ]);
-            $this->creditoService->confirmarLiquidacionSiCorresponde($liquidado, $devolucion);
+            $this->creditoService->confirmarLiquidacionSiCorresponde($liquidado, $devolucion, $asesor);
         }
     }
 
@@ -113,9 +115,14 @@ class CreditoPrendarioSeeder extends Seeder
             'marca' => 'HP',
             'modelo' => 'ProBook',
             'valorizacion' => 800,
+            'precio_venta' => 950,
+            'precio_oferta' => 800,
             'registrado_por' => $asesor->id,
             'foto_cliente_producto_path' => 'clientes/samples/cliente_producto.jpg',
         ]);
+        $bien->forceFill([
+            'codigo' => 'B-'.str_pad((string) $bien->id, 6, '0', STR_PAD_LEFT),
+        ])->saveQuietly();
         $bien->fotos()->create(['path' => 'clientes/samples/laptop.jpg', 'orden' => 0]);
 
         Carbon::setTestNow(now()->subDays($diasDesdeDesembolso));
@@ -138,6 +145,22 @@ class CreditoPrendarioSeeder extends Seeder
             $credito = $this->creditoService->desembolsar($credito, $asesor, null, null);
         } finally {
             Carbon::setTestNow();
+        }
+
+        return $this->asignarCodigo($credito);
+    }
+
+    /**
+     * DatabaseSeeder corre con WithoutModelEvents, por lo que el hook que
+     * asigna el código del crédito no se dispara. Se completa aquí también
+     * para los créditos sucesores creados durante un refrendo.
+     */
+    private function asignarCodigo(Credito $credito): Credito
+    {
+        if (blank($credito->codigo)) {
+            $credito->forceFill([
+                'codigo' => 'C-'.str_pad((string) $credito->id, 6, '0', STR_PAD_LEFT),
+            ])->saveQuietly();
         }
 
         return $credito;

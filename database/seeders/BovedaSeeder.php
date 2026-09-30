@@ -21,19 +21,19 @@ class BovedaSeeder extends Seeder
 
     /**
      * Seeds the initial cash flow, entirely in efectivo, from the top down:
-     * bóveda principal (100 000) -> traspaso a la bóveda de Agencia Pucallpa
+     * bóveda principal (100 000) -> traspaso a la bóveda de Agencia Alameda
      * (50 000) -> billetaje solicitado y aprobado para un asesor (30 000).
-     * Leaves: principal 50 000, agencia Pucallpa 20 000, caja del asesor
+     * Leaves: principal 50 000, agencia Alameda 20 000, caja del asesor
      * 30 000.
      */
     public function run(): void
     {
         $credimas = Empresa::where('nombre', 'CREDIMAS')->firstOrFail();
-        $pucallpa = Agencia::where('nombre', 'Agencia Pucallpa')->firstOrFail();
+        $alameda = Agencia::where('nombre', 'Agencia Alameda')->firstOrFail();
 
         $adminGeneral = User::where('email', 'admin.abrahamalanya@laravel.com')->firstOrFail();
         $adminAgencia = User::where('email', 'ejecutivo.abrahamalanya@laravel.com')->firstOrFail();
-        $asesor = User::where('email', 'asesor1.Pucallpa@laravel.com')->firstOrFail();
+        $asesor = User::where('email', 'asesor1.Alameda@laravel.com')->firstOrFail();
 
         $bovedaPrincipal = $this->bovedaService->principalDe($credimas->id);
 
@@ -41,10 +41,10 @@ class BovedaSeeder extends Seeder
             $this->bovedaService->aperturar($bovedaPrincipal, $adminGeneral, '100000');
         }
 
-        $bovedaAgencia = $this->bovedaService->deAgencia($pucallpa->id);
+        $bovedaAgencia = $this->bovedaService->deAgencia($alameda->id);
 
         if ($bovedaAgencia->ciclos()->doesntExist()) {
-            $this->bovedaService->inyectar($bovedaAgencia, $adminGeneral, '50000', 'Traspaso inicial a Agencia Pucallpa', 'efectivo');
+            $this->bovedaService->inyectar($bovedaAgencia, $adminGeneral, '50000', 'Traspaso inicial a Agencia Alameda', 'efectivo');
         }
 
         if ($this->cajaService->cajaDe($asesor)->cicloAbierto()->doesntExist()) {

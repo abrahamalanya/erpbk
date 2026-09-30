@@ -65,12 +65,15 @@ class ProduccionCreditosSeeder extends Seeder
                 'agencia_id' => $agencia->id,
                 'registrado_por' => $this->usuarioId($datos['registrado_por_email']),
                 'supervisado_por' => $this->usuarioId($datos['supervisado_por_email']),
+                'aval_id' => $this->clienteId($empresa, $datos, 'aval'),
+                'aval_2_id' => $this->clienteId($empresa, $datos, 'aval_2'),
                 'numero_refrendo' => $datos['numero_refrendo'],
                 'interes' => $datos['interes'],
-                'interes_solicitud_especial' => $datos['interes_solicitud_especial'],
-                'motivo_interes' => $datos['motivo_interes'],
+                'tipo_interes' => $datos['tipo_interes'] ?? 'simple',
+                'interes_solicitud_especial' => $datos['interes_solicitud_especial'] ?? false,
+                'motivo_interes' => $datos['motivo_interes'] ?? null,
                 'tipo_cuota' => $datos['tipo_cuota'],
-                'numero_cuotas' => $datos['numero_cuotas'],
+                'numero_cuotas' => $datos['numero_cuotas'] ?? null,
                 'plazo_dias' => $datos['plazo_dias'],
                 'estado' => $datos['estado'],
                 'aprobado_por' => $this->usuarioId($datos['aprobado_por_email']),
@@ -141,6 +144,9 @@ class ProduccionCreditosSeeder extends Seeder
                 'monto_capital' => $cuotaDatos['monto_capital'],
                 'monto_interes' => $cuotaDatos['monto_interes'],
                 'monto_total' => $cuotaDatos['monto_total'],
+                'monto_abonado' => $cuotaDatos['monto_abonado'] ?? 0,
+                'pagada_at' => $cuotaDatos['pagada_at'] ?? null,
+                'mora_pagada' => $cuotaDatos['mora_pagada'] ?? null,
             ]);
         }
     }
@@ -155,8 +161,14 @@ class ProduccionCreditosSeeder extends Seeder
                 'empresa_id' => $credito->empresa_id,
                 'cliente_id' => $cliente->id,
                 'credito_id' => $credito->id,
+                'credito_sucesor_id' => $this->creditoId($credito->empresa_id, $cobroDatos, 'credito_sucesor'),
                 'registrado_por' => $this->usuarioId($cobroDatos['registrado_por_email']),
                 'operacion' => $cobroDatos['operacion'],
+                'estado' => $cobroDatos['estado'] ?? 'registrado',
+                'credito_estado_anterior' => $cobroDatos['credito_estado_anterior'] ?? null,
+                'anulado_por' => $this->usuarioId($cobroDatos['anulado_por_email'] ?? null),
+                'anulado_at' => $cobroDatos['anulado_at'] ?? null,
+                'motivo_anulacion' => $cobroDatos['motivo_anulacion'] ?? null,
                 'monto_pagado' => $cobroDatos['monto_pagado'],
                 'medio' => $cobroDatos['medio'],
                 'interes' => $cobroDatos['interes'],
@@ -168,6 +180,60 @@ class ProduccionCreditosSeeder extends Seeder
                 'updated_at' => $cobroDatos['created_at'],
             ]);
         }
+    }
+
+    /**
+     * Resuelve un cliente por documento para no arrastrar ids de la base de
+     * exportación. Si el sidecar sólo trae un id, se acepta únicamente si
+     * todavía pertenece a la misma empresa.
+     *
+     * @param  array<string, mixed>  $datos
+     */
+    private function clienteId(Empresa $empresa, array $datos, string $prefijo): ?int
+    {
+        $documento = $datos["{$prefijo}_numero_documento"]
+            ?? $datos["{$prefijo}_documento"]
+            ?? null;
+
+        if ($documento !== null) {
+            return Cliente::query()
+                ->where('empresa_id', $empresa->id)
+                ->where('numero_documento', $documento)
+                ->value('id');
+        }
+
+        $id = $datos["{$prefijo}_id"] ?? null;
+
+        return $id !== null && Cliente::query()
+            ->where('empresa_id', $empresa->id)
+            ->whereKey($id)
+            ->exists()
+            ? (int) $id
+            : null;
+    }
+
+    /**
+     * @param  array<string, mixed>  $datos
+     */
+    private function creditoId(int $empresaId, array $datos, string $prefijo): ?int
+    {
+        $codigo = $datos["{$prefijo}_codigo"] ?? null;
+
+        if ($codigo !== null) {
+            return Credito::query()
+                ->where('empresa_id', $empresaId)
+                ->where('codigo', $codigo)
+                ->value('id');
+        }
+
+        $id = $datos["{$prefijo}_id"] ?? null;
+
+        return $id !== null && Credito::query()
+            ->where('empresa_id', $empresaId)
+            ->whereKey($id)
+            ->exists()
+            ? (int) $id
+            : null;
     }
 
     private function usuarioId(?string $email): ?int

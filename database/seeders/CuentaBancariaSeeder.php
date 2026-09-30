@@ -20,10 +20,10 @@ class CuentaBancariaSeeder extends Seeder
     public function run(): void
     {
         $credimas = Empresa::where('nombre', 'CREDIMAS')->firstOrFail();
-        $pucallpa = Agencia::where('nombre', 'Agencia Pucallpa')->firstOrFail();
+        $alameda = Agencia::where('nombre', 'Agencia Alameda')->firstOrFail();
 
         $bovedaPrincipal = $this->bovedaService->principalDe($credimas->id);
-        $bovedaPucallpa = $this->bovedaService->deAgencia($pucallpa->id);
+        $bovedaAlameda = $this->bovedaService->deAgencia($alameda->id);
 
         $this->crearCuentas($bovedaPrincipal, $credimas->nombre, [
             ['banco' => 'BCP', 'tipo_cuenta' => 'corriente'],
@@ -32,7 +32,7 @@ class CuentaBancariaSeeder extends Seeder
             ['banco' => 'Scotiabank', 'tipo_cuenta' => 'ahorro'],
         ]);
 
-        $this->crearCuentas($bovedaPucallpa, $credimas->nombre, [
+        $this->crearCuentas($bovedaAlameda, $credimas->nombre, [
             ['banco' => 'Banco de la Nación', 'tipo_cuenta' => 'corriente', 'acepta_yape' => true, 'numero_yape' => '923456789'],
             ['banco' => 'Banco Pichincha', 'tipo_cuenta' => 'ahorro'],
             ['banco' => 'Banco Falabella', 'tipo_cuenta' => 'corriente'],

@@ -67,6 +67,7 @@ class ProduccionUsuariosSeeder extends Seeder
             'estado' => $datos['estado'],
             'empresa_id' => $empresa?->id,
             'agencia_id' => $agencia?->id,
+            'modulos' => $datos['modulos'] ?? null,
         ]);
 
         $user->syncRoles($datos['roles']);

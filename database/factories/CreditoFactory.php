@@ -37,7 +37,9 @@ class CreditoFactory extends Factory
             'numero_refrendo' => 0,
             'monto_prestamo' => fake()->randomFloat(2, 100, 2000),
             'interes' => fake()->randomFloat(2, 5, 20),
+            'tipo_interes' => 'simple',
             'tipo_cuota' => fake()->randomElement(['diario', 'semanal', 'quincenal', 'mensual']),
+            'numero_cuotas' => null,
             'plazo_dias' => 30,
             'estado' => 'pendiente',
         ];

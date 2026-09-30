@@ -121,6 +121,7 @@ final class RutaCobranzaService
                 'cliente_id' => $fila['cliente']->id,
                 'nombre' => $fila['cliente']->nombre,
                 'apellido' => $fila['cliente']->apellido,
+                'numero_documento' => $fila['cliente']->numero_documento,
                 'direccion' => $fila['cliente']->direccion,
                 'referencia' => $fila['cliente']->referencia,
                 'latitud' => $fila['cliente']->latitud !== null ? (float) $fila['cliente']->latitud : null,

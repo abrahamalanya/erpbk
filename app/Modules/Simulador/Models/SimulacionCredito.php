@@ -37,6 +37,7 @@ class SimulacionCredito extends Model
         'registrado_por',
         'monto_prestamo',
         'interes',
+        'tipo_interes',
         'tipo_cuota',
         'numero_cuotas',
         'plazo_dias',

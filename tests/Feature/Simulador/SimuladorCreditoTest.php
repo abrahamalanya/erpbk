@@ -76,6 +76,45 @@ it('registra una simulación de crédito diario', function () {
         ->and((float) $response->json('data.interes'))->toBe(20.0);
 });
 
+it('simula con tipo de interés compuesto cuando se indica', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $response = $this->postJson('/api/simulaciones-credito', [
+        'tipo_credito' => 'vehicular',
+        'cliente_id' => $this->cliente->id,
+        'monto_prestamo' => 1000,
+        'interes' => 8,
+        'tipo_cuota' => 'mensual',
+        'numero_cuotas' => 3,
+        'tipo_interes' => 'compuesto',
+    ])->assertCreated();
+
+    expect($response->json('data.tipo_interes'))->toBe('compuesto');
+
+    $simple = $this->postJson('/api/simulaciones-credito', [
+        'tipo_credito' => 'vehicular',
+        'cliente_id' => $this->cliente->id,
+        'monto_prestamo' => 1000,
+        'interes' => 8,
+        'tipo_cuota' => 'mensual',
+        'numero_cuotas' => 3,
+    ])->assertCreated();
+
+    expect($simple->json('data.tipo_interes'))->toBe('simple')
+        ->and($response->json('data.monto_total_pagar'))->not->toBe($simple->json('data.monto_total_pagar'));
+});
+
+it('rejects an invalid tipo_interes', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $this->postJson('/api/simulaciones-credito', [
+        'tipo_credito' => 'prendario',
+        'monto_prestamo' => 400,
+        'tipo_cuota' => 'mensual',
+        'tipo_interes' => 'otro',
+    ])->assertUnprocessable()->assertJsonValidationErrors('tipo_interes');
+});
+
 it('rejects a numero_cuotas above the configured max_cuotas for the tipo_credito', function () {
     Sanctum::actingAs($this->asesor, ['*']);
 

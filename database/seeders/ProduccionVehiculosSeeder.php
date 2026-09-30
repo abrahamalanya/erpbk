@@ -52,6 +52,7 @@ class ProduccionVehiculosSeeder extends Seeder
                 'observacion' => $datos['observacion'],
                 'valorizacion' => $datos['valorizacion'],
                 'precio_venta' => $datos['precio_venta'],
+                'precio_oferta' => $datos['precio_oferta'] ?? null,
                 'puntaje' => $datos['puntaje'],
                 'foto_cliente_producto_path' => $datos['foto_cliente_producto_path'],
                 'video_path' => $datos['video_path'],

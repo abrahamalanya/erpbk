@@ -65,6 +65,7 @@ it('lists the ruta of clientes en mora, one row per cliente even with 2 crédito
 
     $filaA = collect($response->json('data'))->firstWhere('cliente_id', $clienteA->id);
     expect($filaA['creditos_vencidos'])->toBe(2)
+        ->and($filaA['numero_documento'])->toBe($clienteA->numero_documento)
         ->and(collect($filaA['creditos'])->pluck('id')->sort()->values()->all())
         ->toBe(collect([$creditoA1->id, $creditoA2->id])->sort()->values()->all())
         ->and($filaA['creditos'][0])->toHaveKeys(['id', 'codigo', 'tipo_credito']);

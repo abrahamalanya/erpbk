@@ -9,8 +9,10 @@ use App\Modules\CreditoPrendario\Models\Bien;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Usuario\Models\User;
+use App\Nucleo\Services\PdfGeneratorService;
 use Database\Seeders\PermissionSeeder;
 use Database\Seeders\RoleSeeder;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
 
@@ -82,7 +84,17 @@ it('generates the sticker documento as soon as the crédito is registered', func
     expect($pdf->headers->get('content-type'))->toContain('application/pdf');
 });
 
-it('prints the garantía código on the sticker label', function () {
+it('does not break the sticker PDF when a garantía has no código (legacy data seeded with WithoutModelEvents)', function () {
+    $creditoId = registrarCreditoBasico($this);
+    $this->bien->forceFill(['codigo' => null])->saveQuietly();
+
+    $sticker = Credito::find($creditoId)->documentos()->where('tipo', 'sticker')->firstOrFail();
+
+    $pdf = $this->get("/api/creditos-prendarios/{$creditoId}/documentos/{$sticker->id}/ver")->assertOk();
+    expect($pdf->headers->get('content-type'))->toContain('application/pdf');
+});
+
+it('prints the garantía código as a QR and the remate date on the sticker label', function () {
     $creditoId = registrarCreditoBasico($this);
     $credito = Credito::find($creditoId)->load(['cliente', 'agencia', 'empresa']);
 
@@ -91,11 +103,49 @@ it('prints the garantía código on the sticker label', function () {
         'garantias' => $credito->bienes,
         'datos' => [],
         'fotoDataUri' => fn (): ?string => null,
+        'fechaRemate' => '2026-01-15',
+        'qrDataUri' => fn (?string $texto): ?string => $texto ? "data:image/png;base64,{$texto}" : null,
     ])->render();
 
     expect($this->bien->fresh()->codigo)->toStartWith('B-')
         ->and($html)->toContain('digo del producto')
-        ->and($html)->toContain($this->bien->fresh()->codigo);
+        ->and($html)->toContain($this->bien->fresh()->codigo)
+        ->and($html)->toContain('data:image/png;base64,'.$this->bien->fresh()->codigo)
+        ->and($html)->toContain('Fecha de desembolso')
+        ->and($html)->toContain('Fecha de remate')
+        ->and($html)->toContain('15/01/2026')
+        ->and($html)->not->toContain('Fecha de ingreso');
+});
+
+it('computes fecha de remate as vencimiento + días de espera configurados once the crédito is desembolsado', function () {
+    Storage::fake('public');
+
+    $creditoId = registrarCreditoBasico($this);
+
+    Sanctum::actingAs($this->adminAgencia, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/aprobar")->assertSuccessful();
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar")->assertSuccessful();
+
+    $credito = Credito::find($creditoId);
+    $sticker = $credito->documentos()->where('tipo', 'sticker')->firstOrFail();
+
+    $datosCapturados = null;
+    $this->mock(PdfGeneratorService::class, function ($mock) use (&$datosCapturados): void {
+        $mock->shouldReceive('renderizarDesdeVista')
+            ->once()
+            ->andReturnUsing(function (string $vista, array $datos) use (&$datosCapturados) {
+                $datosCapturados = $datos;
+
+                return response('ok');
+            });
+    });
+
+    $this->get("/api/creditos-prendarios/{$creditoId}/documentos/{$sticker->id}/ver")->assertOk();
+
+    $esperado = Carbon::parse($credito->fresh()->fecha_vencimiento)->addDays(15)->toDateString();
+    expect($datosCapturados['fechaRemate'])->toBe($esperado);
 });
 
 it('generates a voucher de desembolso with a snapshot when the crédito is disbursed', function () {

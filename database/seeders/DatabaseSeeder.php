@@ -23,6 +23,7 @@ class DatabaseSeeder extends Seeder
             AgenciaSeeder::class,
             ConceptoSeeder::class,
             ConfiguracionCreditoPrendarioSeeder::class,
+            ConfiguracionVentaSeeder::class,
             UbigeoSeeder::class,
         ]);
 
@@ -51,6 +52,7 @@ class DatabaseSeeder extends Seeder
                 ClienteSeeder::class,
                 BienSeeder::class,
                 CreditoPrendarioSeeder::class,
+                HistoricoReportesSeeder::class,
             ]);
         }
     }

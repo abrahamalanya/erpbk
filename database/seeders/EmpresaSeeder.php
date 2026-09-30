@@ -18,6 +18,8 @@ class EmpresaSeeder extends Seeder
             'domicilio_legal' => 'CAL.SAN PEDRO/SAN TOMAS MZA. A LOTE. 12 (A.H. LOS OLVOS) YARINACOCHA - CORONEL PORTILLO - UCAYALI',
             'actividad_economica' => 'CONCESIÓN DE CRÉDITO',
             'representante_legal' => 'OSORES PAUCARCHUCO PABLO ELVIS',
+            'apoderado_legal' => 'Norma Quispe Quicaña',
+            'celular_cobranzas' => '965263936',
             'estado' => 'activo',
         ]);
 
