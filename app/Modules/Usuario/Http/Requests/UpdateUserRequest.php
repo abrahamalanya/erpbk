@@ -71,6 +71,14 @@ class UpdateUserRequest extends FormRequest
                 // The user's empresa is fixed, so the agencia must belong to it.
                 Rule::exists('agencias', 'id')->where('empresa_id', $target->empresa_id),
             ],
+            'fecha_nacimiento' => ['sometimes', 'nullable', 'date', 'before_or_equal:today'],
+            'direccion' => ['sometimes', 'nullable', 'string', 'max:255'],
+            'referencia' => ['sometimes', 'nullable', 'string', 'max:500'],
+            'ubigeo_distrito_id' => ['sometimes', 'nullable', 'integer', 'exists:ubigeo_distritos,id'],
+            'latitud' => ['sometimes', 'nullable', 'numeric', 'between:-90,90'],
+            'longitud' => ['sometimes', 'nullable', 'numeric', 'between:-180,180'],
+            'foto' => ['sometimes', 'nullable', 'image', 'max:8192', 'mimes:jpg,jpeg,png'],
+            'qr_yape' => ['sometimes', 'nullable', 'image', 'max:8192', 'mimes:jpg,jpeg,png'],
         ];
     }
 
@@ -105,6 +113,12 @@ class UpdateUserRequest extends FormRequest
             'roles.*.in' => 'No tienes permiso para asignar este rol',
             'agencia_id.required' => 'La agencia es requerida para este rol',
             'agencia_id.exists' => 'La agencia no pertenece a la empresa del usuario',
+            'ubigeo_distrito_id.exists' => 'El distrito indicado no existe',
+            'latitud.between' => 'La latitud debe estar entre -90 y 90',
+            'longitud.between' => 'La longitud debe estar entre -180 y 180',
+            'fecha_nacimiento.before_or_equal' => 'La fecha de nacimiento no puede ser futura',
+            'foto.image' => 'La foto de perfil debe ser una imagen',
+            'qr_yape.image' => 'La imagen del QR de Yape debe ser una imagen',
         ];
     }
 }

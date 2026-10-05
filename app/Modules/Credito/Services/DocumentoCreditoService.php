@@ -231,7 +231,7 @@ final class DocumentoCreditoService
         }
 
         $credito = $documento->credito()->with([
-            'cliente.fichaSocioeconomica.familiares', 'cuotas', 'aval', 'aval2',
+            'cliente.fichaSocioeconomica.familiares', 'cliente.fotos', 'cuotas', 'aval', 'aval2',
             'expedienteDocumentos', 'inmuebles', 'agencia', 'empresa', 'registradoPor',
         ])->firstOrFail();
 

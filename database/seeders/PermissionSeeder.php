@@ -10,9 +10,13 @@ use Illuminate\Database\Seeder;
 class PermissionSeeder extends Seeder
 {
     /**
+     * Catálogo completo de permisos. Es public para que los tests que cuentan
+     * el total (ej. el listado de /api/permisos) no tengan que hardcodear un
+     * número que se desactualiza cada vez que se agrega un permiso.
+     *
      * @var list<string>
      */
-    private const PERMISSIONS = [
+    public const PERMISSIONS = [
         'empresas.ver', 'empresas.editar',
         'agencias.ver', 'agencias.crear', 'agencias.editar', 'agencias.eliminar',
         'usuarios.ver', 'usuarios.crear', 'usuarios.editar', 'usuarios.eliminar',
@@ -24,7 +28,7 @@ class PermissionSeeder extends Seeder
         'billetajes.ver', 'billetajes.crear', 'billetajes.aprobar', 'billetajes.rechazar',
         'caja_movimientos.crear',
         'bienes.ver', 'bienes.crear', 'bienes.editar',
-        'creditos_prendarios.ver', 'creditos_prendarios.crear', 'creditos_prendarios.subsanar', 'creditos_prendarios.aprobar', 'creditos_prendarios.rechazar', 'creditos_prendarios.subsanar', 'creditos_prendarios.desembolsar', 'creditos_prendarios.refrendar', 'creditos_prendarios.pagar_cuota', 'creditos_prendarios.adendar', 'creditos_prendarios.refinanciar', 'creditos_prendarios.liquidar', 'creditos_prendarios.editar', 'creditos_prendarios.eliminar', 'creditos_prendarios.revertir_aprobacion', 'creditos_prendarios.enviar_tienda', 'creditos_prendarios.vender',
+        'creditos_prendarios.ver', 'creditos_prendarios.crear', 'creditos_prendarios.subsanar', 'creditos_prendarios.aprobar', 'creditos_prendarios.rechazar', 'creditos_prendarios.desembolsar', 'creditos_prendarios.refrendar', 'creditos_prendarios.pagar_cuota', 'creditos_prendarios.adendar', 'creditos_prendarios.refinanciar', 'creditos_prendarios.liquidar', 'creditos_prendarios.editar', 'creditos_prendarios.eliminar', 'creditos_prendarios.revertir_aprobacion', 'creditos_prendarios.enviar_tienda', 'creditos_prendarios.vender',
         'configuraciones_credito_prendario.ver', 'configuraciones_credito_prendario.editar', 'configuraciones_credito_prendario.eliminar',
         'ventas.ver', 'ventas.crear', 'ventas.cobrar', 'ventas.cancelar',
         'configuraciones_venta.ver', 'configuraciones_venta.editar', 'configuraciones_venta.eliminar',
@@ -35,6 +39,7 @@ class PermissionSeeder extends Seeder
         'creditos_hipotecarios.ver', 'creditos_hipotecarios.crear',
         'creditos_diarios.ver', 'creditos_diarios.crear',
         'cobranzas.ver', 'cobranzas.registrar',
+        'dashboard.ver',
         'simulaciones_credito.ver', 'simulaciones_credito.crear', 'simulaciones_credito.eliminar',
         'ubicaciones_asesores.ver',
     ];
@@ -73,6 +78,20 @@ class PermissionSeeder extends Seeder
      * @var list<string>
      */
     private const COBRANZAS_PERMISSIONS = ['cobranzas.ver', 'cobranzas.registrar'];
+
+    /**
+     * El dashboard inicial resume cobranzas y desembolsos, así que va a los
+     * mismos roles que el módulo Cobranzas: quien cobra o desembolsa ya puede
+     * ver el resumen de su propia operación.
+     *
+     * @var list<string>
+     */
+    private const DASHBOARD_ROLES = ['administrador_general', 'administrador_agencia', 'supervisor', 'asesor'];
+
+    /**
+     * @var list<string>
+     */
+    private const DASHBOARD_PERMISSIONS = ['dashboard.ver'];
 
     /**
      * @var array<string, list<string>>
@@ -138,6 +157,10 @@ class PermissionSeeder extends Seeder
 
             if (in_array($roleName, self::COBRANZAS_ROLES, true)) {
                 $permissions = [...$permissions, ...self::COBRANZAS_PERMISSIONS];
+            }
+
+            if (in_array($roleName, self::DASHBOARD_ROLES, true)) {
+                $permissions = [...$permissions, ...self::DASHBOARD_PERMISSIONS];
             }
 
             Role::where('name', $roleName)->firstOrFail()->syncPermissions($permissions);

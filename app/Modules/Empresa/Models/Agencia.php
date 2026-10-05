@@ -31,6 +31,7 @@ class Agencia extends Model
     protected $fillable = [
         'empresa_id',
         'nombre',
+        'telefono',
         'estado',
     ];
 

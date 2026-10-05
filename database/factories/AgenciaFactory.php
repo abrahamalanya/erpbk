@@ -23,6 +23,7 @@ class AgenciaFactory extends Factory
         return [
             'empresa_id' => Empresa::factory(),
             'nombre' => 'Agencia '.fake()->unique()->city(),
+            'telefono' => fake()->numerify('9########'),
             'estado' => 'activo',
         ];
     }

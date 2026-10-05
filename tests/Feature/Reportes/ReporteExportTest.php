@@ -27,6 +27,7 @@ beforeEach(function () {
 });
 
 it('exports cobranza diaria as pdf and excel', function () {
+
     Sanctum::actingAs($this->asesor, ['*']);
 
     $this->getJson('/api/reportes/cobranza-diaria/pdf')
@@ -86,4 +87,24 @@ it('denies exporting cobros to a user without cobranzas.ver', function () {
     Sanctum::actingAs($sinPermiso, ['*']);
     $this->getJson('/api/cobros/pdf')->assertForbidden();
     $this->getJson('/api/cobros/excel')->assertForbidden();
+});
+
+it('exports atrasos diarios as pdf and excel', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $this->getJson('/api/reportes/atrasos-diarios/pdf')
+        ->assertOk()
+        ->assertHeader('content-type', 'application/pdf');
+
+    $this->getJson('/api/reportes/atrasos-diarios/excel')
+        ->assertOk()
+        ->assertHeader('content-type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+});
+
+it('denies exporting atrasos diarios to a user without creditos_prendarios.ver', function () {
+    $sinPermiso = User::factory()->forAgencia($this->agencia)->create();
+
+    Sanctum::actingAs($sinPermiso, ['*']);
+    $this->getJson('/api/reportes/atrasos-diarios/pdf')->assertForbidden();
+    $this->getJson('/api/reportes/atrasos-diarios/excel')->assertForbidden();
 });

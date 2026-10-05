@@ -3,6 +3,7 @@
 namespace Database\Seeders;
 
 use App\Modules\Cliente\Models\Cliente;
+use App\Modules\Cliente\Models\ClienteFoto;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Ubigeo\Models\UbigeoDistrito;
@@ -27,7 +28,7 @@ class ProduccionClientesSeeder extends Seeder
             $empresa = Empresa::where('nombre', $datos['empresa'])->firstOrFail();
             $agencia = Agencia::where('nombre', $datos['agencia'])->firstOrFail();
 
-            Cliente::query()->firstOrCreate([
+            $cliente = Cliente::query()->firstOrCreate([
                 'empresa_id' => $empresa->id,
                 'numero_documento' => $datos['numero_documento'],
             ], [
@@ -55,10 +56,19 @@ class ProduccionClientesSeeder extends Seeder
                 'foto_cliente_path' => $datos['foto_cliente_path'],
                 'foto_dni_path' => $datos['foto_dni_path'],
                 'foto_dni_reverso_path' => $datos['foto_dni_reverso_path'],
-                'foto_casa_path' => $datos['foto_casa_path'],
-                'foto_negocio_path' => $datos['foto_negocio_path'],
                 'estado' => $datos['estado'],
             ]);
+
+            // Casa y negocio son fotos múltiples: van como filas en
+            // cliente_fotos. firstOrCreate() es idempotente, así que solo se
+            // agrega lo que todavía falta para no duplicar al re-correrlo.
+            foreach ([ClienteFoto::TIPO_CASA, ClienteFoto::TIPO_NEGOCIO] as $tipo) {
+                $path = $datos["foto_{$tipo}_path"] ?? null;
+
+                if ($path && ! $cliente->fotos()->where('tipo', $tipo)->exists()) {
+                    $cliente->fotos()->create(['tipo' => $tipo, 'path' => $path, 'orden' => 0]);
+                }
+            }
         }
     }
 

@@ -50,7 +50,11 @@ it('lists permissions for the roles module', function () {
     $sistemas->assignRole('sistemas');
     Sanctum::actingAs($sistemas, ['*']);
 
+    // El total se deriva del catálogo del seeder en vez de hardcodearlo, para
+    // que agregar un permiso (como dashboard.ver) no rompa este test.
+    $total = count(PermissionSeeder::PERMISSIONS);
+
     $this->getJson('/api/permisos')
         ->assertSuccessful()
-        ->assertJsonCount(87, 'data');
+        ->assertJsonCount($total, 'data');
 });

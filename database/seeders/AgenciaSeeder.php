@@ -15,11 +15,13 @@ class AgenciaSeeder extends Seeder
     {
         $principal = Empresa::where('nombre', 'CREDIMAS')->firstOrFail();
 
-        foreach (['Agencia Alameda'] as $nombre) {
+        // telefono: lo imprime el aviso de extravío de la fotocheck. Sin esto
+        // la tarjeta cae al celular de cobranzas de la empresa.
+        foreach (['Agencia Alameda' => '511234567'] as $nombre => $telefono) {
             Agencia::firstOrCreate([
                 'empresa_id' => $principal->id,
                 'nombre' => $nombre,
-            ], ['estado' => 'activo']);
+            ], ['telefono' => $telefono, 'estado' => 'activo']);
         }
 
         // Agencia de la empresa de demostración: solo local (ver EmpresaSeeder).
@@ -29,7 +31,7 @@ class AgenciaSeeder extends Seeder
             Agencia::firstOrCreate([
                 'empresa_id' => $secundaria->id,
                 'nombre' => 'Agencia Cusco',
-            ], ['estado' => 'activo']);
+            ], ['telefono' => '084221090', 'estado' => 'activo']);
         }
     }
 }

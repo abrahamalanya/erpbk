@@ -1,3 +1,4 @@
+@use(App\Modules\Cliente\Models\ClienteFoto)
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -67,9 +68,13 @@
                 if ($seccion === 'dni') {
                     $propias = array_filter([$cliente->foto_dni_path, $cliente->foto_dni_reverso_path]);
                 } elseif ($seccion === 'casa') {
-                    $propias = array_filter([$cliente->foto_casa_path]);
+                    $propias = $cliente->fotos->where('tipo', ClienteFoto::TIPO_CASA)->pluck('path')->all();
                 } elseif ($seccion === 'negocio') {
-                    $propias = array_filter([$cliente->foto_negocio_path]);
+                    $propias = $cliente->fotos->where('tipo', ClienteFoto::TIPO_NEGOCIO)->pluck('path')->all();
+                } elseif ($seccion === 'suministro') {
+                    $propias = array_filter([$cliente->foto_suministro_path]);
+                } elseif ($seccion === 'recibo_servicio') {
+                    $propias = array_filter([$cliente->foto_recibo_luz_path]);
                 }
             }
 

@@ -55,8 +55,8 @@ class Cliente extends Model
         'foto_cliente_path',
         'foto_dni_path',
         'foto_dni_reverso_path',
-        'foto_casa_path',
-        'foto_negocio_path',
+        'foto_suministro_path',
+        'foto_recibo_luz_path',
         'estado',
     ];
 
@@ -64,7 +64,8 @@ class Cliente extends Model
      * @var list<string>
      */
     protected $appends = [
-        'foto_cliente_url', 'foto_dni_url', 'foto_dni_reverso_url', 'foto_casa_url', 'foto_negocio_url', 'edad',
+        'foto_cliente_url', 'foto_dni_url', 'foto_dni_reverso_url',
+        'foto_suministro_url', 'foto_recibo_luz_url', 'edad',
         'distrito', 'provincia', 'departamento',
         'distrito_negocio', 'provincia_negocio', 'departamento_negocio',
     ];
@@ -131,6 +132,16 @@ class Cliente extends Model
         return $this->belongsTo(UbigeoDistrito::class);
     }
 
+    /**
+     * Fotos múltiples del cliente (casa, negocio, adicionales). Casa y negocio
+     * ya no son columnas propias: son filas en `cliente_fotos` discriminadas
+     * por `tipo`, así que el frontend las agrupa por ese campo.
+     */
+    public function fotos(): HasMany
+    {
+        return $this->hasMany(ClienteFoto::class)->orderBy('orden');
+    }
+
     /** Distrito de la dirección del negocio/trabajo del cliente — opcional, separado de la casa. */
     public function ubigeoDistritoNegocio(): BelongsTo
     {
@@ -193,17 +204,17 @@ class Cliente extends Model
             : null);
     }
 
-    protected function fotoCasaUrl(): Attribute
+    protected function fotoSuministroUrl(): Attribute
     {
-        return Attribute::get(fn (): ?string => $this->foto_casa_path
-            ? Storage::disk('public')->url($this->foto_casa_path)
+        return Attribute::get(fn (): ?string => $this->foto_suministro_path
+            ? Storage::disk('public')->url($this->foto_suministro_path)
             : null);
     }
 
-    protected function fotoNegocioUrl(): Attribute
+    protected function fotoReciboLuzUrl(): Attribute
     {
-        return Attribute::get(fn (): ?string => $this->foto_negocio_path
-            ? Storage::disk('public')->url($this->foto_negocio_path)
+        return Attribute::get(fn (): ?string => $this->foto_recibo_luz_path
+            ? Storage::disk('public')->url($this->foto_recibo_luz_path)
             : null);
     }
 

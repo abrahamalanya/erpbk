@@ -3,6 +3,7 @@
 use App\Modules\Caja\Models\Caja;
 use App\Modules\Caja\Models\CajaCiclo;
 use App\Modules\Cliente\Models\Cliente;
+use App\Modules\Cliente\Models\ClienteFoto;
 use App\Modules\Credito\Models\ConfiguracionCredito;
 use App\Modules\Credito\Models\Credito;
 use App\Modules\Credito\Models\CuotaCredito;
@@ -136,6 +137,52 @@ it('rejects a second aval equal to the first', function () {
         'monto_prestamo' => 90000,
         'tipo_cuota' => 'mensual',
     ])->assertStatus(422)->assertJsonValidationErrors('aval_2_id');
+});
+
+it('renders the expediente PDF with the cliente own multiple photos', function () {
+    Storage::fake('public');
+
+    // El PDF del expediente toma del propio cliente las fotos de casa,
+    // negocio, suministro y recibo de luz.
+    $this->cliente->fotos()->create([
+        'tipo' => ClienteFoto::TIPO_CASA,
+        'path' => UploadedFile::fake()->image('casa.jpg', 400, 300)->store('clientes/fake', 'public'),
+        'orden' => 0,
+    ]);
+    $this->cliente->fotos()->create([
+        'tipo' => ClienteFoto::TIPO_CASA,
+        'path' => UploadedFile::fake()->image('casa2.jpg', 400, 300)->store('clientes/fake', 'public'),
+        'orden' => 1,
+    ]);
+    $this->cliente->fotos()->create([
+        'tipo' => ClienteFoto::TIPO_NEGOCIO,
+        'path' => UploadedFile::fake()->image('negocio.jpg', 400, 300)->store('clientes/fake', 'public'),
+        'orden' => 0,
+    ]);
+    $this->cliente->update([
+        'foto_suministro_path' => UploadedFile::fake()->image('suministro.jpg', 400, 300)->store('clientes/fake', 'public'),
+        'foto_recibo_luz_path' => UploadedFile::fake()->image('recibo.jpg', 400, 300)->store('clientes/fake', 'public'),
+    ]);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $creditoId = $this->postJson('/api/creditos-hipotecarios', [
+        'inmueble_ids' => [$this->inmueble->id],
+        'supervisado_por' => $this->adminAgencia->id,
+        'monto_prestamo' => 90000,
+        'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+
+    $docId = Credito::find($creditoId)->documentos()->where('tipo', 'expediente')->value('id');
+
+    Sanctum::actingAs($this->adminAgencia, ['*']);
+    $pdf = $this->get("/api/creditos-prendarios/{$creditoId}/documentos/{$docId}/ver")
+        ->assertOk()->assertHeader('content-type', 'application/pdf');
+
+    // dompdf embebe las JPEG con el filtro /DCTDecode. Un simple assertOk no
+    // alcanzaría: una columna de foto que ya no existe devuelve null en
+    // Eloquent y el PDF saldría igual de "correcto", pero en blanco.
+    expect($pdf->getContent())->toContain('/DCTDecode');
 });
 
 it('uploads, lists and deletes expediente images and renders the expediente PDF', function () {

@@ -2,6 +2,7 @@
 
 namespace App\Modules\Cliente\Http\Requests;
 
+use App\Modules\Cliente\Models\ClienteFoto;
 use App\Modules\Empresa\Models\Agencia;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
@@ -63,8 +64,14 @@ class StoreClienteRequest extends FormRequest
             'foto_cliente' => ['nullable', 'image', 'max:8192', 'mimes:jpg,jpeg,png'],
             'foto_dni' => ['nullable', 'image', 'max:8192', 'mimes:jpg,jpeg,png'],
             'foto_dni_reverso' => ['nullable', 'image', 'max:8192', 'mimes:jpg,jpeg,png'],
-            'foto_casa' => ['nullable', 'image', 'max:8192', 'mimes:jpg,jpeg,png'],
-            'foto_negocio' => ['nullable', 'image', 'max:8192', 'mimes:jpg,jpeg,png'],
+            'foto_suministro' => ['nullable', 'image', 'max:8192', 'mimes:jpg,jpeg,png'],
+            'foto_recibo_luz' => ['nullable', 'image', 'max:8192', 'mimes:jpg,jpeg,png'],
+            'fotos_casa' => ['nullable', 'array', 'max:'.ClienteFoto::MAX_POR_TIPO],
+            'fotos_casa.*' => ['image', 'max:8192', 'mimes:jpg,jpeg,png'],
+            'fotos_negocio' => ['nullable', 'array', 'max:'.ClienteFoto::MAX_POR_TIPO],
+            'fotos_negocio.*' => ['image', 'max:8192', 'mimes:jpg,jpeg,png'],
+            'fotos_adicionales' => ['nullable', 'array', 'max:'.ClienteFoto::MAX_POR_TIPO],
+            'fotos_adicionales.*' => ['image', 'max:8192', 'mimes:jpg,jpeg,png'],
         ];
     }
 
@@ -107,8 +114,14 @@ class StoreClienteRequest extends FormRequest
             'foto_cliente.image' => 'La foto del cliente debe ser una imagen',
             'foto_dni.image' => 'La foto del DNI debe ser una imagen',
             'foto_dni_reverso.image' => 'La foto del reverso del DNI debe ser una imagen',
-            'foto_casa.image' => 'La foto de la casa debe ser una imagen',
-            'foto_negocio.image' => 'La foto del negocio debe ser una imagen',
+            'foto_suministro.image' => 'La foto del suministro debe ser una imagen',
+            'foto_recibo_luz.image' => 'La foto del recibo de luz debe ser una imagen',
+            'fotos_casa.max' => 'No puedes subir más de '.ClienteFoto::MAX_POR_TIPO.' fotos de la casa',
+            'fotos_negocio.max' => 'No puedes subir más de '.ClienteFoto::MAX_POR_TIPO.' fotos del negocio',
+            'fotos_adicionales.max' => 'No puedes subir más de '.ClienteFoto::MAX_POR_TIPO.' fotos adicionales',
+            'fotos_casa.*.image' => 'Cada foto de la casa debe ser una imagen',
+            'fotos_negocio.*.image' => 'Cada foto del negocio debe ser una imagen',
+            'fotos_adicionales.*.image' => 'Cada foto adicional debe ser una imagen',
         ];
     }
 }

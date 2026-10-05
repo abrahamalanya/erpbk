@@ -7,6 +7,7 @@ use App\Modules\Usuario\Http\Requests\StoreUserRequest;
 use App\Modules\Usuario\Http\Requests\UpdateUserRequest;
 use App\Modules\Usuario\Models\User;
 use App\Modules\Usuario\Services\UserHierarchyService;
+use App\Nucleo\Concerns\GestionaImagenes;
 use App\Nucleo\Http\Controllers\Controller;
 use App\Nucleo\Services\ConsultaDniService;
 use App\Nucleo\Traits\ApiResponse;
@@ -15,7 +16,24 @@ use Illuminate\Support\Facades\Gate;
 
 class UserController extends Controller
 {
-    use ApiResponse;
+    use ApiResponse, GestionaImagenes;
+
+    /**
+     * Relaciones que se cargan en cada respuesta. `ubigeoDistrito.provincia.departamento`
+     * va incluida porque distrito/provincia/departamento son accessors en
+     * $appends: sin eager loading dispararían una consulta por fila.
+     *
+     * @var list<string>
+     */
+    private const RELACIONES = ['roles', 'empresa', 'agencia', 'ubigeoDistrito.provincia.departamento'];
+
+    /**
+     * Campos de imagen del recurso: cada uno se persiste en su columna
+     * `{campo}_path` dentro de la carpeta `usuarios`.
+     *
+     * @var list<string>
+     */
+    private const IMAGENES = ['foto', 'qr_yape'];
 
     public function __construct(
         private readonly UserHierarchyService $hierarchy,
@@ -46,7 +64,7 @@ class UserController extends Controller
         Gate::authorize('viewAny', User::class);
 
         $actor = request()->user();
-        $query = User::query()->with(['roles', 'empresa', 'agencia']);
+        $query = User::query()->with(self::RELACIONES);
 
         if ($actor->hasRole('administrador_agencia')) {
             $query->where('agencia_id', $actor->agencia_id);
@@ -88,7 +106,7 @@ class UserController extends Controller
     {
         Gate::authorize('create', User::class);
 
-        $data = $request->validated();
+        $data = $request->safe()->except(self::IMAGENES);
         $actor = $request->user();
         $roles = array_values(array_unique($data['roles']));
         $empresaId = $this->hierarchy->resolveEmpresaId($actor, $data['empresa_id'] ?? null);
@@ -104,11 +122,19 @@ class UserController extends Controller
             'empresa_id' => $empresaId,
             'agencia_id' => $this->hierarchy->resolveAgenciaId($actor, $roles, $data['agencia_id'] ?? null),
             'supervisor_id' => $data['supervisor_id'] ?? null,
+            'fecha_nacimiento' => $data['fecha_nacimiento'] ?? null,
+            'direccion' => $data['direccion'] ?? null,
+            'referencia' => $data['referencia'] ?? null,
+            'ubigeo_distrito_id' => $data['ubigeo_distrito_id'] ?? null,
+            'latitud' => $data['latitud'] ?? null,
+            'longitud' => $data['longitud'] ?? null,
         ]);
 
         $user->syncRoles($roles);
 
-        return $this->successResponse($user->load(['roles', 'empresa', 'agencia']), 'Usuario creado', 201);
+        $this->storeImagenes($request, $user, self::IMAGENES, 'usuarios');
+
+        return $this->successResponse($user->load(self::RELACIONES), 'Usuario creado', 201);
     }
 
     /**
@@ -128,14 +154,14 @@ class UserController extends Controller
     {
         Gate::authorize('view', $user);
 
-        return $this->successResponse($user->load(['roles', 'empresa', 'agencia']));
+        return $this->successResponse($user->load(self::RELACIONES));
     }
 
     public function update(UpdateUserRequest $request, User $user): JsonResponse
     {
         Gate::authorize('update', $user);
 
-        $data = $request->validated();
+        $data = $request->safe()->except(self::IMAGENES);
         $actor = $request->user();
         $roles = isset($data['roles']) ? array_values(array_unique($data['roles'])) : null;
         unset($data['roles']);
@@ -157,13 +183,16 @@ class UserController extends Controller
             $user->syncRoles($roles);
         }
 
-        return $this->successResponse($user->load(['roles', 'empresa', 'agencia']), 'Usuario actualizado');
+        $this->storeImagenes($request, $user, self::IMAGENES, 'usuarios');
+
+        return $this->successResponse($user->load(self::RELACIONES), 'Usuario actualizado');
     }
 
     public function destroy(User $user): JsonResponse
     {
         Gate::authorize('delete', $user);
 
+        $this->eliminarImagenes($user, self::IMAGENES);
         $user->delete();
 
         return $this->successResponse(null, 'Usuario eliminado');

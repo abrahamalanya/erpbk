@@ -171,6 +171,268 @@ it('lists only the visible asesores for the ruta selector', function () {
     expect(collect($response->json('data'))->pluck('id')->all())->toBe([$this->asesor->id]);
 });
 
+/** Supervisor de la agencia con $asesores colgados de su (ids en el orden dado). */
+function supervisorDeRutaParaTest(Agencia $agencia, User ...$asesores): User
+{
+    $supervisor = User::factory()->forAgencia($agencia)->create();
+    $supervisor->assignRole('supervisor');
+
+    foreach ($asesores as $asesor) {
+        $asesor->update(['supervisor_id' => $supervisor->id]);
+    }
+
+    return $supervisor;
+}
+
+it('clones a cliente of an asesor into the supervisor ruta without removing it from the asesor', function () {
+    $supervisor = supervisorDeRutaParaTest($this->agencia, $this->asesor);
+    $cliente = Cliente::factory()->asignadoA($this->asesor)->create();
+    creditoEnMoraParaRuta($this->empresa, $this->agencia, $cliente, $this->asesor, 5);
+
+    Sanctum::actingAs($supervisor, ['*']);
+
+    $response = $this->postJson("/api/rutas-cobranza/clientes/{$cliente->id}/clonar")
+        ->assertSuccessful()
+        ->assertJsonPath('message', 'Cliente agregado a tu ruta')
+        ->assertJsonPath('data.0.cliente_id', $cliente->id)
+        ->assertJsonPath('data.0.clonado', true)
+        ->assertJsonPath('data.0.asesor_id', $this->asesor->id)
+        ->assertJsonPath('data.0.dias_atraso_max', 4);
+
+    expect($response->json('data.0.orden'))->toBe(1);
+
+    // El cliente sigue en la ruta de su asesor, y con su propio orden.
+    Sanctum::actingAs($this->asesor, ['*']);
+    expect($this->getJson('/api/rutas-cobranza')->json('data.0.cliente_id'))->toBe($cliente->id);
+});
+
+it('builds a single supervisor ruta with paradas from varios asesores', function () {
+    $asesor2 = User::factory()->forAgencia($this->agencia)->create();
+    $asesor2->assignRole('asesor');
+    $supervisor = supervisorDeRutaParaTest($this->agencia, $this->asesor, $asesor2);
+
+    $cliente1 = Cliente::factory()->asignadoA($this->asesor)->create();
+    $cliente2 = Cliente::factory()->asignadoA($asesor2)->create();
+    $cliente3 = Cliente::factory()->asignadoA($asesor2)->create();
+    creditoEnMoraParaRuta($this->empresa, $this->agencia, $cliente1, $this->asesor, 5);
+    creditoEnMoraParaRuta($this->empresa, $this->agencia, $cliente2, $asesor2, 3);
+    creditoEnMoraParaRuta($this->empresa, $this->agencia, $cliente3, $asesor2, 1);
+
+    Sanctum::actingAs($supervisor, ['*']);
+
+    // El supervisor no ve la ruta de nadie por defecto: solo lo que él clona.
+    expect($this->getJson('/api/rutas-cobranza')->json('data'))->toBe([]);
+
+    // Primero ve la ruta del asesor 1 y clona un cliente de él.
+    $this->getJson("/api/rutas-cobranza?asesor_id={$this->asesor->id}")->assertSuccessful();
+    $this->postJson("/api/rutas-cobranza/clientes/{$cliente1->id}/clonar")->assertSuccessful();
+
+    // Y después la del asesor 2, de donde toma otro cliente (y solo ese).
+    $this->postJson("/api/rutas-cobranza/clientes/{$cliente2->id}/clonar")->assertSuccessful();
+
+    $ruta = $this->getJson('/api/rutas-cobranza')->assertSuccessful();
+    expect(collect($ruta->json('data'))->pluck('cliente_id')->all())->toBe([$cliente1->id, $cliente2->id]);
+
+    // Los clientes del asesor 2 que no clonó siguen en la ruta del asesor.
+    Sanctum::actingAs($asesor2, ['*']);
+    expect(collect($this->getJson('/api/rutas-cobranza')->json('data'))->pluck('cliente_id')->all())
+        ->toBe([$cliente2->id, $cliente3->id]);
+});
+
+it('marks the paradas already cloned in the supervisor ruta when viewing an asesor ruta', function () {
+    $supervisor = supervisorDeRutaParaTest($this->agencia, $this->asesor);
+    $clonado = Cliente::factory()->asignadoA($this->asesor)->create();
+    $pendiente = Cliente::factory()->asignadoA($this->asesor)->create();
+    creditoEnMoraParaRuta($this->empresa, $this->agencia, $clonado, $this->asesor, 5);
+    creditoEnMoraParaRuta($this->empresa, $this->agencia, $pendiente, $this->asesor, 3);
+
+    Sanctum::actingAs($supervisor, ['*']);
+    $this->postJson("/api/rutas-cobranza/clientes/{$clonado->id}/clonar")->assertSuccessful();
+
+    $ruta = collect($this->getJson("/api/rutas-cobranza?asesor_id={$this->asesor->id}")->json('data'));
+
+    expect($ruta->firstWhere('cliente_id', $clonado->id)['en_mi_ruta'])->toBeTrue()
+        ->and($ruta->firstWhere('cliente_id', $pendiente->id)['en_mi_ruta'])->toBeFalse()
+        ->and($ruta->firstWhere('cliente_id', $pendiente->id)['clonado'])->toBeFalse();
+});
+
+it('keeps the position of a parada when it is cloned twice', function () {
+    $supervisor = supervisorDeRutaParaTest($this->agencia, $this->asesor);
+    $cliente1 = Cliente::factory()->asignadoA($this->asesor)->create();
+    $cliente2 = Cliente::factory()->asignadoA($this->asesor)->create();
+    creditoEnMoraParaRuta($this->empresa, $this->agencia, $cliente1, $this->asesor, 5);
+    creditoEnMoraParaRuta($this->empresa, $this->agencia, $cliente2, $this->asesor, 3);
+
+    Sanctum::actingAs($supervisor, ['*']);
+    $this->postJson("/api/rutas-cobranza/clientes/{$cliente1->id}/clonar")->assertSuccessful();
+    $this->postJson("/api/rutas-cobranza/clientes/{$cliente2->id}/clonar")->assertSuccessful();
+
+    // Repetir el clonado no duplica la parada ni la mueve de posición.
+    $ruta = $this->postJson("/api/rutas-cobranza/clientes/{$cliente1->id}/clonar")
+        ->assertSuccessful()
+        ->assertJsonCount(2, 'data');
+
+    expect(collect($ruta->json('data'))->pluck('cliente_id')->all())->toBe([$cliente1->id, $cliente2->id]);
+});
+
+it('clones a cliente into the supervisor ruta of the requested tipo de crédito only', function () {
+    $supervisor = supervisorDeRutaParaTest($this->agencia, $this->asesor);
+    $cliente = Cliente::factory()->asignadoA($this->asesor)->create();
+    creditoEnMoraParaRuta($this->empresa, $this->agencia, $cliente, $this->asesor, 5);
+
+    Sanctum::actingAs($supervisor, ['*']);
+    $this->postJson("/api/rutas-cobranza/clientes/{$cliente->id}/clonar", ['tipo_credito' => 'diario'])->assertSuccessful();
+
+    expect($this->getJson('/api/rutas-cobranza?tipo_credito=diario')->json('data.0.cliente_id'))->toBe($cliente->id)
+        ->and($this->getJson('/api/rutas-cobranza?tipo_credito=prendario')->json('data'))->toBe([])
+        ->and($this->getJson('/api/rutas-cobranza')->json('data'))->toBe([]);
+
+    $this->postJson("/api/rutas-cobranza/clientes/{$cliente->id}/clonar", ['tipo_credito' => 'hipoteca'])
+        ->assertUnprocessable();
+});
+
+it('rejects cloning a cliente whose advisor is not a supervisor asesor', function () {
+    $supervisor = supervisorDeRutaParaTest($this->agencia, $this->asesor);
+    $otroAsesor = User::factory()->forAgencia($this->agencia)->create();
+    $otroAsesor->assignRole('asesor');
+    $clienteAjeno = Cliente::factory()->asignadoA($otroAsesor)->create();
+    creditoEnMoraParaRuta($this->empresa, $this->agencia, $clienteAjeno, $otroAsesor, 5);
+
+    Sanctum::actingAs($supervisor, ['*']);
+    $this->postJson("/api/rutas-cobranza/clientes/{$clienteAjeno->id}/clonar")
+        ->assertUnprocessable()
+        ->assertJsonPath('message', 'Ese cliente no pertenece a ninguno de tus asesores.');
+
+    expect($this->getJson('/api/rutas-cobranza')->json('data'))->toBe([]);
+});
+
+it('rejects cloning a cliente without overdue cuotas', function () {
+    $supervisor = supervisorDeRutaParaTest($this->agencia, $this->asesor);
+    $cliente = Cliente::factory()->asignadoA($this->asesor)->create();
+
+    Sanctum::actingAs($supervisor, ['*']);
+    $this->postJson("/api/rutas-cobranza/clientes/{$cliente->id}/clonar")
+        ->assertUnprocessable()
+        ->assertJsonPath('message', 'El cliente no tiene cuotas vencidas pendientes en esa ruta.');
+});
+
+it('denies cloning to an asesor', function () {
+    $clienteAjeno = Cliente::factory()->asignadoA($this->asesor)->create();
+    creditoEnMoraParaRuta($this->empresa, $this->agencia, $clienteAjeno, $this->asesor, 5);
+
+    $otroAsesor = User::factory()->forAgencia($this->agencia)->create();
+    $otroAsesor->assignRole('asesor');
+
+    Sanctum::actingAs($otroAsesor, ['*']);
+    $this->postJson("/api/rutas-cobranza/clientes/{$clienteAjeno->id}/clonar")
+        ->assertUnprocessable()
+        ->assertJsonPath('message', 'Solo un supervisor puede clonar clientes en su ruta.');
+
+    $this->deleteJson("/api/rutas-cobranza/clientes/{$clienteAjeno->id}")
+        ->assertUnprocessable()
+        ->assertJsonPath('message', 'Solo un supervisor puede quitar clientes en su ruta.');
+});
+
+it('lets a supervisor reorder their own ruta with cloned paradas', function () {
+    $supervisor = supervisorDeRutaParaTest($this->agencia, $this->asesor);
+    $cliente1 = Cliente::factory()->asignadoA($this->asesor)->create();
+    $cliente2 = Cliente::factory()->asignadoA($this->asesor)->create();
+    creditoEnMoraParaRuta($this->empresa, $this->agencia, $cliente1, $this->asesor, 5);
+    creditoEnMoraParaRuta($this->empresa, $this->agencia, $cliente2, $this->asesor, 3);
+
+    Sanctum::actingAs($supervisor, ['*']);
+    $this->postJson("/api/rutas-cobranza/clientes/{$cliente1->id}/clonar")->assertSuccessful();
+    $this->postJson("/api/rutas-cobranza/clientes/{$cliente2->id}/clonar")->assertSuccessful();
+
+    $this->postJson('/api/rutas-cobranza/reordenar', ['cliente_ids' => [$cliente2->id, $cliente1->id]])
+        ->assertSuccessful()
+        ->assertJsonPath('data.0.cliente_id', $cliente2->id)
+        ->assertJsonPath('data.1.cliente_id', $cliente1->id);
+
+    // La ruta del asesor no se reordena desde la del supervisor.
+    Sanctum::actingAs($this->asesor, ['*']);
+    expect($this->getJson('/api/rutas-cobranza')->json('data.0.cliente_id'))->toBe($cliente1->id);
+});
+
+it('removes a cloned cliente from the supervisor ruta only', function () {
+    $supervisor = supervisorDeRutaParaTest($this->agencia, $this->asesor);
+    $cliente1 = Cliente::factory()->asignadoA($this->asesor)->create();
+    $cliente2 = Cliente::factory()->asignadoA($this->asesor)->create();
+    creditoEnMoraParaRuta($this->empresa, $this->agencia, $cliente1, $this->asesor, 5);
+    creditoEnMoraParaRuta($this->empresa, $this->agencia, $cliente2, $this->asesor, 3);
+
+    Sanctum::actingAs($supervisor, ['*']);
+    $this->postJson("/api/rutas-cobranza/clientes/{$cliente1->id}/clonar")->assertSuccessful();
+    $this->postJson("/api/rutas-cobranza/clientes/{$cliente2->id}/clonar")->assertSuccessful();
+
+    $ruta = $this->deleteJson("/api/rutas-cobranza/clientes/{$cliente1->id}")
+        ->assertSuccessful()
+        ->assertJsonPath('message', 'Cliente quitado de tu ruta');
+
+    expect(collect($ruta->json('data'))->pluck('cliente_id')->all())->toBe([$cliente2->id]);
+
+    // Se puede volver a clonar y el asesor nunca lo perdió.
+    $this->postJson("/api/rutas-cobranza/clientes/{$cliente1->id}/clonar")->assertSuccessful();
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    expect(collect($this->getJson('/api/rutas-cobranza')->json('data'))->pluck('cliente_id')->all())
+        ->toBe([$cliente1->id, $cliente2->id]);
+});
+
+it('rejects removing a cliente of the supervisor own cartera', function () {
+    $supervisor = supervisorDeRutaParaTest($this->agencia);
+    $clientePropio = Cliente::factory()->asignadoA($supervisor)->create();
+    creditoEnMoraParaRuta($this->empresa, $this->agencia, $clientePropio, $supervisor, 5);
+
+    Sanctum::actingAs($supervisor, ['*']);
+    $this->deleteJson("/api/rutas-cobranza/clientes/{$clientePropio->id}")
+        ->assertUnprocessable()
+        ->assertJsonPath('message', 'Los clientes de tu cartera ya están en tu ruta, no se pueden quitar.');
+});
+
+it('drops a cloned cliente from the supervisor ruta once its overdue cuotas were paid', function () {
+    $supervisor = supervisorDeRutaParaTest($this->agencia, $this->asesor);
+    $cliente = Cliente::factory()->asignadoA($this->asesor)->create();
+    $credito = creditoEnMoraParaRuta($this->empresa, $this->agencia, $cliente, $this->asesor, 5);
+
+    Sanctum::actingAs($supervisor, ['*']);
+    $this->postJson("/api/rutas-cobranza/clientes/{$cliente->id}/clonar")->assertSuccessful();
+    expect($this->getJson('/api/rutas-cobranza')->json('data'))->toHaveCount(1);
+
+    CuotaCredito::where('credito_id', $credito->id)
+        ->whereDate('fecha_vencimiento', '<=', now()->toDateString())
+        ->update(['pagada_at' => now()]);
+
+    expect($this->getJson('/api/rutas-cobranza')->json('data'))->toBe([]);
+});
+
+it('drops a cloned parada when the cliente leaves the cartera of the asesor', function () {
+    $supervisor = supervisorDeRutaParaTest($this->agencia, $this->asesor);
+    $otroAsesor = User::factory()->forAgencia($this->agencia)->create();
+    $otroAsesor->assignRole('asesor');
+
+    $cliente = Cliente::factory()->asignadoA($this->asesor)->create();
+    creditoEnMoraParaRuta($this->empresa, $this->agencia, $cliente, $this->asesor, 5);
+
+    Sanctum::actingAs($supervisor, ['*']);
+    $this->postJson("/api/rutas-cobranza/clientes/{$cliente->id}/clonar")->assertSuccessful();
+    expect($this->getJson('/api/rutas-cobranza')->json('data'))->toHaveCount(1);
+
+    // El cliente pasa a un asesor de otro supervisor.
+    $otroSupervisor = supervisorDeRutaParaTest($this->agencia, $otroAsesor);
+    $cliente->update(['asesor_id' => $otroAsesor->id]);
+
+    expect($this->getJson('/api/rutas-cobranza')->json('data'))->toBe([]);
+
+    // Tampoco sale de la ruta del asesor al que ya no pertenece.
+    Sanctum::actingAs($this->asesor, ['*']);
+    expect($this->getJson('/api/rutas-cobranza')->json('data'))->toBe([]);
+
+    // Y el nuevo supervisor puede clonarlo en la suya.
+    Sanctum::actingAs($otroSupervisor, ['*']);
+    expect($this->postJson("/api/rutas-cobranza/clientes/{$cliente->id}/clonar")->assertSuccessful()->json('data'))->toHaveCount(1);
+});
+
 /** Crédito prendario activo con una única cuota ya vencida hace $diasAtraso días. */
 function prendarioEnMoraParaRuta(Empresa $empresa, Agencia $agencia, Cliente $cliente, User $asesor, int $diasAtraso): Credito
 {

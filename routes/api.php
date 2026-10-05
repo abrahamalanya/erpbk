@@ -19,9 +19,11 @@ use App\Modules\CreditoVehicular\Http\Controllers\VehiculoController;
 use App\Modules\Dashboard\Http\Controllers\DashboardController;
 use App\Modules\Empresa\Http\Controllers\AgenciaController;
 use App\Modules\Empresa\Http\Controllers\EmpresaController;
+use App\Modules\Reportes\Http\Controllers\ReporteAtrasosController;
 use App\Modules\Reportes\Http\Controllers\ReporteCajasController;
 use App\Modules\Reportes\Http\Controllers\ReporteCobranzaController;
 use App\Modules\Reportes\Http\Controllers\ReporteCobranzaMensualController;
+use App\Modules\Reportes\Http\Controllers\ReporteCumpleanosController;
 use App\Modules\Reportes\Http\Controllers\ReporteFlujoCajaController;
 use App\Modules\Reportes\Http\Controllers\ReporteMovimientosController;
 use App\Modules\Ruta\Http\Controllers\RutaCobranzaController;
@@ -40,6 +42,7 @@ use App\Modules\Tienda\Http\Controllers\TiendaController;
 use App\Modules\Tienda\Http\Controllers\TiendaProductoController;
 use App\Modules\Ubicacion\Http\Controllers\UbicacionAsesorController;
 use App\Modules\Ubigeo\Http\Controllers\UbigeoController;
+use App\Modules\Usuario\Http\Controllers\FotocheckController;
 use App\Modules\Usuario\Http\Controllers\UserController;
 use App\Modules\Usuario\Http\Controllers\UsuarioModuloController;
 use App\Modules\Venta\Http\Controllers\CatalogoVentaController;
@@ -79,6 +82,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('usuarios/{user}/modulos', [UsuarioModuloController::class, 'show'])->name('usuarios.modulos.show');
     Route::put('usuarios/{user}/modulos', [UsuarioModuloController::class, 'update'])->name('usuarios.modulos.update');
     Route::apiResource('usuarios', UserController::class)->parameters(['usuarios' => 'user']);
+    Route::post('usuarios/fotocheck/pdf', [FotocheckController::class, 'pdf'])->name('usuarios.fotocheck.pdf');
     Route::apiResource('roles', RoleController::class)->only(['index', 'show', 'update']);
     Route::apiResource('permisos', PermissionController::class)->only(['index']);
     Route::apiResource('modulos', ModuloController::class)->only(['index']);
@@ -91,6 +95,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::post('notificaciones/{notificacion}/marcar-leido', [NotificacionController::class, 'marcarLeido'])->name('notificaciones.marcar-leido');
     Route::post('notificaciones/marcar-todas-leidas', [NotificacionController::class, 'marcarTodasLeidas'])->name('notificaciones.marcar-todas-leidas');
 
+    Route::get('dashboard/resumen', [DashboardController::class, 'resumen'])->name('dashboard.resumen');
+    Route::get('dashboard/linea-de-tiempo-atrasos', [DashboardController::class, 'lineaDeTiempoAtrasos'])->name('dashboard.linea-de-tiempo-atrasos');
     Route::get('dashboard/mapa-clientes', [DashboardController::class, 'mapaClientes'])->name('dashboard.mapa-clientes');
 
     Route::get('ubigeo/departamentos', [UbigeoController::class, 'departamentos'])->name('ubigeo.departamentos');
@@ -104,6 +110,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('clientes/consultar-dni/{dni}', [ClienteController::class, 'consultarDni'])->name('clientes.consultar-dni');
     Route::get('clientes/{cliente}/ficha-socioeconomica', [FichaSocioeconomicaController::class, 'show'])->name('clientes.ficha-socioeconomica.show');
     Route::put('clientes/{cliente}/ficha-socioeconomica', [FichaSocioeconomicaController::class, 'update'])->name('clientes.ficha-socioeconomica.update');
+    Route::delete('clientes/{cliente}/fotos/{foto}', [ClienteController::class, 'eliminarFoto'])->name('clientes.fotos.destroy');
 
     Route::get('caja', [CajaController::class, 'miCaja'])->name('caja.mia');
     Route::post('caja/aperturar', [CajaController::class, 'aperturar'])->name('caja.aperturar');
@@ -229,6 +236,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('reportes/cobranza-diaria', [ReporteCobranzaController::class, 'cobranzaDiaria'])->name('reportes.cobranza-diaria');
     Route::get('reportes/cobranza-diaria/pdf', [ReporteCobranzaController::class, 'cobranzaDiariaPdf'])->name('reportes.cobranza-diaria.pdf');
     Route::get('reportes/cobranza-diaria/excel', [ReporteCobranzaController::class, 'cobranzaDiariaExcel'])->name('reportes.cobranza-diaria.excel');
+    Route::get('reportes/atrasos-diarios', [ReporteAtrasosController::class, 'atrasos'])->name('reportes.atrasos-diarios');
+    Route::get('reportes/atrasos-diarios/pdf', [ReporteAtrasosController::class, 'atrasosPdf'])->name('reportes.atrasos-diarios.pdf');
+    Route::get('reportes/atrasos-diarios/excel', [ReporteAtrasosController::class, 'atrasosExcel'])->name('reportes.atrasos-diarios.excel');
     Route::get('reportes/cobranza-mensual', [ReporteCobranzaMensualController::class, 'cobranzaMensual'])->name('reportes.cobranza-mensual');
     Route::get('reportes/cobranza-mensual/anual', [ReporteCobranzaMensualController::class, 'cobranzaAnual'])->name('reportes.cobranza-mensual.anual');
     Route::get('reportes/cajas-apertura-cierre', [ReporteCajasController::class, 'aperturasCierres'])->name('reportes.cajas-apertura-cierre');
@@ -239,9 +249,15 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('reportes/flujo-caja/anual', [ReporteFlujoCajaController::class, 'flujoCajaAnual'])->name('reportes.flujo-caja.anual');
     Route::get('reportes/flujo-caja/mensual', [ReporteFlujoCajaController::class, 'flujoCajaMensual'])->name('reportes.flujo-caja.mensual');
 
+    Route::get('reportes/cumpleanos', [ReporteCumpleanosController::class, 'cumpleanos'])->name('reportes.cumpleanos');
+    Route::get('reportes/cumpleanos/pdf', [ReporteCumpleanosController::class, 'cumpleanosPdf'])->name('reportes.cumpleanos.pdf');
+    Route::get('reportes/cumpleanos/excel', [ReporteCumpleanosController::class, 'cumpleanosExcel'])->name('reportes.cumpleanos.excel');
+
     Route::get('rutas-cobranza/asesores', [RutaCobranzaController::class, 'asesores'])->name('rutas-cobranza.asesores');
     Route::get('rutas-cobranza', [RutaCobranzaController::class, 'show'])->name('rutas-cobranza.show');
     Route::post('rutas-cobranza/reordenar', [RutaCobranzaController::class, 'reordenar'])->name('rutas-cobranza.reordenar');
+    Route::post('rutas-cobranza/clientes/{cliente}/clonar', [RutaCobranzaController::class, 'clonar'])->name('rutas-cobranza.clonar');
+    Route::delete('rutas-cobranza/clientes/{cliente}', [RutaCobranzaController::class, 'quitar'])->name('rutas-cobranza.quitar');
 
     Route::post('ubicaciones-asesores', [UbicacionAsesorController::class, 'store'])->middleware('throttle:30,1')->name('ubicaciones-asesores.store');
     Route::get('ubicaciones-asesores', [UbicacionAsesorController::class, 'index'])->name('ubicaciones-asesores.index');

@@ -6,8 +6,11 @@ use App\Modules\Cliente\Http\Requests\AsignarClienteRequest;
 use App\Modules\Cliente\Http\Requests\StoreClienteRequest;
 use App\Modules\Cliente\Http\Requests\UpdateClienteRequest;
 use App\Modules\Cliente\Models\Cliente;
+use App\Modules\Cliente\Models\ClienteFoto;
+use App\Modules\Cliente\Services\ClienteFotoService;
 use App\Modules\Cliente\Services\ClienteHierarchyService;
 use App\Modules\Usuario\Models\User;
+use App\Nucleo\Concerns\GestionaImagenes;
 use App\Nucleo\Http\Controllers\Controller;
 use App\Nucleo\Services\ConsultaDniService;
 use App\Nucleo\Traits\ApiResponse;
@@ -15,14 +18,47 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Gate;
-use Illuminate\Support\Facades\Storage;
 
 class ClienteController extends Controller
 {
-    use ApiResponse;
+    use ApiResponse, GestionaImagenes;
+
+    /**
+     * Fotos de un solo archivo: cada una se persiste en su columna
+     * `{campo}_path` dentro de la carpeta `clientes`.
+     *
+     * @var list<string>
+     */
+    private const IMAGENES = ['foto_cliente', 'foto_dni', 'foto_dni_reverso', 'foto_suministro', 'foto_recibo_luz'];
+
+    /**
+     * Todo campo del request que llega como archivo y por lo tanto nunca debe
+     * pasar por mass assignment: los de foto única, los arreglos de fotos
+     * múltiples y sus listas de ids a conservar.
+     *
+     * @var list<string>
+     */
+    private const CAMPOS_ARCHIVO = [
+        'foto_cliente', 'foto_dni', 'foto_dni_reverso', 'foto_suministro', 'foto_recibo_luz',
+        'fotos_casa', 'fotos_casa_conservar',
+        'fotos_negocio', 'fotos_negocio_conservar',
+        'fotos_adicionales', 'fotos_adicionales_conservar',
+    ];
+
+    /**
+     * Relaciones que se cargan siempre: `fotos` alimenta la respuesta y el PDF
+     * del expediente, `ubigeoDistrito*` son accessors en $appends.
+     *
+     * @var list<string>
+     */
+    private const RELACIONES = [
+        'agencia', 'asesor', 'registradoPor', 'fotos',
+        'ubigeoDistrito.provincia.departamento', 'ubigeoDistritoNegocio.provincia.departamento',
+    ];
 
     public function __construct(
         private readonly ClienteHierarchyService $hierarchy,
+        private readonly ClienteFotoService $fotos,
         private readonly ConsultaDniService $consultaDni,
     ) {}
 
@@ -68,10 +104,7 @@ class ClienteController extends Controller
     {
         Gate::authorize('viewAny', Cliente::class);
 
-        $query = Cliente::query()->with([
-            'agencia', 'asesor', 'registradoPor',
-            'ubigeoDistrito.provincia.departamento', 'ubigeoDistritoNegocio.provincia.departamento',
-        ]);
+        $query = Cliente::query()->with(self::RELACIONES);
         $query = $this->hierarchy->visibleQuery($query, request()->user());
 
         if (request()->filled('q')) {
@@ -104,7 +137,7 @@ class ClienteController extends Controller
     {
         Gate::authorize('create', Cliente::class);
 
-        $data = $request->validated();
+        $data = Arr::except($request->validated(), self::CAMPOS_ARCHIVO);
         $actor = $request->user();
 
         $cliente = Cliente::query()->create([
@@ -134,10 +167,11 @@ class ClienteController extends Controller
             'estado' => 'activo',
         ]);
 
-        $this->storePhotos($request, $cliente);
+        $this->storeImagenes($request, $cliente, self::IMAGENES, 'clientes');
+        $this->fotos->sincronizar($cliente, $request);
 
         return $this->successResponse(
-            $cliente->fresh(['ubigeoDistrito.provincia.departamento', 'ubigeoDistritoNegocio.provincia.departamento']),
+            $cliente->fresh(self::RELACIONES),
             'Cliente creado',
             201
         );
@@ -147,30 +181,46 @@ class ClienteController extends Controller
     {
         Gate::authorize('view', $cliente);
 
-        return $this->successResponse($cliente->load([
-            'agencia', 'asesor', 'registradoPor',
-            'ubigeoDistrito.provincia.departamento', 'ubigeoDistritoNegocio.provincia.departamento',
-        ]));
+        return $this->successResponse($cliente->load(self::RELACIONES));
     }
 
     public function update(UpdateClienteRequest $request, Cliente $cliente): JsonResponse
     {
         Gate::authorize('update', $cliente);
 
-        $data = Arr::except($request->validated(), ['foto_cliente', 'foto_dni', 'foto_dni_reverso', 'foto_casa', 'foto_negocio']);
+        $data = Arr::except($request->validated(), self::CAMPOS_ARCHIVO);
         $cliente->update($data);
-        $this->storePhotos($request, $cliente);
+
+        $this->storeImagenes($request, $cliente, self::IMAGENES, 'clientes');
+        $this->fotos->sincronizar($cliente, $request);
 
         return $this->successResponse(
-            $cliente->fresh(['ubigeoDistrito.provincia.departamento', 'ubigeoDistritoNegocio.provincia.departamento']),
+            $cliente->fresh(self::RELACIONES),
             'Cliente actualizado'
         );
+    }
+
+    /**
+     * Borra una foto múltiple del cliente (casa, negocio o adicional). Se
+     * resuelve siempre a través del cliente para que un id ajeno no exista.
+     */
+    public function eliminarFoto(Cliente $cliente, ClienteFoto $foto): JsonResponse
+    {
+        Gate::authorize('update', $cliente);
+
+        abort_unless($foto->cliente_id === $cliente->id, 404);
+
+        $this->fotos->eliminar($foto);
+
+        return $this->successResponse(null, 'Foto eliminada');
     }
 
     public function destroy(Cliente $cliente): JsonResponse
     {
         Gate::authorize('delete', $cliente);
 
+        $this->fotos->eliminarTodas($cliente);
+        $this->eliminarImagenes($cliente, self::IMAGENES);
         $cliente->delete();
 
         return $this->successResponse(null, 'Cliente eliminado');
@@ -184,22 +234,5 @@ class ClienteController extends Controller
         $cliente->update(['asesor_id' => $asesorId]);
 
         return $this->successResponse($cliente->fresh(['asesor']), 'Cliente asignado');
-    }
-
-    private function storePhotos(StoreClienteRequest|UpdateClienteRequest $request, Cliente $cliente): void
-    {
-        foreach (['foto_cliente', 'foto_dni', 'foto_dni_reverso', 'foto_casa', 'foto_negocio'] as $campo) {
-            if (! $request->hasFile($campo)) {
-                continue;
-            }
-
-            $column = "{$campo}_path";
-
-            if ($cliente->{$column}) {
-                Storage::disk('public')->delete($cliente->{$column});
-            }
-
-            $cliente->update([$column => $request->file($campo)->store("clientes/{$cliente->id}", 'public')]);
-        }
     }
 }

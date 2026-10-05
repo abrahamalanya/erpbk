@@ -69,6 +69,14 @@ class StoreUserRequest extends FormRequest
                 Rule::requiredIf(fn (): bool => $needsSupervisor),
                 'nullable', 'integer', 'exists:users,id',
             ],
+            'fecha_nacimiento' => ['nullable', 'date', 'before_or_equal:today'],
+            'direccion' => ['nullable', 'string', 'max:255'],
+            'referencia' => ['nullable', 'string', 'max:500'],
+            'ubigeo_distrito_id' => ['nullable', 'integer', 'exists:ubigeo_distritos,id'],
+            'latitud' => ['nullable', 'numeric', 'between:-90,90'],
+            'longitud' => ['nullable', 'numeric', 'between:-180,180'],
+            'foto' => ['nullable', 'image', 'max:8192', 'mimes:jpg,jpeg,png'],
+            'qr_yape' => ['nullable', 'image', 'max:8192', 'mimes:jpg,jpeg,png'],
         ];
     }
 
@@ -145,6 +153,12 @@ class StoreUserRequest extends FormRequest
             'empresa_id.required' => 'La empresa es requerida',
             'agencia_id.required' => 'La agencia es requerida para este rol',
             'supervisor_id.required' => 'El supervisor es requerido para el rol asesor',
+            'ubigeo_distrito_id.exists' => 'El distrito indicado no existe',
+            'latitud.between' => 'La latitud debe estar entre -90 y 90',
+            'longitud.between' => 'La longitud debe estar entre -180 y 180',
+            'fecha_nacimiento.before_or_equal' => 'La fecha de nacimiento no puede ser futura',
+            'foto.image' => 'La foto de perfil debe ser una imagen',
+            'qr_yape.image' => 'La imagen del QR de Yape debe ser una imagen',
         ];
     }
 }

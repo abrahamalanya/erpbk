@@ -3,6 +3,7 @@
 namespace Database\Seeders;
 
 use App\Modules\Cliente\Models\Cliente;
+use App\Modules\Cliente\Models\ClienteFoto;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Ubigeo\Models\UbigeoDistrito;
 use App\Modules\Usuario\Models\User;
@@ -23,8 +24,16 @@ class ClienteSeeder extends Seeder
         'foto_cliente_path' => 'perfil.jpg',
         'foto_dni_path' => 'dni1.jpeg',
         'foto_dni_reverso_path' => 'dni2.jpg',
-        'foto_casa_path' => 'casa.jpg',
-        'foto_negocio_path' => 'negocio.jpg',
+    ];
+
+    /**
+     * Multiple photos (casa / negocio) live in `cliente_fotos`, not in columns.
+     *
+     * @var array<string, string>
+     */
+    private const FOTOS_MULTIPLES = [
+        ClienteFoto::TIPO_CASA => 'casa.jpg',
+        ClienteFoto::TIPO_NEGOCIO => 'negocio.jpg',
     ];
 
     /**
@@ -41,12 +50,13 @@ class ClienteSeeder extends Seeder
         }
 
         $fotos = $this->publicarFotosDeMuestra();
+        $fotosMultiples = $this->publicarFotosMultiplesDeMuestra();
         $distrito = UbigeoDistrito::query()->where('nombre', 'Yarinacocha')->first();
 
         foreach (range(1, 100) as $n) {
             $asesor = $asesores[$n % $asesores->count()];
 
-            Cliente::factory()
+            $cliente = Cliente::factory()
                 ->asignadoA($asesor)
                 ->create([
                     ...$fotos,
@@ -54,6 +64,10 @@ class ClienteSeeder extends Seeder
                     'ubigeo_distrito_negocio_id' => $distrito?->id,
                     'registrado_por' => $asesor->id,
                 ]);
+
+            foreach ($fotosMultiples as $tipo => $path) {
+                $cliente->fotos()->create(['tipo' => $tipo, 'path' => $path, 'orden' => 0]);
+            }
         }
     }
 
@@ -69,16 +83,35 @@ class ClienteSeeder extends Seeder
         $paths = [];
 
         foreach (self::FOTOS as $column => $filename) {
-            $destino = "clientes/samples/{$filename}";
-            $origen = public_path("img/{$filename}");
-
-            if (! Storage::disk('public')->exists($destino) && is_file($origen)) {
-                Storage::disk('public')->put($destino, file_get_contents($origen));
-            }
-
-            $paths[$column] = $destino;
+            $paths[$column] = $this->publicarMuestra($filename);
         }
 
         return $paths;
+    }
+
+    /**
+     * @return array<string, string> tipo => stored path
+     */
+    private function publicarFotosMultiplesDeMuestra(): array
+    {
+        $paths = [];
+
+        foreach (self::FOTOS_MULTIPLES as $tipo => $filename) {
+            $paths[$tipo] = $this->publicarMuestra($filename);
+        }
+
+        return $paths;
+    }
+
+    private function publicarMuestra(string $filename): string
+    {
+        $destino = "clientes/samples/{$filename}";
+        $origen = public_path("img/{$filename}");
+
+        if (! Storage::disk('public')->exists($destino) && is_file($origen)) {
+            Storage::disk('public')->put($destino, file_get_contents($origen));
+        }
+
+        return $destino;
     }
 }

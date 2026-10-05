@@ -2,8 +2,11 @@
 
 namespace App\Modules\Ruta\Http\Controllers;
 
+use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Credito\Models\Credito;
+use App\Modules\Ruta\Http\Requests\ClonarClienteRutaCobranzaRequest;
 use App\Modules\Ruta\Http\Requests\MostrarRutaCobranzaRequest;
+use App\Modules\Ruta\Http\Requests\QuitarClienteRutaCobranzaRequest;
 use App\Modules\Ruta\Http\Requests\ReordenarRutaCobranzaRequest;
 use App\Modules\Ruta\Services\RutaCobranzaService;
 use App\Modules\Usuario\Models\User;
@@ -34,7 +37,7 @@ class RutaCobranzaController extends Controller
 
         $asesor = $this->resolverAsesor();
 
-        return $this->successResponse($this->rutaCobranzaService->rutaDe($asesor, $request->validated('tipo_credito')));
+        return $this->successResponse($this->rutaCobranzaService->rutaDe($asesor, $request->validated('tipo_credito'), $request->user()));
     }
 
     /**
@@ -58,6 +61,40 @@ class RutaCobranzaController extends Controller
         $this->rutaCobranzaService->reordenar($request->user(), $request->validated()['cliente_ids'], $tipoCredito);
 
         return $this->successResponse($this->rutaCobranzaService->rutaDe($request->user(), $tipoCredito), 'Ruta actualizada');
+    }
+
+    /**
+     * Copia $cliente a la ruta propia del actor (la del supervisor), al final
+     * de la del tipo indicado: el supervisor arma su ruta de visita con
+     * paradas de las rutas de sus asesores. El cliente no sale de la cartera
+     * ni de la ruta de su asesor — solo se le agrega una parada en la ruta
+     * del supervisor.
+     */
+    public function clonar(ClonarClienteRutaCobranzaRequest $request, Cliente $cliente): JsonResponse
+    {
+        Gate::authorize('viewAny', Credito::class);
+
+        $tipoCredito = $request->validated('tipo_credito');
+
+        $this->rutaCobranzaService->clonarCliente($request->user(), $cliente, $tipoCredito);
+
+        return $this->successResponse($this->rutaCobranzaService->rutaDe($request->user(), $tipoCredito), 'Cliente agregado a tu ruta');
+    }
+
+    /**
+     * Quita $cliente de la ruta propia del actor. Solo aplica a las paradas
+     * clonadas de otro asesor: las de la propia cartera se agregan solas
+     * cuando el cliente entra en mora.
+     */
+    public function quitar(QuitarClienteRutaCobranzaRequest $request, Cliente $cliente): JsonResponse
+    {
+        Gate::authorize('viewAny', Credito::class);
+
+        $tipoCredito = $request->validated('tipo_credito');
+
+        $this->rutaCobranzaService->quitarCliente($request->user(), $cliente, $tipoCredito);
+
+        return $this->successResponse($this->rutaCobranzaService->rutaDe($request->user(), $tipoCredito), 'Cliente quitado de tu ruta');
     }
 
     private function resolverAsesor(): User
