@@ -96,6 +96,11 @@ final class CajaService
      * picks a concepto from the empresa's catalog and, for a gasto,
      * comprobante is required (see StoreCajaMovimientoRequest).
      *
+     * $serie y $numero identifican la boleta o factura que respalda el
+     * movimiento; ambos llegan ya validados y normalizados por
+     * StoreCajaMovimientoRequest (opcionales, pero siempre juntos y únicos
+     * por empresa).
+     *
      * @param  list<UploadedFile>  $fotosAdicionales
      */
     public function registrarMovimiento(
@@ -106,6 +111,8 @@ final class CajaService
         ?UploadedFile $comprobante,
         array $fotosAdicionales = [],
         ?string $descripcion = null,
+        ?string $serie = null,
+        ?string $numero = null,
     ): CajaMovimiento {
         $caja = $this->cajaDe($actor);
         $ciclo = $caja->cicloAbierto()->first();
@@ -125,7 +132,7 @@ final class CajaService
             throw new DomainException('Tu caja no tiene saldo suficiente para este gasto.');
         }
 
-        return DB::transaction(function () use ($ciclo, $actor, $tipo, $concepto, $monto, $comprobante, $fotosAdicionales, $descripcion): CajaMovimiento {
+        return DB::transaction(function () use ($ciclo, $actor, $tipo, $concepto, $monto, $comprobante, $fotosAdicionales, $descripcion, $serie, $numero): CajaMovimiento {
             $movimiento = CajaMovimiento::query()->create([
                 'caja_ciclo_id' => $ciclo->id,
                 'empresa_id' => $ciclo->empresa_id,
@@ -133,6 +140,8 @@ final class CajaService
                 'monto' => $monto,
                 'concepto' => $concepto->nombre,
                 'descripcion' => $descripcion,
+                'serie' => $serie,
+                'numero' => $numero,
                 'concepto_id' => $concepto->id,
                 'registrado_por' => $actor->id,
                 'fecha_caja' => $ciclo->fecha,
@@ -155,7 +164,12 @@ final class CajaService
 
             $this->notificar($ciclo->caja);
 
-            return $movimiento->fresh(['fotos', 'concepto']);
+            // 'concepto' is deliberately NOT eager-loaded here, for the same
+            // reason as in resumenCierre() below: loading the relation would
+            // replace the plain 'concepto' snapshot string in the serialized
+            // payload with the full Concepto model, which the frontend
+            // renders directly as text.
+            return $movimiento->fresh(['fotos']);
         });
     }
 
@@ -206,10 +220,11 @@ final class CajaService
      * egresos manuales; `solo_desembolsos` deja solo los desembolsos reales.
      *
      * Filtros opcionales en $filtros: concepto_id, solo_desembolsos,
-     * excluir_desembolsos, registrado_por, desde y hasta (sobre fecha_caja,
-     * ambos inclusive).
+     * excluir_desembolsos, registrado_por, boleta, desde y hasta (sobre
+     * fecha_caja, ambos inclusive). `boleta` busca parcial y sin distinguir
+     * mayúsculas en la serie o el número de la boleta.
      *
-     * @param  array{concepto_id?: int|null, solo_desembolsos?: bool|null, excluir_desembolsos?: bool|null, registrado_por?: int|null, desde?: string|null, hasta?: string|null}  $filtros
+     * @param  array{concepto_id?: int|null, solo_desembolsos?: bool|null, excluir_desembolsos?: bool|null, registrado_por?: int|null, boleta?: string|null, desde?: string|null, hasta?: string|null}  $filtros
      * @return LengthAwarePaginator<int, CajaMovimiento>
      */
     public function listarMovimientos(User $actor, string $tipo, array $filtros = []): LengthAwarePaginator
@@ -225,6 +240,11 @@ final class CajaService
             ->when($soloDesembolsos, fn (Builder $query) => $query->desembolsos())
             ->when($excluirDesembolsos, fn (Builder $query) => $query->egresosManuales())
             ->when($filtros['registrado_por'] ?? null, fn ($query, int $usuarioId) => $query->where('registrado_por', $usuarioId))
+            ->when($filtros['boleta'] ?? null, fn (Builder $query, string $boleta) => $query->where(
+                fn (Builder $query) => $query
+                    ->where('serie', 'like', "%{$boleta}%")
+                    ->orWhere('numero', 'like', "%{$boleta}%")
+            ))
             ->when($filtros['desde'] ?? null, fn ($query, string $desde) => $query->whereDate('fecha_caja', '>=', $desde))
             ->when($filtros['hasta'] ?? null, fn ($query, string $hasta) => $query->whereDate('fecha_caja', '<=', $hasta))
             // 'concepto' relation deliberately not eager-loaded — see the

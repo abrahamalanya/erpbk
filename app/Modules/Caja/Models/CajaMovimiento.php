@@ -33,6 +33,8 @@ class CajaMovimiento extends Model
         'canal',
         'concepto',
         'descripcion',
+        'serie',
+        'numero',
         'concepto_id',
         'billetaje_id',
         'venta_id',

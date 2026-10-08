@@ -19,13 +19,22 @@ use App\Modules\CreditoVehicular\Http\Controllers\VehiculoController;
 use App\Modules\Dashboard\Http\Controllers\DashboardController;
 use App\Modules\Empresa\Http\Controllers\AgenciaController;
 use App\Modules\Empresa\Http\Controllers\EmpresaController;
+use App\Modules\Empresa\Http\Controllers\Facturacion\CredencialesSunatController;
+use App\Modules\Facturacion\Http\Controllers\ComprobanteController;
+use App\Modules\Facturacion\Http\Controllers\ConfiguracionFacturacionController;
+use App\Modules\Facturacion\Http\Controllers\ReporteFacturacionController;
+use App\Modules\Facturacion\Http\Controllers\SerieComprobanteController;
+use App\Modules\Planilla\Http\Controllers\PlanillaController;
+use App\Modules\Planilla\Http\Controllers\PlanillaDescuentoController;
 use App\Modules\Reportes\Http\Controllers\ReporteAtrasosController;
 use App\Modules\Reportes\Http\Controllers\ReporteCajasController;
 use App\Modules\Reportes\Http\Controllers\ReporteCobranzaController;
 use App\Modules\Reportes\Http\Controllers\ReporteCobranzaMensualController;
 use App\Modules\Reportes\Http\Controllers\ReporteCumpleanosController;
 use App\Modules\Reportes\Http\Controllers\ReporteFlujoCajaController;
+use App\Modules\Reportes\Http\Controllers\ReporteIngresosEgresosController;
 use App\Modules\Reportes\Http\Controllers\ReporteMovimientosController;
+use App\Modules\Reportes\Http\Controllers\ReportePlanillaController;
 use App\Modules\Ruta\Http\Controllers\RutaCobranzaController;
 use App\Modules\Simulador\Http\Controllers\SimuladorController;
 use App\Modules\Sistemas\Http\Controllers\AuthController;
@@ -108,6 +117,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('clientes', ClienteController::class);
     Route::post('clientes/{cliente}/asignar', [ClienteController::class, 'asignar'])->name('clientes.asignar');
     Route::get('clientes/consultar-dni/{dni}', [ClienteController::class, 'consultarDni'])->name('clientes.consultar-dni');
+
+    Route::get('clientes/consultar-ruc/{ruc}', [ClienteController::class, 'consultarRuc'])->name('clientes.consultar-ruc');
     Route::get('clientes/{cliente}/ficha-socioeconomica', [FichaSocioeconomicaController::class, 'show'])->name('clientes.ficha-socioeconomica.show');
     Route::put('clientes/{cliente}/ficha-socioeconomica', [FichaSocioeconomicaController::class, 'update'])->name('clientes.ficha-socioeconomica.update');
     Route::delete('clientes/{cliente}/fotos/{foto}', [ClienteController::class, 'eliminarFoto'])->name('clientes.fotos.destroy');
@@ -212,6 +223,52 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('ventas/{venta}/documentos/{documento}', [VentaController::class, 'documento'])->name('ventas.documentos.ver');
     Route::get('ventas/{venta}/cronograma/ver', [VentaController::class, 'verCronograma'])->name('ventas.cronograma.ver');
 
+    // Facturación electrónica
+    Route::get('facturacion/creditos-pendientes', [ComprobanteController::class, 'pendientes'])->name('facturacion.creditos-pendientes');
+    Route::get('facturacion/creditos/{credito}/previsualizar', [ComprobanteController::class, 'previsualizar'])->name('facturacion.creditos.previsualizar');
+    Route::post('facturacion/creditos/{credito}/emitir', [ComprobanteController::class, 'emitir'])->name('facturacion.creditos.emitir');
+    Route::get('facturacion/comprobantes', [ComprobanteController::class, 'index'])->name('facturacion.comprobantes.index');
+    Route::get('facturacion/comprobantes/{comprobante}', [ComprobanteController::class, 'show'])->name('facturacion.comprobantes.show');
+    Route::post('facturacion/comprobantes/{comprobante}/anular', [ComprobanteController::class, 'anular'])->name('facturacion.comprobantes.anular'); // Anulación LOCAL (sin envío SUNAT)
+    Route::post('facturacion/comprobantes/{comprobante}/comunicar-baja', [ComprobanteController::class, 'comunicarBaja'])->name('facturacion.comprobantes.baja'); // Comunicación de BAJA a SUNAT
+    Route::post('facturacion/comprobantes/{comprobante}/nota-credito', [ComprobanteController::class, 'emitirNotaCredito'])->name('facturacion.comprobantes.nota-credito'); // Nota de crédito (07)
+    Route::post('facturacion/comprobantes/{comprobante}/reenviar', [ComprobanteController::class, 'reenviar'])->name('facturacion.comprobantes.reenviar'); // Reintento manual
+    Route::get('facturacion/comprobantes/{comprobante}/cdr', [ComprobanteController::class, 'consultarCdr'])->name('facturacion.comprobantes.cdr'); // Consultar CDR
+    Route::get('facturacion/comprobantes/{comprobante}/pdf', [ComprobanteController::class, 'verPdf'])->name('facturacion.comprobantes.pdf');
+
+    // Configuración de facturación
+    Route::get('configuracion-facturacion', [ConfiguracionFacturacionController::class, 'show'])->name('configuracion-facturacion.show');
+    Route::put('configuracion-facturacion', [ConfiguracionFacturacionController::class, 'update'])->name('configuracion-facturacion.update');
+
+    // Series de comprobantes
+    Route::get('facturacion/series', [SerieComprobanteController::class, 'index'])->name('facturacion.series.index');
+    Route::post('facturacion/series', [SerieComprobanteController::class, 'store'])->name('facturacion.series.store');
+    Route::put('facturacion/series/{serie}', [SerieComprobanteController::class, 'update'])->name('facturacion.series.update');
+    Route::delete('facturacion/series/{serie}', [SerieComprobanteController::class, 'destroy'])->name('facturacion.series.destroy');
+
+    // Reportes de facturación
+    Route::prefix('facturacion/reportes')->group(function () {
+        Route::get('resumen', [ReporteFacturacionController::class, 'resumen'])->name('facturacion.reportes.resumen');
+        Route::get('emitidas', [ReporteFacturacionController::class, 'emitidas'])->name('facturacion.reportes.emitidas');
+        Route::get('por-dia', [ReporteFacturacionController::class, 'porDia'])->name('facturacion.reportes.por-dia');
+        Route::get('por-estado', [ReporteFacturacionController::class, 'porEstado'])->name('facturacion.reportes.por-estado');
+        Route::get('por-serie', [ReporteFacturacionController::class, 'porSerie'])->name('facturacion.reportes.por-serie');
+        Route::get('por-cliente', [ReporteFacturacionController::class, 'porCliente'])->name('facturacion.reportes.por-cliente');
+        Route::get('anulados', [ReporteFacturacionController::class, 'anulados'])->name('facturacion.reportes.anulados');
+        Route::get('notas-credito', [ReporteFacturacionController::class, 'notasCredito'])->name('facturacion.reportes.notas-credito');
+        Route::get('exportar-excel', [ReporteFacturacionController::class, 'exportExcel'])->name('facturacion.reportes.exportar-excel');
+        Route::get('dashboard', [ReporteFacturacionController::class, 'dashboard'])->name('facturacion.reportes.dashboard');
+    });
+
+    // Credenciales SUNAT (gestión desde módulo Empresa)
+    Route::prefix('empresas/{empresa}/credenciales-sunat')->group(function () {
+        Route::get('/', [CredencialesSunatController::class, 'show'])->name('empresas.credenciales-sunat.show');
+        Route::post('/', [CredencialesSunatController::class, 'store'])->name('empresas.credenciales-sunat.store');
+        Route::post('/validar', [CredencialesSunatController::class, 'validar'])->name('empresas.credenciales-sunat.validar');
+        Route::delete('/', [CredencialesSunatController::class, 'destroy'])->name('empresas.credenciales-sunat.destroy');
+        Route::get('/certificado', [CredencialesSunatController::class, 'descargarCertificado'])->name('empresas.credenciales-sunat.certificado');
+    });
+
     Route::get('tienda-solicitudes', [InteresArticuloAdminController::class, 'index'])->name('tienda-solicitudes.index');
     Route::post('tienda-solicitudes/{interes}/atender', [InteresArticuloAdminController::class, 'atender'])->name('tienda-solicitudes.atender');
     Route::delete('tienda-solicitudes/{interes}', [InteresArticuloAdminController::class, 'destroy'])->name('tienda-solicitudes.destroy');
@@ -248,6 +305,26 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('reportes/flujo-caja', [ReporteFlujoCajaController::class, 'flujoCaja'])->name('reportes.flujo-caja');
     Route::get('reportes/flujo-caja/anual', [ReporteFlujoCajaController::class, 'flujoCajaAnual'])->name('reportes.flujo-caja.anual');
     Route::get('reportes/flujo-caja/mensual', [ReporteFlujoCajaController::class, 'flujoCajaMensual'])->name('reportes.flujo-caja.mensual');
+
+    Route::get('reportes/ingresos-egresos', [ReporteIngresosEgresosController::class, 'ingresosEgresos'])->name('reportes.ingresos-egresos');
+    Route::get('reportes/ingresos-egresos/pdf', [ReporteIngresosEgresosController::class, 'ingresosEgresosPdf'])->name('reportes.ingresos-egresos.pdf');
+    Route::get('reportes/ingresos-egresos/excel', [ReporteIngresosEgresosController::class, 'ingresosEgresosExcel'])->name('reportes.ingresos-egresos.excel');
+
+    Route::get('reportes/planilla', [ReportePlanillaController::class, 'index'])->name('reportes.planilla');
+    Route::get('reportes/planilla/{planilla}', [ReportePlanillaController::class, 'planilla'])->name('reportes.planilla.detalle');
+    Route::get('reportes/planilla/{planilla}/pdf', [ReportePlanillaController::class, 'planillaPdf'])->name('reportes.planilla.pdf');
+    Route::get('reportes/planilla/{planilla}/excel', [ReportePlanillaController::class, 'planillaExcel'])->name('reportes.planilla.excel');
+
+    Route::get('planillas', [PlanillaController::class, 'index'])->name('planillas.index');
+    Route::post('planillas', [PlanillaController::class, 'store'])->name('planillas.store');
+    Route::get('planillas/{planilla}', [PlanillaController::class, 'show'])->name('planillas.show');
+    Route::post('planillas/{planilla}/lineas', [PlanillaController::class, 'lineas'])->name('planillas.lineas');
+    Route::post('planillas/{planilla}/cerrar', [PlanillaController::class, 'cerrar'])->name('planillas.cerrar');
+    Route::post('planillas/{planilla}/reabrir', [PlanillaController::class, 'reabrir'])->name('planillas.reabrir');
+
+    Route::get('planilla-descuentos', [PlanillaDescuentoController::class, 'index'])->name('planilla-descuentos.index');
+    Route::post('planilla-descuentos', [PlanillaDescuentoController::class, 'store'])->name('planilla-descuentos.store');
+    Route::post('planilla-descuentos/{descuento}/anular', [PlanillaDescuentoController::class, 'anular'])->name('planilla-descuentos.anular');
 
     Route::get('reportes/cumpleanos', [ReporteCumpleanosController::class, 'cumpleanos'])->name('reportes.cumpleanos');
     Route::get('reportes/cumpleanos/pdf', [ReporteCumpleanosController::class, 'cumpleanosPdf'])->name('reportes.cumpleanos.pdf');

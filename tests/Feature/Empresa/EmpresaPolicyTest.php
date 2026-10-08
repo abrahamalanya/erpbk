@@ -55,11 +55,11 @@ it('allows administrador_general to update their own empresa', function () {
 
     $this->putJson("/api/empresas/{$this->empresaA->id}", [
         'nombre' => 'razon actualizada',
-        'ruc' => '20999999999',
+        'ruc' => '20601030013',
     ])
         ->assertSuccessful()
         ->assertJsonPath('data.nombre', 'razon actualizada')
-        ->assertJsonPath('data.ruc', '20999999999');
+        ->assertJsonPath('data.ruc', '20601030013');
 });
 
 it('denies administrador_general from updating another empresa', function () {

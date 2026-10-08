@@ -63,6 +63,174 @@ it('registers a movimiento fine without a descripcion', function () {
     ])->assertCreated()->assertJsonPath('data.descripcion', null);
 });
 
+it('registers an ingreso and an egreso with the serie and numero de la boleta', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+    $this->postJson('/api/caja/aperturar')->assertCreated();
+
+    $this->postJson('/api/caja/movimientos', [
+        'tipo' => 'ingreso',
+        'concepto_id' => $this->conceptoIngreso->id,
+        'monto' => 100,
+        'serie' => 'B001',
+        'numero' => '000123',
+    ])->assertCreated()
+        ->assertJsonPath('data.serie', 'B001')
+        ->assertJsonPath('data.numero', '000123');
+
+    $this->postJson('/api/caja/movimientos', [
+        'tipo' => 'egreso',
+        'concepto_id' => $this->conceptoGasto->id,
+        'monto' => 50,
+        'comprobante' => UploadedFile::fake()->image('comprobante.jpg'),
+        'serie' => 'F001',
+        'numero' => 'F001-000045',
+    ])->assertCreated()
+        ->assertJsonPath('data.serie', 'F001')
+        ->assertJsonPath('data.numero', 'F001-000045');
+});
+
+it('registers a movimiento fine without a boleta', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+    $this->postJson('/api/caja/aperturar')->assertCreated();
+
+    $this->postJson('/api/caja/movimientos', [
+        'tipo' => 'ingreso',
+        'concepto_id' => $this->conceptoIngreso->id,
+        'monto' => 100,
+    ])->assertCreated()
+        ->assertJsonPath('data.serie', null)
+        ->assertJsonPath('data.numero', null);
+});
+
+it('normalizes the boleta serie to uppercase and discards a blank one', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+    $this->postJson('/api/caja/aperturar')->assertCreated();
+
+    $this->postJson('/api/caja/movimientos', [
+        'tipo' => 'ingreso',
+        'concepto_id' => $this->conceptoIngreso->id,
+        'monto' => 100,
+        'serie' => '  b002 ',
+        'numero' => ' 000999 ',
+    ])->assertCreated()
+        ->assertJsonPath('data.serie', 'B002')
+        ->assertJsonPath('data.numero', '000999');
+
+    // Una serie en blanco debe quedar como null, no como "" (que en MySQL
+    // colisionaría en el índice único de boleta contra otra boleta vacía).
+    $this->postJson('/api/caja/movimientos', [
+        'tipo' => 'ingreso',
+        'concepto_id' => $this->conceptoIngreso->id,
+        'monto' => 100,
+        'serie' => '   ',
+        'numero' => '   ',
+    ])->assertCreated()
+        ->assertJsonPath('data.serie', null)
+        ->assertJsonPath('data.numero', null);
+});
+
+it('requires the serie and the numero together', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+    $this->postJson('/api/caja/aperturar')->assertCreated();
+
+    $this->postJson('/api/caja/movimientos', [
+        'tipo' => 'ingreso',
+        'concepto_id' => $this->conceptoIngreso->id,
+        'monto' => 100,
+        'serie' => 'B003',
+    ])->assertUnprocessable()->assertJsonValidationErrors('numero');
+
+    $this->postJson('/api/caja/movimientos', [
+        'tipo' => 'ingreso',
+        'concepto_id' => $this->conceptoIngreso->id,
+        'monto' => 100,
+        'numero' => '000321',
+    ])->assertUnprocessable()->assertJsonValidationErrors('serie');
+});
+
+it('rejects a boleta already registered in the empresa', function () {
+    $otroAsesor = User::factory()->forAgencia($this->agencia)->create();
+    $otroAsesor->assignRole('asesor');
+
+    // La unicidad es por empresa, no por caja ni por tipo de movimiento: otro
+    // asesor de la misma agencia tampoco puede reusar la boleta.
+    registrarMovimientoComo($this->asesor, ['tipo' => 'ingreso', 'concepto_id' => $this->conceptoIngreso->id, 'monto' => 10, 'serie' => 'B004', 'numero' => '000111']);
+    registrarMovimientoComo($otroAsesor, ['tipo' => 'ingreso', 'concepto_id' => $this->conceptoIngreso->id, 'monto' => 1000]);
+
+    Sanctum::actingAs($otroAsesor, ['*']);
+
+    // La serie va en minúsculas a propósito: prepareForValidation() la sube a
+    // mayúsculas, así que choca contra la boleta ya guardada como "B004".
+    $this->postJson('/api/caja/movimientos', [
+        'tipo' => 'egreso',
+        'concepto_id' => $this->conceptoGasto->id,
+        'monto' => 10,
+        'comprobante' => UploadedFile::fake()->image('comprobante.jpg'),
+        'serie' => 'b004',
+        'numero' => '000111',
+    ])->assertUnprocessable()->assertJsonValidationErrors(['serie', 'numero']);
+
+    // Mismo número con otra serie sí es una boleta distinta.
+    $this->postJson('/api/caja/movimientos', [
+        'tipo' => 'ingreso',
+        'concepto_id' => $this->conceptoIngreso->id,
+        'monto' => 10,
+        'serie' => 'B005',
+        'numero' => '000111',
+    ])->assertCreated();
+});
+
+it('accepts the same boleta number in a different empresa', function () {
+    $otraEmpresa = Empresa::factory()->create();
+    $otraAgencia = Agencia::factory()->for($otraEmpresa)->create();
+    $otroAsesor = User::factory()->forAgencia($otraAgencia)->create();
+    $otroAsesor->assignRole('asesor');
+    $concepto = Concepto::factory()->paraEmpresa($otraEmpresa)->create(['tipo' => 'ingreso', 'nombre' => 'Ingreso vario']);
+
+    $boleta = ['serie' => 'B001', 'numero' => '000123'];
+    $idPropia = registrarMovimientoComo($this->asesor, ['tipo' => 'ingreso', 'concepto_id' => $this->conceptoIngreso->id, 'monto' => 10, ...$boleta]);
+    $idAjena = registrarMovimientoComo($otroAsesor, ['tipo' => 'ingreso', 'concepto_id' => $concepto->id, 'monto' => 20, ...$boleta]);
+
+    // withoutGlobalScopes() porque el actor autenticado al final es el de la
+    // otra empresa y el scope de tenant filtraría el conteo.
+    $guardadas = CajaMovimiento::query()->withoutGlobalScopes()
+        ->whereIn('id', [$idPropia, $idAjena])
+        ->orderBy('empresa_id')
+        ->get(['empresa_id', 'serie', 'numero']);
+
+    expect($guardadas)->toHaveCount(2)
+        ->and($guardadas->pluck('empresa_id')->unique())->toHaveCount(2)
+        ->and($guardadas->pluck('serie')->unique()->all())->toBe(['B001'])
+        ->and($guardadas->pluck('numero')->unique()->all())->toBe(['000123']);
+});
+
+it('filters the movimientos by boleta serie or numero', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+    $this->postJson('/api/caja/aperturar')->assertCreated();
+
+    $this->postJson('/api/caja/movimientos', [
+        'tipo' => 'ingreso', 'concepto_id' => $this->conceptoIngreso->id, 'monto' => 10,
+        'serie' => 'B001', 'numero' => '000123',
+    ])->assertCreated();
+    $this->postJson('/api/caja/movimientos', [
+        'tipo' => 'ingreso', 'concepto_id' => $this->conceptoIngreso->id, 'monto' => 20,
+        'serie' => 'B002', 'numero' => '000123',
+    ])->assertCreated();
+    $this->postJson('/api/caja/movimientos', [
+        'tipo' => 'ingreso', 'concepto_id' => $this->conceptoIngreso->id, 'monto' => 30,
+    ])->assertCreated();
+
+    $montos = fn (string $query) => collect($this->getJson("/api/caja/movimientos?tipo=ingreso{$query}")->assertSuccessful()->json('data.data'))->pluck('monto')->sort()->values()->all();
+
+    expect($montos(''))->toBe(['10.00', '20.00', '30.00'])
+        ->and($montos('&boleta=B001'))->toBe(['10.00'])
+        ->and($montos('&boleta=b001'))->toBe(['10.00'])
+        ->and($montos('&boleta=B00'))->toBe(['10.00', '20.00'])
+        ->and($montos('&boleta=000123'))->toBe(['10.00', '20.00'])
+        ->and($montos('&boleta=123'))->toBe(['10.00', '20.00'])
+        ->and($montos('&boleta=B001&registrado_por='.$this->asesor->id))->toBe(['10.00']);
+});
+
 it('exposes concepto as a plain string (not the eager-loaded Concepto relation object) on the cierre resumen', function () {
     Sanctum::actingAs($this->asesor, ['*']);
     $this->postJson('/api/caja/aperturar')->assertCreated();
@@ -79,6 +247,22 @@ it('exposes concepto as a plain string (not the eager-loaded Concepto relation o
     // value directly as text) crashes the whole page. Regression for that.
     $response = $this->getJson('/api/caja/cierre/resumen')->assertSuccessful();
     expect($response->json('data.movimientos.0.concepto'))->toBe('Ingreso vario');
+});
+
+it('exposes concepto as a plain string on the registro response too', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+    $this->postJson('/api/caja/aperturar')->assertCreated();
+
+    // Same contrato que el resumen de cierre: registrarMovimiento() eagerly
+    // loads the concepto() relation, so serialization swaps the snapshot
+    // string for the full Concepto model on this path as well.
+    $response = $this->postJson('/api/caja/movimientos', [
+        'tipo' => 'ingreso',
+        'concepto_id' => $this->conceptoIngreso->id,
+        'monto' => 100,
+    ])->assertCreated();
+
+    expect($response->json('data.concepto'))->toBe('Ingreso vario');
 });
 
 it('requires a comprobante to register a gasto', function () {

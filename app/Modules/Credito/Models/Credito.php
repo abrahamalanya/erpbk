@@ -10,6 +10,7 @@ use App\Modules\CreditoPrendario\Models\Bien;
 use App\Modules\CreditoVehicular\Models\Vehiculo;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
+use App\Modules\Facturacion\Models\Comprobante;
 use App\Modules\Usuario\Models\User;
 use App\Nucleo\Concerns\BelongsToTenant;
 use Database\Factories\CreditoFactory;
@@ -246,6 +247,38 @@ class Credito extends Model
     public function cobros(): HasMany
     {
         return $this->hasMany(Cobro::class, 'credito_id');
+    }
+
+    /**
+     * Comprobantes emitidos a partir de este crédito. Un crédito puede tener
+     * más de uno (nota de crédito, corrección), por eso es HasMany.
+     */
+    public function comprobantes(): HasMany
+    {
+        return $this->hasMany(Comprobante::class, 'origen_id')
+            ->where('origen_tipo', 'credito');
+    }
+
+    /**
+     * ¿Este crédito tiene un comprobante aceptado/observado por SUNAT?
+     * Si es true, NO se puede anular cobros sin emitir nota de crédito.
+     */
+    public function tieneComprobanteAceptado(): bool
+    {
+        return $this->comprobantes()
+            ->whereIn('estado', ['aceptado', 'observado'])
+            ->exists();
+    }
+
+    /**
+     * Obtiene el comprobante aceptado/observado más reciente del crédito.
+     */
+    public function comprobanteAceptadoReciente(): ?Comprobante
+    {
+        return $this->comprobantes()
+            ->whereIn('estado', ['aceptado', 'observado'])
+            ->latest('aceptado_at')
+            ->first();
     }
 
     protected function diasEnMora(): Attribute

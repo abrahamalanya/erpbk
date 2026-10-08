@@ -29,4 +29,9 @@ return Application::configure(basePath: dirname(__DIR__))
                 ], 422);
             }
         });
-    })->create();
+    })
+    ->withCommands([
+        __DIR__.'/../app/Console/Commands',
+        __DIR__.'/../app/Modules/Facturacion/Console/Commands',
+    ])
+    ->create();

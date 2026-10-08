@@ -1991,6 +1991,17 @@ final class CreditoService
             throw new DomainException('Este cobro ya está anulado.');
         }
 
+        // GUARD: Si el crédito ya tiene un comprobante aceptado/observado,
+        // no se puede anular el cobro directamente. Requiere nota de crédito.
+        $credito = $cobro->credito;
+        if ($credito->tieneComprobanteAceptado()) {
+            $comprobante = $credito->comprobanteAceptadoReciente();
+            throw new DomainException(
+                "No se puede anular este cobro: el crédito {$credito->codigo} ya tiene el comprobante {$comprobante->numeroFormateado()} ".
+                "aceptado por SUNAT. Debe emitir una nota de crédito para corregirlo."
+            );
+        }
+
         if (! $actor->hasRole('administrador_general')) {
             $ciclo = Caja::query()->where('user_id', $actor->id)->first()?->cicloAbierto()->first();
 

@@ -13,6 +13,7 @@ use App\Modules\Usuario\Models\User;
 use App\Nucleo\Concerns\GestionaImagenes;
 use App\Nucleo\Http\Controllers\Controller;
 use App\Nucleo\Services\ConsultaDniService;
+use App\Nucleo\Services\ConsultaRucService;
 use App\Nucleo\Traits\ApiResponse;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
@@ -60,6 +61,7 @@ class ClienteController extends Controller
         private readonly ClienteHierarchyService $hierarchy,
         private readonly ClienteFotoService $fotos,
         private readonly ConsultaDniService $consultaDni,
+        private readonly ConsultaRucService $consultaRuc,
     ) {}
 
     public function consultarDni(string $dni): JsonResponse
@@ -67,6 +69,18 @@ class ClienteController extends Controller
         Gate::authorize('create', Cliente::class);
 
         return $this->successResponse($this->consultaDni->consultar($dni));
+    }
+
+    /**
+     * Autocompleta los datos de una persona jurídica. Necesario para poder
+     * emitir una factura a un cliente con RUC — toda factura electrónica
+     * exige RUC de receptor (FACTURACION.md §3.3).
+     */
+    public function consultarRuc(string $ruc): JsonResponse
+    {
+        Gate::authorize('create', Cliente::class);
+
+        return $this->successResponse($this->consultaRuc->consultar($ruc));
     }
 
     /**

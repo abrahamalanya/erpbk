@@ -13,7 +13,7 @@ beforeEach(function () {
 
 it('seeds each rol with its default módulos', function () {
     expect(Role::where('name', 'administrador_general')->firstOrFail()->modulos()->pluck('key')->sort()->values()->all())
-        ->toBe(['cajas', 'diario', 'hipotecario', 'prendario', 'solicitudes', 'vehicular']);
+        ->toBe(['cajas', 'diario', 'facturacion', 'hipotecario', 'planilla', 'prendario', 'solicitudes', 'vehicular']);
 
     expect(Role::where('name', 'asesor')->firstOrFail()->modulos()->pluck('key')->sort()->values()->all())
         ->toBe(['diario', 'hipotecario', 'prendario', 'vehicular']);
@@ -26,7 +26,7 @@ it('gives sistemas every módulo regardless of role_modulo config', function () 
     $sistemas->assignRole('sistemas');
 
     expect(app(ModuloService::class)->modulosEfectivos($sistemas))->toEqualCanonicalizing([
-        'prendario', 'diario', 'hipotecario', 'vehicular', 'solicitudes', 'cajas',
+        'prendario', 'diario', 'hipotecario', 'vehicular', 'solicitudes', 'cajas', 'planilla', 'facturacion',
     ]);
 });
 
@@ -55,7 +55,7 @@ it('lists the módulo catalog for sistemas only', function () {
     $sistemas->assignRole('sistemas');
     Sanctum::actingAs($sistemas, ['*']);
 
-    $this->getJson('/api/modulos')->assertSuccessful()->assertJsonCount(6, 'data');
+    $this->getJson('/api/modulos')->assertSuccessful()->assertJsonCount(8, 'data');
 
     $admin = User::factory()->create();
     $admin->assignRole('administrador_general');

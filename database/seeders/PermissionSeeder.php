@@ -42,6 +42,9 @@ class PermissionSeeder extends Seeder
         'dashboard.ver',
         'simulaciones_credito.ver', 'simulaciones_credito.crear', 'simulaciones_credito.eliminar',
         'ubicaciones_asesores.ver',
+        'planillas.ver', 'planillas.crear', 'planillas.editar', 'planillas.descuentos',
+        'facturaciones.ver', 'facturaciones.crear', 'facturaciones.anular', 'facturaciones.emitir_nota_credito', 'facturaciones.descargar',
+        'configuraciones_facturacion.ver', 'configuraciones_facturacion.editar',
     ];
 
     /**
@@ -80,6 +83,34 @@ class PermissionSeeder extends Seeder
     private const COBRANZAS_PERMISSIONS = ['cobranzas.ver', 'cobranzas.registrar'];
 
     /**
+     * La facturación electrónica la operan los mismos roles que ya cobran y
+     * supervisan (que son quienes eligen a quién facturar) más los
+     * administradores. `anular` y `emitir_nota_credito` quedan solo en
+     * administrador_general porque tienen efecto fiscal y no se delegan: quien
+     * puede ver el comprobante de todos no debería poder borrar su evidencia.
+     * Los otros tres roles solo pueden `ver` y `descargar` lo emitido.
+     *
+     * @var list<string>
+     */
+    private const FACTURACION_PERMISSIONS = [
+        'facturaciones.ver', 'facturaciones.descargar',
+    ];
+
+    /**
+     * @var array<string, list<string>>
+     */
+    private const FACTURACION_ROLES_PERMISOS = [
+        'administrador_general' => [
+            'facturaciones.ver', 'facturaciones.crear', 'facturaciones.anular',
+            'facturaciones.emitir_nota_credito', 'facturaciones.descargar',
+            'configuraciones_facturacion.ver', 'configuraciones_facturacion.editar',
+        ],
+        'administrador_agencia' => ['facturaciones.ver', 'facturaciones.crear', 'facturaciones.descargar'],
+        'supervisor' => ['facturaciones.ver', 'facturaciones.crear', 'facturaciones.descargar'],
+        'secretaria' => ['facturaciones.ver', 'facturaciones.descargar'],
+    ];
+
+    /**
      * El dashboard inicial resume cobranzas y desembolsos, así que va a los
      * mismos roles que el módulo Cobranzas: quien cobra o desembolsa ya puede
      * ver el resumen de su propia operación.
@@ -106,6 +137,18 @@ class PermissionSeeder extends Seeder
     ];
 
     /**
+     * Planilla: solo los roles que administran personal (los mismos que ya
+     * manejan usuarios, cajas y bóvedas de toda la empresa). Ni asesor ni
+     * supervisor entran — los sueldos y adelantos del personal no se muestran
+     * al personal. Ver PlanillaPolicy.
+     */
+    private const PLANILLA_ROLES = ['administrador_general', 'administrador_agencia', 'secretaria'];
+
+    private const PLANILLA_PERMISSIONS = [
+        'planillas.ver', 'planillas.crear', 'planillas.editar', 'planillas.descuentos',
+    ];
+
+    /**
      * The app's módulo catalog (see ModuloService). Grows over time as more
      * business areas become toggleable per rol/usuario — not just créditos.
      *
@@ -118,6 +161,8 @@ class PermissionSeeder extends Seeder
         ['key' => 'vehicular', 'nombre' => 'Créditos vehiculares', 'grupo' => 'creditos'],
         ['key' => 'solicitudes', 'nombre' => 'Solicitudes', 'grupo' => 'general'],
         ['key' => 'cajas', 'nombre' => 'Cajas', 'grupo' => 'general'],
+        ['key' => 'planilla', 'nombre' => 'Planilla', 'grupo' => 'general'],
+        ['key' => 'facturacion', 'nombre' => 'Facturación electrónica', 'grupo' => 'general'],
     ];
 
     /**
@@ -129,10 +174,10 @@ class PermissionSeeder extends Seeder
      * @var array<string, list<string>>
      */
     private const ROLE_MODULOS = [
-        'administrador_general' => ['prendario', 'diario', 'hipotecario', 'vehicular', 'solicitudes', 'cajas'],
-        'administrador_agencia' => ['prendario', 'diario', 'hipotecario', 'vehicular', 'solicitudes', 'cajas'],
-        'secretaria' => ['prendario', 'diario', 'hipotecario', 'vehicular', 'solicitudes'],
-        'supervisor' => ['prendario', 'diario', 'hipotecario', 'vehicular', 'solicitudes', 'cajas'],
+        'administrador_general' => ['prendario', 'diario', 'hipotecario', 'vehicular', 'solicitudes', 'cajas', 'planilla', 'facturacion'],
+        'administrador_agencia' => ['prendario', 'diario', 'hipotecario', 'vehicular', 'solicitudes', 'cajas', 'planilla', 'facturacion'],
+        'secretaria' => ['prendario', 'diario', 'hipotecario', 'vehicular', 'solicitudes', 'planilla', 'facturacion'],
+        'supervisor' => ['prendario', 'diario', 'hipotecario', 'vehicular', 'solicitudes', 'cajas', 'facturacion'],
         'asesor' => ['prendario', 'diario', 'hipotecario', 'vehicular'],
         'peinadora' => [],
     ];
@@ -161,6 +206,19 @@ class PermissionSeeder extends Seeder
 
             if (in_array($roleName, self::DASHBOARD_ROLES, true)) {
                 $permissions = [...$permissions, ...self::DASHBOARD_PERMISSIONS];
+            }
+
+            if (in_array($roleName, self::PLANILLA_ROLES, true)) {
+                $permissions = [...$permissions, ...self::PLANILLA_PERMISSIONS];
+            }
+
+            // La facturación NO se reparte por lista de roles sino por mapa
+            // explícito: cada rol recibe exactamente lo declarado arriba, sin
+            // acumular el bloque genérico.
+            if (isset(self::FACTURACION_ROLES_PERMISOS[$roleName])) {
+                $permissions = [...$permissions, ...self::FACTURACION_ROLES_PERMISOS[$roleName]];
+            } elseif (in_array($roleName, self::COBRANZAS_ROLES, true)) {
+                $permissions = [...$permissions, ...self::FACTURACION_PERMISSIONS];
             }
 
             Role::where('name', $roleName)->firstOrFail()->syncPermissions($permissions);

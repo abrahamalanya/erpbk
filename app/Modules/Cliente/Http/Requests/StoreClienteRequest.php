@@ -4,6 +4,8 @@ namespace App\Modules\Cliente\Http\Requests;
 
 use App\Modules\Cliente\Models\ClienteFoto;
 use App\Modules\Empresa\Models\Agencia;
+use App\Nucleo\Rules\DocumentoDeIdentidadValido;
+use App\Nucleo\Support\DocumentoIdentidad;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -31,9 +33,10 @@ class StoreClienteRequest extends FormRequest
         return [
             'nombre' => ['required', 'string', 'max:255'],
             'apellido' => ['required', 'string', 'max:255'],
-            'tipo_documento' => ['required', Rule::in(['dni', 'ce', 'pasaporte'])],
+            'tipo_documento' => ['required', Rule::in(DocumentoIdentidad::tipos())],
             'numero_documento' => [
                 'required', 'string', 'max:20',
+                new DocumentoDeIdentidadValido,
                 Rule::unique('clientes', 'numero_documento')->where(
                     fn ($query) => $query->where('empresa_id', $actor->hasRole('sistemas') ? $this->input('empresa_id') : $actor->empresa_id)
                 ),

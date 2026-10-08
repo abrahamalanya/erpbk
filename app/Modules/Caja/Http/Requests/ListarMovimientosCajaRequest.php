@@ -38,6 +38,7 @@ class ListarMovimientosCajaRequest extends FormRequest
             ],
             'excluir_desembolsos' => ['nullable', 'boolean', 'prohibited_if:tipo,ingreso'],
             'registrado_por' => ['nullable', 'integer', 'exists:users,id'],
+            'boleta' => ['nullable', 'string', 'max:30'],
             'desde' => ['nullable', 'date'],
             'hasta' => ['nullable', 'date', 'after_or_equal:desde'],
         ];

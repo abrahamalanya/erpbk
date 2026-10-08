@@ -3,6 +3,8 @@
 namespace App\Modules\Cliente\Http\Requests;
 
 use App\Modules\Cliente\Models\ClienteFoto;
+use App\Nucleo\Rules\DocumentoDeIdentidadValido;
+use App\Nucleo\Support\DocumentoIdentidad;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
@@ -27,9 +29,10 @@ class UpdateClienteRequest extends FormRequest
         return [
             'nombre' => ['sometimes', 'required', 'string', 'max:255'],
             'apellido' => ['sometimes', 'required', 'string', 'max:255'],
-            'tipo_documento' => ['sometimes', 'required', Rule::in(['dni', 'ce', 'pasaporte'])],
+            'tipo_documento' => ['sometimes', 'required', Rule::in(DocumentoIdentidad::tipos())],
             'numero_documento' => [
                 'sometimes', 'required', 'string', 'max:20',
+                new DocumentoDeIdentidadValido,
                 Rule::unique('clientes', 'numero_documento')
                     ->where(fn ($query) => $query->where('empresa_id', $this->route('cliente')->empresa_id))
                     ->ignore($this->route('cliente')),

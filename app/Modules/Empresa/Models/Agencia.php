@@ -9,6 +9,7 @@ use App\Modules\Credito\Models\ConfiguracionCredito;
 use App\Modules\Credito\Models\Credito;
 use App\Modules\CreditoPrendario\Models\Bien;
 use App\Modules\Tienda\Models\InteresArticulo;
+use App\Modules\Ubigeo\Models\UbigeoDistrito;
 use App\Modules\Usuario\Models\User;
 use App\Nucleo\Concerns\BelongsToTenant;
 use Database\Factories\AgenciaFactory;
@@ -32,12 +33,24 @@ class Agencia extends Model
         'empresa_id',
         'nombre',
         'telefono',
+        'ruc',
+        'domicilio_calle',
+        'domicilio_numero',
+        'domicilio_interior',
+        'ubigeo_distrito_id',
+        'correo_facturacion',
+        'codigo_establecimiento',
         'estado',
     ];
 
     public function empresa(): BelongsTo
     {
         return $this->belongsTo(Empresa::class);
+    }
+
+    public function ubigeoDistrito(): BelongsTo
+    {
+        return $this->belongsTo(UbigeoDistrito::class);
     }
 
     public function usuarios(): HasMany
