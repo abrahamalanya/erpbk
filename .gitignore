@@ -26,3 +26,6 @@ Thumbs.db
 # Datos reales de clientes/usuarios (PII) usados por los seeders de
 # producción — solo deben existir en el servidor, nunca en el repositorio.
 /database/seeders/data
+
+# Migración de datos credimas (contiene datos personales de clientes)
+/database/migracion_juanji

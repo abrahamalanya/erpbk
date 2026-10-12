@@ -1,0 +1,1079 @@
+{
+  "info": {
+    "_postman_id": "9a1c4e77-2b5d-4f18-9a3c-7d8e6f5a4b3c",
+    "name": "Umax - Facturación SUNAT",
+    "description": "Pruebas del módulo de facturación electrónica contra la API local.\n\n## Antes de empezar\n\n1. Importa este collection y el entorno `Umax Local`.\n2. En el entorno define `base_url` (por defecto `http://umax.test/api`), `email` y `password` de un usuario con permisos de facturación (roles `administrador_general` o `supervisor`).\n3. Ejecuta primero `00 Auth > Login`. El script de test guarda el `access_token` en la variable `token` del entorno y la colección ya aplica `Authorization: Bearer {{token}}` a todo lo demás.\n\n## Notas importantes\n\n- El envío a SUNAT se despacha en cola (`QUEUE_CONNECTION=database`). Si el comprobante queda en `generado` y no avanza, corre `php artisan queue:work` en otra terminal.\n- Trabaja en **modo beta** mientras pruebas: `PUT /configuracion-facturacion` con `{\"modo\":\"beta\"}`. Nunca pruebes contra `produccion`.\n- Todos los endpoints cuelgan de `auth:sanctum` y de permisos (`facturaciones.ver`, `facturaciones.crear`, `facturaciones.anular`, `facturaciones.emitir_nota_credito`, `configuraciones_facturacion.editar`). Un 403 significa \"te falta permiso\", no \"el endpoint está roto\".\n- Formato de respuesta uniforme: `{ \"success\": bool, \"message\": string, \"data\": mixed }`.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{token}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [],
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://umax.test/api"
+    },
+    {
+      "key": "motivo_anulacion",
+      "value": "Prueba automatizada en Postman"
+    }
+  ],
+  "item": [
+    {
+      "name": "00 Auth",
+      "description": "Autenticación. Todo lo demás depende de este request.",
+      "item": [
+        {
+          "name": "Login",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{email}}\",\n  \"password\": \"{{password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/auth/login",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "login"]
+            },
+            "description": "`email` acepta correo o DNI (si no es un email válido, el backend lo busca por `dni`).\n\nEl test guarda `data.access_token` en la variable de entorno `token`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Login exitoso (200)', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.success).to.be.true;",
+                  "    pm.expect(json.data.access_token).to.be.a('string');",
+                  "});",
+                  "",
+                  "const json = pm.response.json();",
+                  "if (json.data && json.data.access_token) {",
+                  "    pm.environment.set('token', json.data.access_token);",
+                  "    console.log('Token guardado en el entorno');",
+                  "}",
+                  "if (json.data && json.data.user && json.data.user.empresa_id) {",
+                  "    pm.environment.set('empresa_id', json.data.user.empresa_id);",
+                  "    console.log('empresa_id = ' + json.data.user.empresa_id);",
+                  "}",
+                  "if (json.data && json.data.user && Array.isArray(json.data.user.permission_names)) {",
+                  "    const faltan = ['facturaciones.ver', 'facturaciones.crear', 'facturaciones.anular', 'facturaciones.emitir_nota_credito']",
+                  "        .filter(p => !json.data.user.permission_names.includes(p));",
+                  "    if (faltan.length) {",
+                  "        console.warn('Permisos de facturación ausentes: ' + faltan.join(', '));",
+                  "    }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Me (usuario actual)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/auth/me",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "me"]
+            },
+            "description": "Confirma que el token sigue vigente y revisa `permission_names` / `modulos_efectivos` del usuario."
+          }
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/auth/logout",
+              "host": ["{{base_url}}"],
+              "path": ["auth", "logout"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "01 Configuración",
+      "description": "Ajustes de facturación de la empresa. Haz esto antes de emitir.",
+      "item": [
+        {
+          "name": "Ver configuración",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/configuracion-facturacion",
+              "host": ["{{base_url}}"],
+              "path": ["configuracion-facturacion"]
+            }
+          }
+        },
+        {
+          "name": "Actualizar configuración",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"modo\": \"beta\",\n  \"igv_porcentaje\": 18,\n  \"moneda\": \"PEN\",\n  \"interes_incluye_igv\": false,\n  \"bloquear_si_supera_umbral\": false,\n  \"activo\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/configuracion-facturacion",
+              "host": ["{{base_url}}"],
+              "path": ["configuracion-facturacion"]
+            },
+            "description": "`modo` acepta `beta` o `produccion`. **Usa `beta` para pruebas**; `produccion` envía documentos reales a SUNAT.\n\nValida: `igv_porcentaje` 0-100, `moneda` PEN|USD, `serie_factura_defecto` / `serie_boleta_defecto` de 4 caracteres."
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 Series de comprobantes",
+      "description": "Series (F001, B001, FC01...). Sin una serie activa no se puede emitir nada.",
+      "item": [
+        {
+          "name": "Listar series",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/facturacion/series",
+              "host": ["{{base_url}}"],
+              "path": ["facturacion", "series"]
+            }
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "const series = Array.isArray(json.data) ? json.data : [];",
+                  "if (series.length) {",
+                  "    pm.environment.set('serie_id', series[0].id);",
+                  "    console.log('serie_id = ' + series[0].id + ' (' + series[0].serie + ')');",
+                  "}",
+                  "pm.test('Series listadas', function () {",
+                  "    pm.expect(json.success).to.be.true;",
+                  "    console.log('Total series: ' + series.length);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Registrar serie",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tipo_documento\": \"01\",\n  \"serie\": \"F001\",\n  \"descripcion\": \"Facturas electronicas\",\n  \"limite_numeracion\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/facturacion/series",
+              "host": ["{{base_url}}"],
+              "path": ["facturacion", "series"]
+            },
+            "description": "`tipo_documento`: `01` factura, `03` boleta, `07` nota de crédito.\n`serie` debe tener exactamente 4 caracteres (`F001`, `B001`, `FC01`).\n`agencia_id` es opcional."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Serie registrada (201)', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "});",
+                  "const json = pm.response.json();",
+                  "if (json.data && json.data.id) {",
+                  "    pm.environment.set('serie_id', json.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Actualizar serie",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"descripcion\": \"Serie de prueba\",\n  \"estado\": true,\n  \"limite_numeracion\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/facturacion/series/{{serie_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["facturacion", "series", "{{serie_id}}"]
+            },
+            "description": "Deja `estado: false` para inactivar la serie sin borrarla (recomendado si ya emitió)."
+          }
+        },
+        {
+          "name": "Eliminar serie",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/facturacion/series/{{serie_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["facturacion", "series", "{{serie_id}}"]
+            },
+            "description": "Devuelve 422 si la serie ya emitió comprobantes: en ese caso inactiva con `estado: false`."
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 Credenciales SUNAT",
+      "description": "Certificado digital (.pfx) y clave SOL de la empresa. Sin esto no hay envío a SUNAT (sí se puede generar el comprobante local).",
+      "item": [
+        {
+          "name": "Ver credenciales",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/empresas/{{empresa_id}}/credenciales-sunat",
+              "host": ["{{base_url}}"],
+              "path": ["empresas", "{{empresa_id}}", "credenciales-sunat"]
+            },
+            "description": "La clave SOL y el password del certificado nunca se devuelven: `usuario_sol` viene enmascarado y solo verás `tiene_clave_sol`.\n\nRevisa `esta_completa`, `esta_vencida` y `dias_para_vencer`."
+          }
+        },
+        {
+          "name": "Subir / actualizar credenciales",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "usuario_sol",
+                  "value": "TU_USUARIO_SOL",
+                  "type": "text"
+                },
+                {
+                  "key": "clave_sol",
+                  "value": "TU_CLAVE_SOL",
+                  "type": "text"
+                },
+                {
+                  "key": "certificado",
+                  "type": "file",
+                  "src": [],
+                  "description": "Selecciona aquí tu archivo .pfx / .p12 (máx 10 MB)"
+                },
+                {
+                  "key": "certificado_password",
+                  "value": "PASSWORD_DEL_PFX",
+                  "type": "text"
+                },
+                {
+                  "key": "razon_social_certificado",
+                  "value": "MI EMPRESA S.A.C.",
+                  "type": "text"
+                },
+                {
+                  "key": "modo_facturacion",
+                  "value": "beta",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/empresas/{{empresa_id}}/credenciales-sunat",
+              "host": ["{{base_url}}"],
+              "path": ["empresas", "{{empresa_id}}", "credenciales-sunat"]
+            },
+            "description": "Requiere **multipart/form-data** (no JSON).\n\nEl `.pfx` se guarda en disco privado, fuera del `public/`. `clave_sol` y `certificado_password` se cifran en base de datos.\n`modo_facturacion`: `beta` o `produccion`.\n\nEn Postman: en la pestaña **Body** selecciona *form-data* y arrastra tu `.pfx` al campo `certificado`."
+          }
+        },
+        {
+          "name": "Validar certificado",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/empresas/{{empresa_id}}/credenciales-sunat/validar",
+              "host": ["{{base_url}}"],
+              "path": ["empresas", "{{empresa_id}}", "credenciales-sunat", "validar"]
+            },
+            "description": "No habla con SUNAT: lee el `.pfx`, verifica vigencia y prueba una firma SHA-1. Es la forma más rápida de confirmar que el certificado sirve.\n\n200 = válido. 422 = contraseña incorrecta, archivo corrupto, sin clave privada o certificado vencido."
+          }
+        },
+        {
+          "name": "Descargar certificado",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/empresas/{{empresa_id}}/credenciales-sunat/certificado",
+              "host": ["{{base_url}}"],
+              "path": ["empresas", "{{empresa_id}}", "credenciales-sunat", "certificado"]
+            },
+            "description": "Descarga el `.pfx` original. Desactiva *Send and download* para verlo crudo en el body."
+          }
+        },
+        {
+          "name": "Eliminar credenciales",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/empresas/{{empresa_id}}/credenciales-sunat",
+              "host": ["{{base_url}}"],
+              "path": ["empresas", "{{empresa_id}}", "credenciales-sunat"]
+            },
+            "description": "Borra el registro y el archivo del disco. Destructivo: no lo ejecutes sobre datos reales por accidente."
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 Emisión desde crédito",
+      "description": "Flujo principal: crédito cancelado -> previsualizar -> emitir comprobante.",
+      "item": [
+        {
+          "name": "Créditos pendientes de facturar",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/facturacion/creditos-pendientes",
+              "host": ["{{base_url}}"],
+              "path": ["facturacion", "creditos-pendientes"]
+            },
+            "description": "Créditos liquidados o `liquidado_pendiente` que aún no tienen comprobante. Filtro opcional: `agencia_id`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "const items = Array.isArray(json.data) ? json.data : [];",
+                  "console.log('Créditos pendientes: ' + items.length);",
+                  "if (items.length) {",
+                  "    pm.environment.set('credito_id', items[0].id);",
+                  "    console.log('credito_id = ' + items[0].id + ' -> ' + items[0].codigo + ' / ' + items[0].cliente);",
+                  "} else {",
+                  "    console.warn('No hay créditos pendientes. Cierra un crédito en el módulo de créditos o siembra uno de prueba.');",
+                  "}",
+                  "pm.test('Pendientes responde 200', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "    pm.expect(json.success).to.be.true;",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Previsualizar comprobante",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/facturacion/creditos/{{credito_id}}/previsualizar",
+              "host": ["{{base_url}}"],
+              "path": ["facturacion", "creditos", "{{credito_id}}", "previsualizar"]
+            },
+            "description": "Calcula base imponible, IGV, total, receptor y tipo de comprobante sugerido **sin consumir correlativo**. Úsalo para verificar los montos antes de emitir."
+          }
+        },
+        {
+          "name": "Emitir comprobante",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"observaciones\": \"Prueba desde Postman\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/facturacion/creditos/{{credito_id}}/emitir",
+              "host": ["{{base_url}}"],
+              "path": ["facturacion", "creditos", "{{credito_id}}", "emitir"]
+            },
+            "description": "Genera el comprobante, consume el correlativo y lo deja en estado `generado`.\n\nEl cuerpo es opcional: lo único que acepta es `observaciones` (máx 1000 caracteres). El tipo de comprobante y la serie se deducen del crédito.\n\n**El envío a SUNAT ocurre en segundo plano por cola.** Si no tienes `php artisan queue:work` corriendo, el comprobante se queda en `generado`."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Comprobante emitido (201)', function () {",
+                  "    pm.response.to.have.status(201);",
+                  "    const json = pm.response.json();",
+                  "    pm.expect(json.success).to.be.true;",
+                  "    console.log(json.data.numero + ' | ' + json.data.tipo + ' | total ' + json.data.total + ' | estado ' + json.data.estado);",
+                  "});",
+                  "const json = pm.response.json();",
+                  "if (json.data && json.data.id) {",
+                  "    pm.environment.set('comprobante_id', json.data.id);",
+                  "    console.log('comprobante_id = ' + json.data.id);",
+                  "}"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "05 Comprobantes",
+      "description": "Consulta, PDF, CDR y reintento de envío.",
+      "item": [
+        {
+          "name": "Listar comprobantes",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/facturacion/comprobantes?por_pagina=15",
+              "host": ["{{base_url}}"],
+              "path": ["facturacion", "comprobantes"],
+              "query": [
+                {
+                  "key": "fecha_desde",
+                  "value": "",
+                  "type": "text"
+                },
+                {
+                  "key": "fecha_hasta",
+                  "value": "",
+                  "type": "text"
+                },
+                {
+                  "key": "tipo_documento",
+                  "value": "",
+                  "type": "text",
+                  "description": "01, 03, 07"
+                },
+                {
+                  "key": "estado",
+                  "value": "",
+                  "type": "text",
+                  "description": "borrador, generado, enviado, aceptado, observado, rechazado, error, anulado, sustituido"
+                },
+                {
+                  "key": "serie",
+                  "value": "",
+                  "type": "text"
+                },
+                {
+                  "key": "cliente_id",
+                  "value": "",
+                  "type": "text"
+                },
+                {
+                  "key": "agencia_id",
+                  "value": "",
+                  "type": "text"
+                },
+                {
+                  "key": "por_pagina",
+                  "value": "15",
+                  "type": "text"
+                }
+              ]
+            },
+            "description": "Paginado estilo Laravel (`data`, `current_page`, `last_page`...). Deja vacíos los filtros que no uses."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "const items = json.data && json.data.data ? json.data.data : [];",
+                  "if (items.length) {",
+                  "    pm.environment.set('comprobante_id', items[0].id);",
+                  "    console.log('comprobante_id = ' + items[0].id);",
+                  "    items.slice(0, 5).forEach(c => console.log('  ' + c.numero + ' [' + c.estado + '] ' + c.total));",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Ver comprobante",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/facturacion/comprobantes/{{comprobante_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["facturacion", "comprobantes", "{{comprobante_id}}"]
+            },
+            "description": "Detalle completo con `detalles`, `serieComprobante` y `cliente`. Revisa aquí `estado`, `xml_path`, `cdr_codigo` y `cdr_descripcion`."
+          }
+        },
+        {
+          "name": "Ver PDF",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/facturacion/comprobantes/{{comprobante_id}}/pdf",
+              "host": ["{{base_url}}"],
+              "path": ["facturacion", "comprobantes", "{{comprobante_id}}", "pdf"]
+            },
+            "description": "Devuelve el PDF del comprobante (no JSON). En Postman activa *Send and download*."
+          }
+        },
+        {
+          "name": "Consultar CDR",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/facturacion/comprobantes/{{comprobante_id}}/cdr",
+              "host": ["{{base_url}}"],
+              "path": ["facturacion", "comprobantes", "{{comprobante_id}}", "cdr"]
+            },
+            "description": "Consulta el estado en SUNAT y **actualiza el comprobante** con la respuesta.\n\nDevuelve 422 si faltan credenciales. `cdr_codigo: \"0\"` = aceptado."
+          }
+        },
+        {
+          "name": "Reenviar a SUNAT",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/facturacion/comprobantes/{{comprobante_id}}/reenviar",
+              "host": ["{{base_url}}"],
+              "path": ["facturacion", "comprobantes", "{{comprobante_id}}", "reenviar"]
+            },
+            "description": "Reintento manual con el **mismo número** de correlativo. Solo válido si el estado es `generado` o `error`; en cualquier otro devuelve 422.\n\nEs la forma más rápida de iterar cuando SUNAT rechaza un documento."
+          }
+        },
+        {
+          "name": "Anular (local, sin SUNAT)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"motivo\": \"Error en el monto facturado\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/facturacion/comprobantes/{{comprobante_id}}/anular",
+              "host": ["{{base_url}}"],
+              "path": ["facturacion", "comprobantes", "{{comprobante_id}}", "anular"]
+            },
+            "description": "Anulación **local**. Solo aplica a comprobantes que nunca se comunicaron (`borrador`, `generado`, `enviado`, `error`, `rechazado`).\n\n`motivo` es obligatorio (máx 255 caracteres). Para comprobantes ya aceptados usa *Comunicar baja*."
+          }
+        },
+        {
+          "name": "Comunicar baja (SUNAT)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"motivo\": \"Error en el monto facturado\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/facturacion/comprobantes/{{comprobante_id}}/comunicar-baja",
+              "host": ["{{base_url}}"],
+              "path": ["facturacion", "comprobantes", "{{comprobante_id}}", "comunicar-baja"]
+            },
+            "description": "Comunicación de baja real a SUNAT (`sendSummary`), para comprobantes ya `aceptado` u `observado`.\n\nSUNAT responde de forma asíncrona: lo normal es recibir un `ticket` y consultar el CDR después con *Consultar CDR*. Con `cdr_codigo: \"0\"` la baja queda confirmada."
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 Nota de crédito",
+      "item": [
+        {
+          "name": "Emitir nota de crédito (07)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"motivo\": \"Devolucion parcial del prestamo\",\n  \"lineas\": [\n    {\n      \"descripcion\": \"Anulacion de interes del periodo\",\n      \"cantidad\": 1,\n      \"valor_unitario\": 100.00,\n      \"igv\": 18.00,\n      \"total\": 118.00,\n      \"unidad_medida\": \"ZZ\",\n      \"categoria\": \"S\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/facturacion/comprobantes/{{comprobante_id}}/nota-credito",
+              "host": ["{{base_url}}"],
+              "path": ["facturacion", "comprobantes", "{{comprobante_id}}", "nota-credito"]
+            },
+            "description": "Nota de crédito tipo `07` que referencia al comprobante de la URL.\n\n`lineas[]` requiere `descripcion`, `cantidad`, `valor_unitario`, `igv`, `total`. Opcionales: `unidad_medida` (ZZ|NIU|KG|MTR|LTR, default ZZ) y `categoria` (S|G|E|B, default S).\n\nSi no mandas `valor_venta`, el backend lo calcula como `total - igv`.\n\nRequiere credenciales SUNAT completas y vigentes: si faltan, devuelve 422."
+          }
+        }
+      ]
+    },
+    {
+      "name": "07 Reportes",
+      "description": "Todos aceptan `fecha_desde`, `fecha_hasta` y `agencia_id`.",
+      "item": [
+        {
+          "name": "Resumen",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/facturacion/reportes/resumen",
+              "host": ["{{base_url}}"],
+              "path": ["facturacion", "reportes", "resumen"],
+              "query": [
+                {
+                  "key": "fecha_desde",
+                  "value": "",
+                  "type": "text"
+                },
+                {
+                  "key": "fecha_hasta",
+                  "value": "",
+                  "type": "text"
+                },
+                {
+                  "key": "agencia_id",
+                  "value": "",
+                  "type": "text"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Emitidas",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/facturacion/reportes/emitidas",
+              "host": ["{{base_url}}"],
+              "path": ["facturacion", "reportes", "emitidas"],
+              "query": [
+                {
+                  "key": "fecha_desde",
+                  "value": "",
+                  "type": "text"
+                },
+                {
+                  "key": "fecha_hasta",
+                  "value": "",
+                  "type": "text"
+                },
+                {
+                  "key": "tipo_documento",
+                  "value": "",
+                  "type": "text"
+                },
+                {
+                  "key": "estado",
+                  "value": "",
+                  "type": "text"
+                },
+                {
+                  "key": "serie",
+                  "value": "",
+                  "type": "text"
+                },
+                {
+                  "key": "por_pagina",
+                  "value": "15",
+                  "type": "text"
+                },
+                {
+                  "key": "page",
+                  "value": "1",
+                  "type": "text"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Por dia",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/facturacion/reportes/por-dia",
+              "host": ["{{base_url}}"],
+              "path": ["facturacion", "reportes", "por-dia"]
+            }
+          }
+        },
+        {
+          "name": "Por estado",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/facturacion/reportes/por-estado",
+              "host": ["{{base_url}}"],
+              "path": ["facturacion", "reportes", "por-estado"]
+            },
+            "description": "Buen request de diagnóstico: te dice de inmediato si SUNAT aceptó, observó o rechazó lo emitido."
+          }
+        },
+        {
+          "name": "Por serie",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/facturacion/reportes/por-serie",
+              "host": ["{{base_url}}"],
+              "path": ["facturacion", "reportes", "por-serie"]
+            }
+          }
+        },
+        {
+          "name": "Por cliente",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/facturacion/reportes/por-cliente",
+              "host": ["{{base_url}}"],
+              "path": ["facturacion", "reportes", "por-cliente"]
+            }
+          }
+        },
+        {
+          "name": "Anulados",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/facturacion/reportes/anulados",
+              "host": ["{{base_url}}"],
+              "path": ["facturacion", "reportes", "anulados"]
+            }
+          }
+        },
+        {
+          "name": "Notas de credito",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/facturacion/reportes/notas-credito",
+              "host": ["{{base_url}}"],
+              "path": ["facturacion", "reportes", "notas-credito"]
+            }
+          }
+        },
+        {
+          "name": "Dashboard",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{base_url}}/facturacion/reportes/dashboard",
+              "host": ["{{base_url}}"],
+              "path": ["facturacion", "reportes", "dashboard"]
+            }
+          }
+        },
+        {
+          "name": "Exportar Excel",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/facturacion/reportes/exportar-excel",
+              "host": ["{{base_url}}"],
+              "path": ["facturacion", "reportes", "exportar-excel"],
+              "query": [
+                {
+                  "key": "fecha_desde",
+                  "value": "",
+                  "type": "text"
+                },
+                {
+                  "key": "fecha_hasta",
+                  "value": "",
+                  "type": "text"
+                }
+              ]
+            },
+            "description": "Descarga un .xlsx. Activa *Send and download* en Postman."
+          }
+        }
+      ]
+    }
+  ]
+}
