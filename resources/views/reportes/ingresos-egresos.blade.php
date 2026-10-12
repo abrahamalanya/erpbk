@@ -72,7 +72,7 @@
             <td class="valor">{{ number_format((float) $totales['total_ingresos'], 2) }}</td>
         </tr>
         <tr>
-            <td class="etiqueta">Total egresos</td>
+            <td class="etiqueta">Total egresos (Egresos + Planilla)</td>
             <td class="valor">{{ number_format((float) $totales['total_egresos'], 2) }}</td>
         </tr>
         <tr>

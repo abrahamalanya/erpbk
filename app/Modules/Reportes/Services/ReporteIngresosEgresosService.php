@@ -6,6 +6,8 @@ use App\Modules\Caja\Models\CajaMovimiento;
 use App\Modules\Caja\Services\CajaBovedaHierarchyService;
 use App\Modules\Cobranza\Models\Cobro;
 use App\Modules\Credito\Models\Credito;
+use App\Modules\Planilla\Models\Planilla;
+use App\Modules\Planilla\Models\PlanillaTrabajador;
 use App\Modules\Usuario\Models\User;
 use App\Modules\Venta\Models\Venta;
 use Carbon\Carbon;
@@ -37,10 +39,14 @@ use Illuminate\Support\Collection;
  * Egresos (lo que se gasta):
  *
  * - egresos:   CajaMovimiento tipo=egreso SIN credito_id — el módulo Egresos.
+ * - planilla:  el "neto a pagar" de cada trabajador de las planillas
+ *              confirmadas cuya fecha de pago cae en el periodo. Solo lo ve
+ *              quien puede ver planillas (los sueldos no se muestran al
+ *              personal); para el resto la sección sale vacía.
  *
  * Los desembolsos quedan fuera: prestar dinero no es un gasto, es capital que
- * vuelve. La planilla todavía no se suma (pendiente de ajustes en ese módulo).
- * El billetaje tampoco: es la entrega de efectivo de la bóveda al asesor.
+ * vuelve. El billetaje tampoco: es la entrega de efectivo de la bóveda al
+ * asesor.
  */
 final class ReporteIngresosEgresosService
 {
@@ -52,6 +58,7 @@ final class ReporteIngresosEgresosService
      *     cobranzas: array{filas: Collection<int, array<string, mixed>>, total: string},
      *     ventas: array{filas: Collection<int, array<string, mixed>>, total: string},
      *     egresos: array{filas: Collection<int, array<string, mixed>>, total: string},
+     *     planilla: array{filas: Collection<int, array<string, mixed>>, total: string},
      *     totales: array<string, string>,
      *     utilidad_neta: string,
      *     margen_utilidad_bruta: float|null
@@ -67,6 +74,7 @@ final class ReporteIngresosEgresosService
             'cobranzas' => $this->cobranzas($inicio, $fin, $actor, $agenciaId),
             'ventas' => $this->ventas($inicio, $fin, $actor, $agenciaId),
             'egresos' => $this->egresos($inicio, $fin, $actor, $agenciaId),
+            'planilla' => $this->planilla($inicio, $fin, $actor, $agenciaId),
         ];
 
         $totalIngresos = $this->sumar(
@@ -75,7 +83,7 @@ final class ReporteIngresosEgresosService
             $secciones['ventas']['total'],
         );
 
-        $totalEgresos = $secciones['egresos']['total'];
+        $totalEgresos = $this->sumar($secciones['egresos']['total'], $secciones['planilla']['total']);
         $utilidad = bcsub($totalIngresos, $totalEgresos, 2);
 
         return [
@@ -133,6 +141,43 @@ final class ReporteIngresosEgresosService
                 'monto' => $m->monto,
                 'serie' => $m->serie,
                 'numero' => $m->numero,
+            ]));
+
+        return $this->seccion($filas);
+    }
+
+    /**
+     * Neto a pagar de las planillas confirmadas con fecha de pago en el
+     * periodo, una fila por trabajador. La agencia es la de la línea (la del
+     * trabajador cuando la planilla es de toda la empresa); el administrador
+     * de agencia solo ve la suya.
+     *
+     * @return array{filas: Collection<int, array<string, mixed>>, total: string}
+     */
+    private function planilla(Carbon $inicio, Carbon $fin, User $actor, ?int $agenciaId): array
+    {
+        if (! $actor->can('viewAny', Planilla::class)) {
+            return $this->seccion(collect());
+        }
+
+        $filas = PlanillaTrabajador::query()
+            ->whereHas('planilla', fn (Builder $q) => $q
+                ->where('estado', 'confirmada')
+                ->whereDate('fecha_pago', '>=', $inicio->toDateString())
+                ->whereDate('fecha_pago', '<=', $fin->toDateString()))
+            ->when($actor->hasRole('administrador_agencia'), fn (Builder $q) => $q->where('agencia_id', $actor->agencia_id))
+            ->when($agenciaId, fn (Builder $q) => $q->where('agencia_id', $agenciaId))
+            ->with('planilla.cerradaPor:id,nombre,apellido')
+            ->get()
+            ->map(fn (PlanillaTrabajador $t): array => $this->fila([
+                'cuenta' => $this->nombre($t->planilla->cerradaPor),
+                'fecha' => $t->planilla->fecha_pago,
+                'descripcion' => $this->componer([
+                    'Planilla '.substr($t->planilla->periodo, 5, 2).'/'.substr($t->planilla->periodo, 0, 4),
+                    mb_strtoupper("{$t->apellidos} {$t->nombres}"),
+                    'Neto a pagar',
+                ]),
+                'monto' => $t->neto,
             ]));
 
         return $this->seccion($filas);

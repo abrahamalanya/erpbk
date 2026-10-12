@@ -31,9 +31,8 @@ class ConfiguracionPlanilla extends Model
         'agencia_id',
         'onp_trabajador',
         'afp_trabajador',
-        'essalud_trabajador',
         'essalud_empleador',
-        'cts_empleador',
+        'sis_empleador',
     ];
 
     /**
@@ -44,9 +43,8 @@ class ConfiguracionPlanilla extends Model
         return [
             'onp_trabajador' => 'decimal:2',
             'afp_trabajador' => 'decimal:2',
-            'essalud_trabajador' => 'decimal:2',
             'essalud_empleador' => 'decimal:2',
-            'cts_empleador' => 'decimal:2',
+            'sis_empleador' => 'decimal:2',
         ];
     }
 

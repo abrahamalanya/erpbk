@@ -9,9 +9,11 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 
 /**
- * Reporte de planilla: una fila por trabajador del periodo, con los datos
- * declarados (documento, apellidos, nombres, situación) y los importes de
- * ingresos, descuentos, tributos y aportes.
+ * Reporte de planilla con el formato del R01 del PDT Planilla Electrónica
+ * (PLAME) de SUNAT — "Trabajadores - Datos de Ingresos, Tributos y Aportes":
+ * una fila por trabajador con su documento (código SUNAT), apellidos,
+ * nombres, situación, ingresos devengados y pagados, descuentos, tributos del
+ * trabajador, neto a pagar y tributos del empleador.
  *
  * Los importes salen de PlanillaTrabajador, que ya los tiene persistidos y
  * congelados al confirmar la planilla: el reporte no recalcula nada, así que
@@ -19,6 +21,20 @@ use Illuminate\Support\Collection;
  */
 final class ReportePlanillaService
 {
+    /**
+     * Código SUNAT del tipo de documento (tabla 3 del PLAME).
+     *
+     * @var array<string, string>
+     */
+    private const CODIGOS_DOCUMENTO = ['dni' => '01', 'ce' => '04', 'ruc' => '06', 'pasaporte' => '07'];
+
+    /**
+     * Etiqueta PLAME de la situación del trabajador.
+     *
+     * @var array<string, string>
+     */
+    private const SITUACIONES = ['activo' => 'ACTIVO O SUBSIDIADO', 'baja' => 'BAJA'];
+
     /**
      * Planillas visibles para el actor — mismo alcance que PlanillaPolicy:
      * administrador general y secretaria ven su empresa, administrador de
@@ -39,8 +55,8 @@ final class ReportePlanillaService
     }
 
     /**
-     * El detalle de una planilla: una fila por trabajador con los datos
-     * declarados y todos los importes del reporte.
+     * El detalle de una planilla con la cabecera del R01 (RUC, empleador,
+     * periodo MM/AAAA) y una fila por trabajador.
      *
      * @return array<string, mixed>
      */
@@ -53,18 +69,23 @@ final class ReportePlanillaService
             ->map(fn (PlanillaTrabajador $t): array => self::fila($t))
             ->all();
 
+        $empresa = $planilla->empresa;
+
         return [
             'planilla_id' => $planilla->id,
             'periodo' => $planilla->periodo,
+            'periodo_plame' => substr($planilla->periodo, 5, 2).'/'.substr($planilla->periodo, 0, 4),
+            'ruc' => $empresa?->ruc,
+            'empleador' => $empresa ? ($empresa->razon_social ?: $empresa->nombre) : null,
             'fecha_pago' => $planilla->fecha_pago->toDateString(),
             'agencia' => $planilla->agencia?->nombre,
             'estado' => $planilla->estado,
             'cerrada_at' => $planilla->cerrada_at?->toISOString(),
             'trabajadores' => $trabajadores,
             'totales' => [
-                'ingresos' => $planilla->total_ingresos,
-                'descuentos_devengado' => $this->sumar($trabajadores, 'descuentos_devengado'),
-                'descuentos_pagado' => $planilla->total_descuentos,
+                'ingresos_devengado' => $planilla->total_ingresos,
+                'ingresos_pagado' => $planilla->total_ingresos,
+                'descuentos' => $planilla->total_descuentos,
                 'tributos_trabajador' => $planilla->total_tributos_trabajador,
                 'neto' => $planilla->total_neto,
                 'aportes_empleador' => $planilla->total_aportes_empleador,
@@ -73,8 +94,10 @@ final class ReportePlanillaService
     }
 
     /**
-     * Una fila del reporte, con los nombres de columna de la tabla del
-     * enunciado.
+     * Una fila del R01. Los ingresos devengados y pagados son el mismo monto:
+     * la planilla registra lo que se paga en el periodo, no sueldos
+     * pendientes. Los descuentos son los aplicados en el mes (adelantos,
+     * préstamos, faltas).
      *
      * @return array<string, string>
      */
@@ -82,31 +105,17 @@ final class ReportePlanillaService
     {
         return [
             'user_id' => (string) $t->user_id,
-            'tipo_documento' => $t->tipo_documento,
+            'tipo_documento' => self::CODIGOS_DOCUMENTO[$t->tipo_documento] ?? $t->tipo_documento,
             'numero_documento' => $t->numero_documento,
-            'apellidos' => $t->apellidos,
-            'nombres' => $t->nombres,
-            'situacion' => $t->situacion,
-            'ingresos' => $t->ingresos,
-            'descuentos_devengado' => $t->descuentos_devengado,
-            'descuentos_pagado' => $t->descuentos_pagado,
+            'apellidos' => mb_strtoupper($t->apellidos),
+            'nombres' => mb_strtoupper($t->nombres),
+            'situacion' => self::SITUACIONES[$t->situacion] ?? mb_strtoupper($t->situacion),
+            'ingresos_devengado' => $t->ingresos,
+            'ingresos_pagado' => $t->ingresos,
+            'descuentos' => $t->descuentos_pagado,
             'tributos_trabajador' => $t->tributos_trabajador,
             'neto' => $t->neto,
             'aportes_empleador' => $t->aportes_empleador,
         ];
-    }
-
-    /**
-     * Suma con bcmath sobre las filas ya formateadas (string de 2 decimales).
-     *
-     * @param  list<array<string, string>>  $filas
-     */
-    private function sumar(array $filas, string $columna): string
-    {
-        return array_reduce(
-            $filas,
-            fn (string $acumulado, array $fila): string => bcadd($acumulado, $fila[$columna], 2),
-            '0.00',
-        );
     }
 }

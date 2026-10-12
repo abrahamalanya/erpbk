@@ -22,9 +22,9 @@ class ReportePlanillaController extends Controller
      * @var list<string>
      */
     private const ENCABEZADOS = [
-        'Doc. Tipo', 'Doc. Número', 'Apellidos', 'Nombres', 'Situación',
-        'Ingresos', 'Descuentos devengado', 'Descuentos pagado',
-        'Tributos y aportes trabajador', 'Neto a pagar', 'Tributos y aportes empleador',
+        'Doc. Tipo', 'Doc. Número', 'Apellidos', 'Nombres', 'Sit.',
+        'Ingresos devengado', 'Ingresos pagado', 'Descuentos',
+        'Tributos y aportes del trabajador', 'Neto a pagar', 'Tributos y aportes del empleador',
     ];
 
     public function __construct(private readonly ReportePlanillaService $reportePlanillaService) {}
@@ -72,11 +72,12 @@ class ReportePlanillaController extends Controller
         $reporte = $this->reportePlanillaService->detalle($planilla);
 
         return $pdf->renderizarDesdeVista('reportes.planilla', [
-            'titulo' => 'Planilla de sueldos',
-            'periodo' => $reporte['periodo'],
+            'titulo' => 'R01: Trabajadores - Datos de Ingresos, Tributos y Aportes',
+            'ruc' => $reporte['ruc'],
+            'empleador' => $reporte['empleador'],
+            'periodo' => $reporte['periodo_plame'],
             'agencia' => $reporte['agencia'] ?? 'Todas las agencias',
             'fecha_pago' => $reporte['fecha_pago'],
-            'encabezados' => self::ENCABEZADOS,
             'filas' => $this->filas($reporte['trabajadores']),
             'totales' => $reporte['totales'],
         ]);
@@ -91,12 +92,10 @@ class ReportePlanillaController extends Controller
         $filas = $this->filas($reporte['trabajadores']);
         $filas[] = [
             '', '', 'TOTALES', '', '',
-            number_format((float) $reporte['totales']['ingresos'], 2),
-            number_format((float) $reporte['totales']['descuentos_devengado'], 2),
-            number_format((float) $reporte['totales']['descuentos_pagado'], 2),
-            number_format((float) $reporte['totales']['tributos_trabajador'], 2),
-            number_format((float) $reporte['totales']['neto'], 2),
-            number_format((float) $reporte['totales']['aportes_empleador'], 2),
+            ...array_map(
+                fn (string $monto): string => number_format((float) $monto, 2),
+                array_values($reporte['totales']),
+            ),
         ];
 
         return $excel->generarDesdeFilas(
@@ -118,9 +117,9 @@ class ReportePlanillaController extends Controller
             $t['apellidos'],
             $t['nombres'],
             $t['situacion'],
-            number_format((float) $t['ingresos'], 2),
-            number_format((float) $t['descuentos_devengado'], 2),
-            number_format((float) $t['descuentos_pagado'], 2),
+            number_format((float) $t['ingresos_devengado'], 2),
+            number_format((float) $t['ingresos_pagado'], 2),
+            number_format((float) $t['descuentos'], 2),
             number_format((float) $t['tributos_trabajador'], 2),
             number_format((float) $t['neto'], 2),
             number_format((float) $t['aportes_empleador'], 2),

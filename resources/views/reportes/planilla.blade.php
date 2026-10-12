@@ -6,56 +6,78 @@
     <style>
         @page { margin: 1cm; size: landscape; }
         body { font-family: DejaVu Sans, sans-serif; font-size: 8px; color: #1a1a1a; }
-        h1 { font-size: 15px; text-align: center; margin-bottom: 4px; }
-        .generado { text-align: center; color: #666; font-size: 9px; margin-bottom: 10px; }
-        .sub { text-align: center; color: #444; font-size: 9px; margin-bottom: 12px; }
+        .cabecera { width: 100%; margin-bottom: 10px; }
+        .cabecera td { padding: 1px 0; vertical-align: top; }
+        .titulo { font-size: 11px; font-weight: bold; }
+        .emision { text-align: right; color: #444; }
+        .datos td { font-size: 9px; }
 
-        table { width: 100%; border-collapse: collapse; }
-        th, td { padding: 3px 3px; text-align: left; }
-        thead th { border-bottom: 2px solid #333; font-weight: bold; font-size: 7.5px; color: #333; }
-        tbody tr:nth-child(even) { background: #f5f5f5; }
-        tbody td { border-bottom: 1px solid #ddd; }
-        th.num, td.num { text-align: right; }
-        tfoot td { border-top: 2px solid #333; font-weight: bold; padding-top: 4px; }
+        table.planilla { width: 100%; border-collapse: collapse; }
+        table.planilla th, table.planilla td { border: 1px solid #555; padding: 3px; }
+        table.planilla th { background: #e8e8e8; font-size: 7.5px; text-align: center; }
+        td.num { text-align: right; }
+        td.centro { text-align: center; }
+        tfoot td { font-weight: bold; background: #f2f2f2; }
         .vacio { text-align: center; color: #888; font-style: italic; }
     </style>
 </head>
 <body>
-    <h1>{{ $titulo }}</h1>
-    <p class="sub">
-        Periodo {{ $periodo }} &nbsp;|&nbsp; {{ $agencia }} &nbsp;|&nbsp; Fecha de pago {{ $fecha_pago }}
-    </p>
-    <p class="generado">Generado el {{ now()->locale('es')->translatedFormat('d \d\e F \d\e\l Y, H:i') }}</p>
+    <table class="cabecera">
+        <tr>
+            <td class="titulo">{{ $titulo }}</td>
+            <td class="emision">{{ now()->format('d/m/Y') }}<br>{{ now()->format('H:i:s') }}</td>
+        </tr>
+    </table>
 
-    <table>
+    <table class="cabecera datos">
+        <tr><td>RUC : {{ $ruc ?? '—' }}</td></tr>
+        <tr><td>Empleador : {{ mb_strtoupper($empleador ?? '—') }}</td></tr>
+        <tr><td>Periodo : {{ $periodo }}</td></tr>
+        <tr><td>Agencia : {{ $agencia }} &nbsp;|&nbsp; Fecha de pago : {{ \Illuminate\Support\Carbon::parse($fecha_pago)->format('d/m/Y') }}</td></tr>
+    </table>
+
+    <table class="planilla">
         <thead>
             <tr>
-                @foreach ($encabezados as $indice => $encabezado)
-                    {{-- Las columnas de la 6ta en adelante son montos. --}}
-                    <th @class(['num' => $indice >= 5])>{{ $encabezado }}</th>
-                @endforeach
+                <th colspan="5">Datos del Trabajador</th>
+                <th colspan="6">Informaci&oacute;n declarada</th>
+            </tr>
+            <tr>
+                <th colspan="2">Documento de Identidad</th>
+                <th rowspan="2">Apellidos</th>
+                <th rowspan="2">Nombres</th>
+                <th rowspan="2">Sit.</th>
+                <th colspan="2">Ingresos</th>
+                <th rowspan="2">Descuentos</th>
+                <th rowspan="2">Tributos y aportes del Trabajador</th>
+                <th rowspan="2">Neto a pagar</th>
+                <th rowspan="2">Tributos y Aportes del Empleador</th>
+            </tr>
+            <tr>
+                <th>Tipo</th>
+                <th>N&uacute;mero</th>
+                <th>Devengado</th>
+                <th>Pagado</th>
             </tr>
         </thead>
         <tbody>
             @forelse ($filas as $fila)
                 <tr>
                     @foreach ($fila as $indice => $valor)
-                        <td @class(['num' => $indice >= 5])>{{ $valor }}</td>
+                        {{-- Las columnas de la 6ta en adelante son montos. --}}
+                        <td @class(['num' => $indice >= 5, 'centro' => $indice === 0])>{{ $valor }}</td>
                     @endforeach
                 </tr>
             @empty
-                <tr><td colspan="{{ count($encabezados) }}" class="vacio">Sin trabajadores</td></tr>
+                <tr><td colspan="11" class="vacio">Sin trabajadores</td></tr>
             @endforelse
         </tbody>
         <tfoot>
             <tr>
                 <td colspan="5">TOTALES</td>
-                <td class="num">{{ number_format((float) $totales['ingresos'], 2) }}</td>
-                <td class="num">{{ number_format((float) $totales['descuentos_devengado'], 2) }}</td>
-                <td class="num">{{ number_format((float) $totales['descuentos_pagado'], 2) }}</td>
-                <td class="num">{{ number_format((float) $totales['tributos_trabajador'], 2) }}</td>
-                <td class="num">{{ number_format((float) $totales['neto'], 2) }}</td>
-                <td class="num">{{ number_format((float) $totales['aportes_empleador'], 2) }}</td>
+                @foreach ($totales as $monto)
+                    <td class="num">{{ number_format((float) $monto, 2) }}</td>
+                @endforeach
             </tr>
         </tfoot>
     </table>

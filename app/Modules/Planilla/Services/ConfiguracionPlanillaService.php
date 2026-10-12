@@ -6,20 +6,14 @@ use App\Modules\Planilla\Models\ConfiguracionPlanilla;
 use Illuminate\Database\Eloquent\Builder;
 
 /**
- * Tasas y base imponible de la planilla.
+ * Tasas de la planilla, todas sobre el sueldo básico (sin bonificaciones):
  *
- * Se calcula automaticamente lo que es una tasa fija y conocida: ONP, Essalud
- * del trabajador, Essalud del empleador y CTS.
+ * - Trabajador: AFP 11.37% u ONP 13% (se descuenta del sueldo).
+ * - Empleador: EsSalud 9% o SIS S/ 15 fijos (costo de la empresa).
  *
- * La AFP NO entra por aca: su monto se declara a mano por linea (ver
- * PlanillaService::tributosTrabajador()). Cada trabajador esta en una AFP
- * distinta, la tasa cambia por institution y hay meses con aportes
- * extraordinarios, asi que una tasa global en la configuracion mentiria.
- *
- * Base imponible: los aportes del trabajador (ONP + AFP + Essalud) se calculan
- * sobre el sueldo del mes sin bonificaciones, que es el tratamiento peruano
- * para Essalud y ONP; el aporte del empleador (Essalud + CTS) se calcula sobre
- * el sueldo completo. La base se separa en PlanillaService al armar cada linea.
+ * Qué régimen y qué seguro le toca a cada trabajador lo dice su usuario; las
+ * tasas viven en configuraciones_planilla, por empresa y con override por
+ * agencia.
  */
 final class ConfiguracionPlanillaService
 {
@@ -42,8 +36,8 @@ final class ConfiguracionPlanillaService
             ->first();
 
         if (! $configuracion) {
-            // Se crea vacia y se recarga: los default de la migracion (ONP 3%,
-            // Essalud 4%/5%, CTS 8.33%) los aplica MySQL al insertar, y Eloquent
+            // Se crea vacia y se recarga: los default de la migracion (AFP 11.37%,
+            // ONP 13%, EsSalud 9%, SIS S/ 15) los aplica MySQL al insertar, y Eloquent
             // no los trae en la instancia recien creada: sin el refresh, leer la
             // tasa daria null.
             $configuracion = ConfiguracionPlanilla::query()->create([
@@ -56,46 +50,43 @@ final class ConfiguracionPlanillaService
     }
 
     /**
-     * Aportes del trabajador. ONP y Essalud salen de la tasa configurada; la AFP
-     * entra como el monto declarado a mano ($afpDeclarado).
-     *
-     * ONP y AFP son regimenes de pension alternantes: quien esta en AFP no
-     * aporta a ONP. El `es_afp` de la linea sigue mandando sobre eso, porque un
-     * monto manual de AFP en 0 no permite distinguir "no esta en AFP" de "esta
-     * en AFP y este mes no aporta".
+     * Descuento previsional del trabajador sobre su sueldo básico: AFP
+     * (11.37%) u ONP (13%), regímenes alternantes — quien está en AFP no aporta
+     * a ONP. El régimen viene del usuario (User::sistema_pension).
      *
      * @return array{onp: string, afp: string, essalud_trabajador: string, tributos_trabajador: string}
      */
-    public function tributosTrabajador(ConfiguracionPlanilla $configuracion, string $baseImponible, bool $esAfp, string $afpDeclarado = '0'): array
+    public function tributosTrabajador(ConfiguracionPlanilla $configuracion, string $sueldoBasico, bool $esAfp): array
     {
-        $onp = $esAfp ? '0.00' : $this->porcentaje($configuracion->onp_trabajador, $baseImponible);
-        $afp = $esAfp ? bcadd($afpDeclarado, '0', 2) : '0.00';
-        $essalud = $this->porcentaje($configuracion->essalud_trabajador, $baseImponible);
+        $onp = $esAfp ? '0.00' : $this->porcentaje($configuracion->onp_trabajador, $sueldoBasico);
+        $afp = $esAfp ? $this->porcentaje($configuracion->afp_trabajador, $sueldoBasico) : '0.00';
 
         return [
             'onp' => $onp,
             'afp' => $afp,
-            'essalud_trabajador' => $essalud,
-            'tributos_trabajador' => bcadd($onp, bcadd($afp, $essalud, 2), 2),
+            'essalud_trabajador' => '0.00',
+            'tributos_trabajador' => bcadd($onp, $afp, 2),
         ];
     }
 
     /**
-     * Aporte del empleador: Essalud (sobre el sueldo completo) mas CTS. No se
-     * resta del sueldo: es costo de la empresa, pero se reporta junto al resto
-     * de la planilla.
+     * Aporte del empleador por el seguro de salud del trabajador: EsSalud (9%
+     * del sueldo básico) o SIS (monto fijo, S/ 15). No se resta del sueldo:
+     * es costo de la empresa, pero se reporta junto al resto de la planilla.
+     * El seguro viene del usuario (User::seguro_salud).
      *
-     * @return array{essalud_empleador: string, cts: string, aportes_empleador: string}
+     * @return array{essalud_empleador: string, sis: string, cts: string, aportes_empleador: string}
      */
-    public function aportesEmpleador(ConfiguracionPlanilla $configuracion, string $remuneracion): array
+    public function aportesEmpleador(ConfiguracionPlanilla $configuracion, string $sueldoBasico, bool $esSis): array
     {
-        $essalud = $this->porcentaje($configuracion->essalud_empleador, $remuneracion);
-        $cts = $this->porcentaje($configuracion->cts_empleador, $remuneracion);
+        $essalud = $esSis ? '0.00' : $this->porcentaje($configuracion->essalud_empleador, $sueldoBasico);
+        $sis = $esSis ? bcadd((string) $configuracion->sis_empleador, '0', 2) : '0.00';
 
         return [
             'essalud_empleador' => $essalud,
-            'cts' => $cts,
-            'aportes_empleador' => bcadd($essalud, $cts, 2),
+            'sis' => $sis,
+            'cts' => '0.00',
+            'aportes_empleador' => bcadd($essalud, $sis, 2),
         ];
     }
 
@@ -104,9 +95,9 @@ final class ConfiguracionPlanillaService
      * planilla.
      *
      * Se divide con escala 6 y se multiplica con escala alta (8) antes de
-     * redondear: si se truncara cada operacion a 2 decimales, el CTS al 8.33%
-     * de 1130 daria 94.12 en vez de 94.13 (1130 * 0.0833 = 94.129) y el total
-     * del empleador caeria un centavo. El redondeo es half-up, no el truncado
+     * redondear: si se truncara cada operacion a 2 decimales, un monto como
+     * 94.129 quedaria en 94.12 en vez de 94.13 y el total caeria un centavo.
+     * El redondeo es half-up, no el truncado
      * de bcmath, que es lo que corresponde a un monto de dinero.
      */
     private function porcentaje(string $porcentaje, string $monto): string

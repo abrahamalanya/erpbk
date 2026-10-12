@@ -423,6 +423,38 @@ it('rejects an invalid date range and an unknown agencia', function () {
     $this->getJson('/api/reportes/ingresos-egresos?desde=no-es-una-fecha')->assertUnprocessable();
 });
 
+it('adds the neto a pagar of the confirmed planillas to egresos, hidden from roles that cannot see salaries', function () {
+    $trabajador = User::factory()->forAgencia($this->agencia)->create([
+        'nombre' => 'Norma', 'apellido' => 'Quispe', 'en_planilla' => true, 'sistema_pension' => 'afp', 'seguro_salud' => 'sis',
+    ]);
+
+    Sanctum::actingAs($this->administradorGeneral, ['*']);
+    foreach (['2026-08' => true, '2026-09' => false] as $periodo => $cerrar) {
+        $id = $this->postJson('/api/planillas', ['periodo' => $periodo, 'fecha_pago' => '2026-09-30'])->json('data.id');
+        $this->postJson("/api/planillas/{$id}/lineas", ['lineas' => [['user_id' => $trabajador->id, 'ingresos' => 1130]]])->assertSuccessful();
+
+        if ($cerrar) {
+            $this->postJson("/api/planillas/{$id}/cerrar")->assertSuccessful();
+        }
+    }
+    ie_movimiento($this->ciclo, $this->empresa, 'egreso', 40, '2026-09-05', $this->asesor, ['concepto_id' => $this->concepto->id]);
+
+    $data = $this->getJson('/api/reportes/ingresos-egresos?desde=2026-09-01&hasta=2026-09-30')->assertSuccessful()->json('data');
+
+    // Solo la planilla confirmada (la de 2026-09 sigue en borrador): neto
+    // 1130 − 128.48 de AFP = 1001.52.
+    expect($data['planilla']['filas'])->toHaveCount(1)
+        ->and($data['planilla']['filas'][0]['descripcion'])->toBe('Planilla 08/2026 — QUISPE NORMA — Neto a pagar')
+        ->and($data['planilla']['filas'][0]['fecha'])->toBe('2026-09-30')
+        ->and($data['totales']['planilla'])->toBe('1001.52')
+        ->and($data['totales']['total_egresos'])->toBe('1041.52')
+        ->and($data['utilidad_neta'])->toBe('-1041.52');
+
+    // El asesor tiene cajas.ver pero no ve sueldos.
+    Sanctum::actingAs($this->asesor, ['*']);
+    expect($this->getJson('/api/reportes/ingresos-egresos?desde=2026-09-01&hasta=2026-09-30')->json('data.totales.planilla'))->toBe('0.00');
+});
+
 it('denies the report to a role without the cajas.ver permission', function () {
     // El reporte se autoriza igual que "ver cajas", así que un rol que no
     // entra al módulo Caja queda fuera — mismo criterio que ReporteCajasTest.

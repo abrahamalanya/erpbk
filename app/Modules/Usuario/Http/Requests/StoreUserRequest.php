@@ -55,6 +55,11 @@ class StoreUserRequest extends FormRequest
             'email' => ['nullable', 'email', 'max:255', 'unique:users,email'],
             'password' => ['nullable', 'string', 'min:8'],
             'estado' => ['sometimes', Rule::in(['activo', 'inactivo'])],
+            // Si va en planilla, su régimen de pensión y su seguro son
+            // obligatorios: la planilla los usa para calcular AFP/ONP y EsSalud/SIS.
+            'en_planilla' => ['sometimes', 'boolean'],
+            'sistema_pension' => ['nullable', 'required_if_accepted:en_planilla', Rule::in(['afp', 'onp'])],
+            'seguro_salud' => ['nullable', 'required_if_accepted:en_planilla', Rule::in(['essalud', 'sis'])],
             'roles' => ['required', 'array', 'min:1'],
             'roles.*' => ['string', Rule::in($hierarchy->assignableRoles($actor))],
             'empresa_id' => [
@@ -141,6 +146,10 @@ class StoreUserRequest extends FormRequest
     {
         return [
             'nombre.required' => 'El nombre es requerido',
+            'sistema_pension.required_if_accepted' => 'Indica si el trabajador aporta a AFP u ONP',
+            'sistema_pension.in' => 'El sistema de pensión debe ser AFP u ONP',
+            'seguro_salud.required_if_accepted' => 'Indica si el trabajador tiene EsSalud o SIS',
+            'seguro_salud.in' => 'El seguro debe ser EsSalud o SIS',
             'apellido.required' => 'El apellido es requerido',
             'dni.required' => 'El DNI es requerido',
             'dni.regex' => 'El DNI debe tener 8 dígitos',

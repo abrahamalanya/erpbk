@@ -62,6 +62,9 @@ class UpdateUserRequest extends FormRequest
             ],
             'telefono' => ['nullable', 'string', 'max:20'],
             'estado' => ['sometimes', Rule::in(['activo', 'inactivo'])],
+            'en_planilla' => ['sometimes', 'boolean'],
+            'sistema_pension' => ['nullable', 'required_if_accepted:en_planilla', Rule::in(['afp', 'onp'])],
+            'seguro_salud' => ['nullable', 'required_if_accepted:en_planilla', Rule::in(['essalud', 'sis'])],
             'password' => ['sometimes', 'required', 'string', 'min:8'],
             'roles' => ['sometimes', 'array', 'min:1'],
             'roles.*' => ['string', Rule::in($rolesPermitidos)],
@@ -106,6 +109,10 @@ class UpdateUserRequest extends FormRequest
     {
         return [
             'nombre.required' => 'El nombre es requerido',
+            'sistema_pension.required_if_accepted' => 'Indica si el trabajador aporta a AFP u ONP',
+            'sistema_pension.in' => 'El sistema de pensión debe ser AFP u ONP',
+            'seguro_salud.required_if_accepted' => 'Indica si el trabajador tiene EsSalud o SIS',
+            'seguro_salud.in' => 'El seguro debe ser EsSalud o SIS',
             'apellido.required' => 'El apellido es requerido',
             'dni.regex' => 'El DNI debe tener 8 dígitos',
             'dni.unique' => 'Ya existe un usuario con este DNI',

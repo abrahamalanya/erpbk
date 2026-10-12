@@ -28,11 +28,6 @@ class StorePlanillaLineasRequest extends FormRequest
             'lineas.*.ingresos' => ['required', 'numeric', 'min:0'],
             'lineas.*.bonificaciones' => ['nullable', 'numeric', 'min:0'],
             'lineas.*.situacion' => ['nullable', 'string', 'max:50'],
-            'lineas.*.es_afp' => ['nullable', 'boolean'],
-            // El aporte a la AFP se declara a mano: cada trabajador está en una
-            // AFP distinta y el monto cambia (institution, tasa, aportes
-            // extraordinarios), así que no sale de una tasa global.
-            'lineas.*.afp' => ['nullable', 'numeric', 'min:0'],
             'lineas.*.descuentos_devengado' => ['nullable', 'numeric', 'min:0'],
         ];
     }
@@ -48,7 +43,6 @@ class StorePlanillaLineasRequest extends FormRequest
             'lineas.*.user_id.distinct' => 'El trabajador no puede repetirse en la misma planilla',
             'lineas.*.ingresos.required' => 'El ingreso del trabajador es requerido',
             'lineas.*.ingresos.min' => 'El ingreso no puede ser negativo',
-            'lineas.*.afp.min' => 'El aporte AFP no puede ser negativo',
         ];
     }
 }

@@ -19,7 +19,7 @@ class ReporteIngresosEgresosController extends Controller
     use ApiResponse;
 
     /**
-     * Las 4 secciones del reporte, en el orden en que se muestran: primero
+     * Las 5 secciones del reporte, en el orden en que se muestran: primero
      * todo lo que entra, luego todo lo que sale.
      *
      * @var list<array{clave: string, titulo: string}>
@@ -29,13 +29,14 @@ class ReporteIngresosEgresosController extends Controller
         ['clave' => 'cobranzas', 'titulo' => 'Cobranzas'],
         ['clave' => 'ventas', 'titulo' => 'Ventas'],
         ['clave' => 'egresos', 'titulo' => 'Egresos'],
+        ['clave' => 'planilla', 'titulo' => 'Planilla (neto a pagar)'],
     ];
 
     public function __construct(private readonly ReporteIngresosEgresosService $reporteIngresosEgresosService) {}
 
     /**
      * Estado de resultados: ingresos, cobranzas (interés + mora de créditos
-     * cancelados), ventas (ganancia) y egresos del rango de fechas, con su
+     * cancelados), ventas (ganancia), egresos y planilla del rango de fechas, con su
      * detalle y total por sección, más utilidad/pérdida neta y margen de
      * utilidad bruta. Misma autoridad y jerarquía de visibilidad que "Flujo de
      * caja".
@@ -100,7 +101,7 @@ class ReporteIngresosEgresosController extends Controller
     }
 
     /**
-     * Las 4 secciones con su título y sus filas ya formateadas para la vista
+     * Las 5 secciones con su título y sus filas ya formateadas para la vista
      * PDF.
      *
      * @param  array<string, mixed>  $reporte

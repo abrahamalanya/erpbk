@@ -16,9 +16,9 @@ use Illuminate\Support\Facades\DB;
  * Registra la planilla de un periodo: cabecera, líneas por trabajador, cálculo
  * de aportes y descuentos, y el cierre que congela los totales.
  *
- * Cada línea se calcula sobre la base imponible del trabajador (el sueldo sin
- * bonificaciones para los aportes del trabajador; el sueldo completo para los
- * del empleador). El neto a pagar sale de la fórmula:
+ * Cada línea se calcula sobre el sueldo básico del trabajador (sin
+ * bonificaciones), tanto su AFP/ONP como el EsSalud/SIS del empleador. El neto
+ * a pagar sale de la fórmula:
  *
  *   neto = ingresos − descuentos_pagado − tributos_trabajador
  *
@@ -71,10 +71,10 @@ final class PlanillaService
      * sus aportes con las tasas vigentes y recalcula los totales de la cabecera.
      * Solo admite planillas en borrador.
      *
-     * `afp` es el monto del aporte a la AFP declarado a mano en la línea (solo
-     * si `es_afp` es true); lo demás sale de las tasas configuradas.
+     * El régimen de pensión (AFP/ONP) y el seguro (EsSalud/SIS) salen del
+     * usuario; la línea solo trae el sueldo.
      *
-     * @param  list<array{user_id: int, ingresos: string, bonificaciones?: string|null, situacion?: string|null, es_afp?: bool|null, afp?: string|null, descuentos_devengado?: string|null}>  $lineas
+     * @param  list<array{user_id: int, ingresos: string, bonificaciones?: string|null, situacion?: string|null, descuentos_devengado?: string|null}>  $lineas
      */
     public function registrarLineas(Planilla $planilla, array $lineas): Planilla
     {
@@ -92,33 +92,37 @@ final class PlanillaService
     }
 
     /**
-     * Una línea: snapshot de identidad del usuario, aportes sobre la base
-     * imponible, descuentos que tocaría pagar este mes y neto.
+     * Una línea: snapshot de identidad y régimen del usuario, aportes sobre
+     * el sueldo básico, descuentos que tocaría pagar este mes y neto.
      *
-     * @param  array{user_id: int, ingresos: string, bonificaciones?: string|null, situacion?: string|null, es_afp?: bool|null, afp?: string|null, descuentos_devengado?: string|null}  $linea
+     * @param  array{user_id: int, ingresos: string, bonificaciones?: string|null, situacion?: string|null, descuentos_devengado?: string|null}  $linea
      */
     private function registrarLinea(Planilla $planilla, ConfiguracionPlanilla $configuracion, array $linea): void
     {
         $user = User::query()->findOrFail($linea['user_id']);
+        $trabajador = trim("{$user->nombre} {$user->apellido}");
 
+        if (! $user->en_planilla) {
+            throw new DomainException("{$trabajador} no está marcado para planilla.");
+        }
+
+        if (! in_array($user->sistema_pension, ['afp', 'onp'], true) || ! in_array($user->seguro_salud, ['essalud', 'sis'], true)) {
+            throw new DomainException("Registra el sistema de pensión (AFP/ONP) y el seguro (EsSalud/SIS) de {$trabajador} antes de agregarlo a la planilla.");
+        }
+
+        $esAfp = $user->sistema_pension === 'afp';
+        $esSis = $user->seguro_salud === 'sis';
+
+        $sueldoBasico = bcadd((string) $linea['ingresos'], '0', 2);
         $bonificaciones = bcadd((string) ($linea['bonificaciones'] ?? '0'), '0', 2);
-        $ingresos = bcadd((string) $linea['ingresos'], $bonificaciones, 2);
+        $ingresos = bcadd($sueldoBasico, $bonificaciones, 2);
 
-        // Los aportes del trabajador van sobre el sueldo sin bonificaciones;
-        // los del empleador, sobre el sueldo completo.
-        $tributos = $this->configuracionService->tributosTrabajador(
-            $configuracion,
-            bcsub($ingresos, $bonificaciones, 2),
-            (bool) ($linea['es_afp'] ?? false),
-            // La AFP se declara a mano por línea: el monto viene del request, no
-            // de una tasa global (ver ConfiguracionPlanillaService).
-            (string) ($linea['afp'] ?? '0'),
-        );
-        $aportes = $this->configuracionService->aportesEmpleador($configuracion, $ingresos);
+        $tributos = $this->configuracionService->tributosTrabajador($configuracion, $sueldoBasico, $esAfp);
+        $aportes = $this->configuracionService->aportesEmpleador($configuracion, $sueldoBasico, $esSis);
 
         $descuentosPagados = $this->descuentoDelMes($planilla, $user);
 
-        $trabajador = PlanillaTrabajador::query()->updateOrCreate(
+        $linea = PlanillaTrabajador::query()->updateOrCreate(
             ['planilla_id' => $planilla->id, 'user_id' => $user->id],
             [
                 'empresa_id' => $planilla->empresa_id,
@@ -130,7 +134,8 @@ final class PlanillaService
                 'situacion' => $linea['situacion'] ?? 'activo',
                 'ingresos' => $ingresos,
                 'bonificaciones' => $bonificaciones,
-                'es_afp' => (bool) ($linea['es_afp'] ?? false),
+                'es_afp' => $esAfp,
+                'es_sis' => $esSis,
                 'descuentos_devengado' => bcadd((string) ($linea['descuentos_devengado'] ?? '0'), '0', 2),
                 'descuentos_pagado' => $descuentosPagados,
                 ...$tributos,
@@ -141,7 +146,7 @@ final class PlanillaService
 
         // neto se resuelve con la fórmula del modelo para que el preview del
         // borrador y la línea cerrada no puedan divergir.
-        $trabajador->update(['neto' => $trabajador->netoCalculado()]);
+        $linea->update(['neto' => $linea->netoCalculado()]);
     }
 
     /**

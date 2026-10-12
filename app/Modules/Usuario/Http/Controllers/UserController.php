@@ -80,6 +80,11 @@ class UserController extends Controller
             $query->where('agencia_id', request()->integer('agencia_id'));
         }
 
+        // ?en_planilla=1: el selector de trabajadores de la planilla.
+        if (request()->has('en_planilla')) {
+            $query->where('en_planilla', request()->boolean('en_planilla'));
+        }
+
         if (request()->filled('role')) {
             $role = request()->string('role');
             $query->whereHas('roles', fn ($q) => $q->where('name', $role));
@@ -119,6 +124,9 @@ class UserController extends Controller
             'email' => $data['email'] ?? $this->componerEmail($empresaId, $data['usuario'] ?? $data['dni']),
             'password' => $data['password'] ?? $data['dni'],
             'estado' => $data['estado'] ?? 'activo',
+            'en_planilla' => $data['en_planilla'] ?? false,
+            'sistema_pension' => $data['sistema_pension'] ?? null,
+            'seguro_salud' => $data['seguro_salud'] ?? null,
             'empresa_id' => $empresaId,
             'agencia_id' => $this->hierarchy->resolveAgenciaId($actor, $roles, $data['agencia_id'] ?? null),
             'supervisor_id' => $data['supervisor_id'] ?? null,

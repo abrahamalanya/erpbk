@@ -27,6 +27,9 @@ beforeEach(function () {
         'nombre' => 'Norma',
         'apellido' => 'Quispe',
         'dni' => '74901226',
+        'en_planilla' => true,
+        'sistema_pension' => 'onp',
+        'seguro_salud' => 'essalud',
     ]);
     $this->trabajador->assignRole('asesor');
 });
@@ -86,129 +89,100 @@ it('rejects an invalid periodo and fecha_pago', function () {
         ->assertJsonValidationErrors('fecha_pago');
 });
 
-it('registers lineas, calculates aportes and neto, and freezes the totales', function () {
+it('registers lineas with ONP 13% and EsSalud 9% on the sueldo básico, and freezes the totales', function () {
     Sanctum::actingAs($this->administradorGeneral, ['*']);
     $planillaId = crearPlanilla($this->administradorGeneral);
 
     $response = $this->postJson("/api/planillas/{$planillaId}/lineas", [
-        'lineas' => [
-            ['user_id' => $this->trabajador->id, 'ingresos' => 1130.00, 'es_afp' => false],
-        ],
+        'lineas' => [['user_id' => $this->trabajador->id, 'ingresos' => 1500.00]],
     ])->assertSuccessful();
 
     $linea = collect($response->json('data.trabajadores'))->first();
-    // Config por defecto: ONP 3% + Essalud 4% trabajador; Essalud 5% + CTS 8.33% empleador.
-    // 1130 * 3% = 33.90 (ONP) + 1130 * 4% = 45.20 (Essalud) = 79.10
-    expect($linea['onp'])->toBe('33.90')
+    // Mismo caso que la planilla de ejemplo: 1500 × 13% = 195 de ONP, neto
+    // 1305; el empleador paga 1500 × 9% = 135 de EsSalud.
+    expect($linea['onp'])->toBe('195.00')
         ->and($linea['afp'])->toBe('0.00')
-        ->and($linea['essalud_trabajador'])->toBe('45.20')
-        ->and($linea['tributos_trabajador'])->toBe('79.10')
-        // neto = ingresos - descuentos(0) - tributos(79.10)
-        ->and($linea['neto'])->toBe('1050.90')
-        // empleador: 1130 * 5% = 56.50 (Essalud) + 1130 * 8.33% = 94.13 (CTS) = 150.63
-        ->and($linea['aportes_empleador'])->toBe('150.63');
+        ->and($linea['tributos_trabajador'])->toBe('195.00')
+        ->and($linea['neto'])->toBe('1305.00')
+        ->and($linea['essalud_empleador'])->toBe('135.00')
+        ->and($linea['sis'])->toBe('0.00')
+        ->and($linea['aportes_empleador'])->toBe('135.00')
+        ->and($linea['es_afp'])->toBeFalse()
+        ->and($linea['es_sis'])->toBeFalse();
 
-    // Los totales de la cabecera reflejan la línea.
-    expect($response->json('data.total_ingresos'))->toBe('1130.00')
-        ->and($response->json('data.total_neto'))->toBe('1050.90');
+    expect($response->json('data.total_ingresos'))->toBe('1500.00')
+        ->and($response->json('data.total_neto'))->toBe('1305.00');
 });
 
-it('calculates aportes on the sueldo without bonificaciones', function () {
+it('registers AFP 11.37% and SIS S/ 15 for a trabajador in AFP with SIS', function () {
+    $this->trabajador->update(['sistema_pension' => 'afp', 'seguro_salud' => 'sis']);
     Sanctum::actingAs($this->administradorGeneral, ['*']);
     $planillaId = crearPlanilla($this->administradorGeneral);
 
     $response = $this->postJson("/api/planillas/{$planillaId}/lineas", [
-        'lineas' => [
-            ['user_id' => $this->trabajador->id, 'ingresos' => 1000.00, 'bonificaciones' => 200.00, 'es_afp' => false],
-        ],
+        'lineas' => [['user_id' => $this->trabajador->id, 'ingresos' => 1130.00]],
     ])->assertSuccessful();
 
     $linea = collect($response->json('data.trabajadores'))->first();
-    // El sueldo declarado (1000) es la base de los aportes del trabajador:
-    // 1000 * 3% = 30 (ONP) + 1000 * 4% = 40 (Essalud) = 70
-    expect($linea['ingresos'])->toBe('1200.00')
-        ->and($linea['tributos_trabajador'])->toBe('70.00')
-        // El empleador sí calcula sobre el sueldo completo: 1200 * 5% = 60 + 1200 * 8.33% = 99.96 = 159.96
-        ->and($linea['aportes_empleador'])->toBe('159.96')
-        ->and($linea['neto'])->toBe('1130.00');
+    // Planilla de ejemplo: 1130 × 11.37% = 128.48 → neto 1001.52; SIS 15.
+    expect($linea['afp'])->toBe('128.48')
+        ->and($linea['onp'])->toBe('0.00')
+        ->and($linea['neto'])->toBe('1001.52')
+        ->and($linea['sis'])->toBe('15.00')
+        ->and($linea['essalud_empleador'])->toBe('0.00')
+        ->and($linea['aportes_empleador'])->toBe('15.00')
+        ->and($linea['es_afp'])->toBeTrue()
+        ->and($linea['es_sis'])->toBeTrue();
 });
 
-it('exposes the original line inputs so the line can be edited', function () {
+it('calculates tributos and aportes on the sueldo básico, without bonificaciones', function () {
+    Sanctum::actingAs($this->administradorGeneral, ['*']);
+    $planillaId = crearPlanilla($this->administradorGeneral);
+
+    $response = $this->postJson("/api/planillas/{$planillaId}/lineas", [
+        'lineas' => [['user_id' => $this->trabajador->id, 'ingresos' => 1000.00, 'bonificaciones' => 200.00]],
+    ])->assertSuccessful();
+
+    $linea = collect($response->json('data.trabajadores'))->first();
+    // ONP 1000 × 13% = 130 y EsSalud 1000 × 9% = 90: la bonificación no entra.
+    expect($linea['ingresos'])->toBe('1200.00')
+        ->and($linea['sueldo_base'])->toBe('1000.00')
+        ->and($linea['bonificaciones'])->toBe('200.00')
+        ->and($linea['tributos_trabajador'])->toBe('130.00')
+        ->and($linea['aportes_empleador'])->toBe('90.00')
+        ->and($linea['neto'])->toBe('1070.00');
+});
+
+it('keeps the régimen of a closed line when the usuario changes it later', function () {
     Sanctum::actingAs($this->administradorGeneral, ['*']);
     $planillaId = crearPlanilla($this->administradorGeneral);
 
     $this->postJson("/api/planillas/{$planillaId}/lineas", [
-        'lineas' => [
-            ['user_id' => $this->trabajador->id, 'ingresos' => 1000.00, 'bonificaciones' => 200.00, 'es_afp' => true, 'afp' => 100.00],
-        ],
+        'lineas' => [['user_id' => $this->trabajador->id, 'ingresos' => 1000.00]],
     ])->assertSuccessful();
+    $this->postJson("/api/planillas/{$planillaId}/cerrar")->assertSuccessful();
+
+    $this->trabajador->update(['sistema_pension' => 'afp', 'seguro_salud' => 'sis']);
 
     $linea = collect($this->getJson("/api/planillas/{$planillaId}")->assertSuccessful()->json('data.trabajadores'))->first();
 
-    expect($linea['sueldo_base'])->toBe('1000.00')
-        ->and($linea['bonificaciones'])->toBe('200.00')
-        ->and($linea['es_afp'])->toBeTrue()
-        ->and($linea['afp'])->toBe('100.00')
-        ->and($linea['ingresos'])->toBe('1200.00');
+    expect($linea['es_afp'])->toBeFalse()
+        ->and($linea['onp'])->toBe('130.00');
 });
 
-it('takes the AFP monto as declared, not from a global rate', function () {
+it('rejects a usuario that is not marked for planilla or has no régimen', function () {
     Sanctum::actingAs($this->administradorGeneral, ['*']);
     $planillaId = crearPlanilla($this->administradorGeneral);
 
-    $response = $this->postJson("/api/planillas/{$planillaId}/lineas", [
-        'lineas' => [
-            ['user_id' => $this->trabajador->id, 'ingresos' => 1000.00, 'es_afp' => true, 'afp' => 87.35],
-        ],
-    ])->assertSuccessful();
-
-    $linea = collect($response->json('data.trabajadores'))->first();
-    // El AFP es el declarado (87.35, no el 10% de 1000 que daría 100), y la
-    // Essalud sigue automática: 1000 * 4% = 40.
-    expect($linea['afp'])->toBe('87.35')
-        ->and($linea['onp'])->toBe('0.00')
-        ->and($linea['essalud_trabajador'])->toBe('40.00')
-        ->and($linea['tributos_trabajador'])->toBe('127.35')
-        ->and($linea['neto'])->toBe('872.65');
-});
-
-it('ignores the AFP monto when the trabajador is not in AFP', function () {
-    Sanctum::actingAs($this->administradorGeneral, ['*']);
-    $planillaId = crearPlanilla($this->administradorGeneral);
-
-    $response = $this->postJson("/api/planillas/{$planillaId}/lineas", [
-        'lineas' => [
-            // es_afp false: es ONP, y el monto de AFP que venga se descarta.
-            ['user_id' => $this->trabajador->id, 'ingresos' => 1000.00, 'es_afp' => false, 'afp' => 87.35],
-        ],
-    ])->assertSuccessful();
-
-    $linea = collect($response->json('data.trabajadores'))->first();
-    expect($linea['afp'])->toBe('0.00')
-        ->and($linea['onp'])->toBe('30.00')
-        ->and($linea['tributos_trabajador'])->toBe('70.00');
-});
-
-it('defaults the AFP to zero when not informed', function () {
-    Sanctum::actingAs($this->administradorGeneral, ['*']);
-    $planillaId = crearPlanilla($this->administradorGeneral);
-
-    $response = $this->postJson("/api/planillas/{$planillaId}/lineas", [
-        'lineas' => [['user_id' => $this->trabajador->id, 'ingresos' => 1000.00, 'es_afp' => true]],
-    ])->assertSuccessful();
-
-    $linea = collect($response->json('data.trabajadores'))->first();
-    expect($linea['afp'])->toBe('0.00')
-        ->and($linea['tributos_trabajador'])->toBe('40.00');
-});
-
-it('rejects a negative AFP', function () {
-    Sanctum::actingAs($this->administradorGeneral, ['*']);
-    $planillaId = crearPlanilla($this->administradorGeneral);
-
+    $this->trabajador->update(['en_planilla' => false]);
     $this->postJson("/api/planillas/{$planillaId}/lineas", [
-        'lineas' => [['user_id' => $this->trabajador->id, 'ingresos' => 1000.00, 'es_afp' => true, 'afp' => -50]],
-    ])->assertUnprocessable()->assertJsonValidationErrors('lineas.0.afp');
+        'lineas' => [['user_id' => $this->trabajador->id, 'ingresos' => 1000.00]],
+    ])->assertUnprocessable()->assertJsonPath('message', 'Norma Quispe no está marcado para planilla.');
+
+    $this->trabajador->update(['en_planilla' => true, 'sistema_pension' => null]);
+    $this->postJson("/api/planillas/{$planillaId}/lineas", [
+        'lineas' => [['user_id' => $this->trabajador->id, 'ingresos' => 1000.00]],
+    ])->assertUnprocessable()->assertJsonPath('message', 'Registra el sistema de pensión (AFP/ONP) y el seguro (EsSalud/SIS) de Norma Quispe antes de agregarlo a la planilla.');
 });
 
 it('aplica el descuento pendiente del mes en la linea', function () {
@@ -219,13 +193,13 @@ it('aplica el descuento pendiente del mes en la linea', function () {
     crearDescuento($this->administradorGeneral, $this->trabajador, 100.00);
 
     $response = $this->postJson("/api/planillas/{$planillaId}/lineas", [
-        'lineas' => [['user_id' => $this->trabajador->id, 'ingresos' => 1000.00, 'es_afp' => false]],
+        'lineas' => [['user_id' => $this->trabajador->id, 'ingresos' => 1000.00]],
     ])->assertSuccessful();
 
     $linea = collect($response->json('data.trabajadores'))->first();
-    // 1000 - 100 (adelanto) - 70 (tributos) = 830
+    // 1000 - 100 (adelanto) - 130 (ONP) = 770
     expect($linea['descuentos_pagado'])->toBe('100.00')
-        ->and($linea['neto'])->toBe('830.00');
+        ->and($linea['neto'])->toBe('770.00');
 });
 
 it('descuentos pagados no se consumen hasta cerrar la planilla', function () {
