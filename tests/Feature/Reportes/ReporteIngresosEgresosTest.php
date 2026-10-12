@@ -89,12 +89,13 @@ function ie_movimiento(CajaCiclo $ciclo, Empresa $empresa, string $tipo, float $
 
 /**
  * Un cobro con su movimiento de caja espejo — el par que CreditoService siempre
- * escribe junto (registrarCobroEnCaja()).
+ * escribe junto (registrarCobroEnCaja()). monto_pagado incluye el capital; el
+ * reporte solo debe tomar interés + mora.
  */
-function ie_cobroEnCaja(CajaCiclo $ciclo, Empresa $empresa, Credito $credito, Cliente $cliente, User $asesor, float $monto, string $fecha, string $estado = 'registrado'): Cobro
+function ie_cobroEnCaja(CajaCiclo $ciclo, Empresa $empresa, Credito $credito, Cliente $cliente, User $asesor, float $monto, string $fecha, string $estado = 'registrado', float $interes = 0, float $mora = 0, string $operacion = 'refrendo'): Cobro
 {
     $movimiento = ie_movimiento($ciclo, $empresa, 'ingreso', $monto, $fecha, $asesor, [
-        'concepto' => "Refrendo de crédito #{$credito->id}",
+        'concepto' => ucfirst($operacion)." de crédito #{$credito->id}",
     ]);
 
     return Cobro::query()->create([
@@ -104,11 +105,12 @@ function ie_cobroEnCaja(CajaCiclo $ciclo, Empresa $empresa, Credito $credito, Cl
         'caja_ciclo_id' => $ciclo->id,
         'caja_movimiento_id' => $movimiento->id,
         'registrado_por' => $asesor->id,
-        'operacion' => 'refrendo',
+        'operacion' => $operacion,
         'estado' => $estado,
         'monto_pagado' => $monto,
         'medio' => 'efectivo',
-        'interes' => 0,
+        'interes' => $interes,
+        'mora' => $mora,
         'vuelto' => 0,
     ]);
 }
@@ -137,34 +139,62 @@ function ie_pagoVenta(CajaCiclo $ciclo, Empresa $empresa, Venta $venta, User $as
 }
 
 /**
- * Con el modelo y no con VentaFactory, por lo mismo que en
- * DashboardInicialTest: el factory genera su propio artículo, cliente y empresa
- * sueltos y termina chocando con los NOT NULL de la venta.
+ * Venta de un bien que respaldaba un crédito de $capital. Con el modelo y no con
+ * VentaFactory, por lo mismo que en DashboardInicialTest: el factory genera su
+ * propio artículo, cliente y empresa sueltos y termina chocando con los NOT NULL
+ * de la venta.
  */
-function ie_ventaDe(Agencia $agencia, Cliente $cliente, User $vendedor, string $estado = 'activa'): Venta
+function ie_ventaDe(Agencia $agencia, Cliente $cliente, User $vendedor, string $estado = 'pagada', float $precio = 500, float $capital = 300, string $pagadaAt = '2026-09-05', ?Bien $articulo = null, ?Credito $credito = null): Venta
 {
-    $articulo = Bien::factory()->paraCliente($cliente)->create(['estado' => 'disponible_venta']);
+    $articulo ??= Bien::factory()->paraCliente($cliente)->create(['estado' => 'disponible_venta']);
+    $credito ??= Credito::factory()->paraBienes(collect([$articulo]))->create(['monto_prestamo' => $capital, 'estado' => 'en_tienda']);
 
     return Venta::query()->create([
         'empresa_id' => $cliente->empresa_id,
         'agencia_id' => $agencia->id,
         'articulo_type' => $articulo->getMorphClass(),
         'articulo_id' => $articulo->id,
+        'credito_origen_id' => $credito->id,
         'cliente_id' => $cliente->id,
         'vendido_por' => $vendedor->id,
         'forma_venta' => 'contado',
         'estado' => $estado,
-        'precio_venta' => 500,
-        'inicial' => 500,
+        'precio_venta' => $precio,
+        'inicial' => $precio,
         'saldo_pendiente' => 0,
-        'pagada_at' => now(),
+        'pagada_at' => $estado === 'pagada' ? $pagadaAt.' 10:00:00' : null,
     ]);
 }
 
-it('breaks the money down into the 5 sections with their totals, utilidad and margen', function () {
+/**
+ * Un crédito cancelado en el periodo que viene de un refrendo: el predecesor
+ * cobró 30 de interés en agosto, el crédito final se liquidó el 05/09 con 20 de
+ * interés + 5 de mora (más 1000 de capital).
+ */
+function ie_creditoCancelado(Agencia $agencia, Cliente $cliente, User $asesor, CajaCiclo $ciclo): Credito
+{
+    $predecesor = Credito::factory()->create([
+        'empresa_id' => $agencia->empresa_id, 'agencia_id' => $agencia->id, 'cliente_id' => $cliente->id,
+        'registrado_por' => $asesor->id, 'estado' => 'refrendado', 'monto_prestamo' => 1000,
+    ]);
+    $final = Credito::factory()->create([
+        'empresa_id' => $agencia->empresa_id, 'agencia_id' => $agencia->id, 'cliente_id' => $cliente->id,
+        'registrado_por' => $asesor->id, 'estado' => 'liquidado', 'monto_prestamo' => 1000,
+        'refrendo_de_credito_id' => $predecesor->id,
+    ]);
+
+    $empresa = $agencia->empresa;
+    ie_cobroEnCaja($ciclo, $empresa, $predecesor, $cliente, $asesor, 30, '2026-08-10', interes: 30);
+    ie_cobroEnCaja($ciclo, $empresa, $final, $cliente, $asesor, 1025, '2026-09-05', interes: 20, mora: 5, operacion: 'liquidacion');
+
+    return $final;
+}
+
+it('builds the estado de resultados: ingresos, interés of cancelled créditos, venta gains and egresos, without desembolsos', function () {
     ie_movimiento($this->ciclo, $this->empresa, 'ingreso', 100, '2026-09-05', $this->asesor, ['concepto_id' => $this->concepto->id, 'concepto' => 'Varios']);
-    ie_cobroEnCaja($this->ciclo, $this->empresa, $this->credito, $this->cliente, $this->asesor, 150, '2026-09-05');
-    ie_pagoVenta($this->ciclo, $this->empresa, ie_ventaDe($this->agencia, $this->cliente, $this->asesor), $this->asesor, 200, '2026-09-05');
+    ie_creditoCancelado($this->agencia, $this->cliente, $this->asesor, $this->ciclo);
+    $venta = ie_ventaDe($this->agencia, $this->cliente, $this->asesor, precio: 500, capital: 300);
+    ie_pagoVenta($this->ciclo, $this->empresa, $venta, $this->asesor, 500, '2026-09-05');
     ie_movimiento($this->ciclo, $this->empresa, 'egreso', 40, '2026-09-05', $this->asesor, ['concepto_id' => $this->concepto->id, 'concepto' => 'Útiles']);
     ie_movimiento($this->ciclo, $this->empresa, 'egreso', 500, '2026-09-05', $this->asesor, ['concepto' => 'Desembolso', 'credito_id' => $this->credito->id]);
 
@@ -173,37 +203,76 @@ it('breaks the money down into the 5 sections with their totals, utilidad and ma
 
     $totales = $response->json('data.totales');
     expect($totales['ingresos'])->toBe('100.00')
-        ->and($totales['cobranzas'])->toBe('150.00')
+        // 30 (refrendo de agosto) + 20 interés + 5 mora: todo lo de la deuda
+        // cancelada, sin el capital.
+        ->and($totales['cobranzas'])->toBe('55.00')
+        // 500 de venta − 300 de capital.
         ->and($totales['ventas'])->toBe('200.00')
         ->and($totales['egresos'])->toBe('40.00')
-        ->and($totales['desembolsos'])->toBe('500.00')
-        // (100 + 150 + 200) - (40 + 500) = 450 - 540
-        ->and($totales['total_ingresos'])->toBe('450.00')
-        ->and($totales['total_egresos'])->toBe('540.00')
-        ->and($response->json('data.utilidad_neta'))->toBe('-90.00')
-        ->and($response->json('data.margen_utilidad_bruta'))->toEqual(0.8333);
+        ->and($totales)->not->toHaveKey('desembolsos')
+        ->and($totales['total_ingresos'])->toBe('355.00')
+        ->and($totales['total_egresos'])->toBe('40.00')
+        ->and($response->json('data.utilidad_neta'))->toBe('315.00')
+        // 315 / 355
+        ->and($response->json('data.margen_utilidad_bruta'))->toEqual(0.8873)
+        ->and($response->json('data'))->not->toHaveKey('desembolsos');
 
-    // Cada sección trae su detalle con las 4 columnas del enunciado.
-    expect($response->json('data.ingresos.filas'))->toHaveCount(1)
-        ->and($response->json('data.ingresos.filas.0.cuenta'))->toBe(trim($this->asesor->nombre.' '.$this->asesor->apellido))
+    expect($response->json('data.ingresos.filas.0.cuenta'))->toBe(trim($this->asesor->nombre.' '.$this->asesor->apellido))
         ->and($response->json('data.ingresos.filas.0.fecha'))->toBe('2026-09-05')
-        ->and($response->json('data.ingresos.filas.0.monto'))->toBe('100.00');
+        ->and($response->json('data.cobranzas.filas'))->toHaveCount(1)
+        ->and($response->json('data.cobranzas.filas.0.descripcion'))->toContain('Interés S/ 50.00 + mora S/ 5.00');
 });
 
-it('never counts a cobro or a venta payment twice as ingresos', function () {
-    ie_cobroEnCaja($this->ciclo, $this->empresa, $this->credito, $this->cliente, $this->asesor, 150, '2026-09-05');
-    ie_pagoVenta($this->ciclo, $this->empresa, ie_ventaDe($this->agencia, $this->cliente, $this->asesor), $this->asesor, 200, '2026-09-05');
+it('ignores interés of créditos still active and of créditos cancelled outside the period', function () {
+    $activo = Credito::factory()->create([
+        'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id, 'cliente_id' => $this->cliente->id, 'estado' => 'activo',
+    ]);
+    ie_cobroEnCaja($this->ciclo, $this->empresa, $activo, $this->cliente, $this->asesor, 150, '2026-09-05', interes: 150);
+
+    $canceladoAntes = Credito::factory()->create([
+        'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id, 'cliente_id' => $this->cliente->id, 'estado' => 'liquidado',
+    ]);
+    ie_cobroEnCaja($this->ciclo, $this->empresa, $canceladoAntes, $this->cliente, $this->asesor, 1100, '2026-08-20', interes: 100, operacion: 'liquidacion');
 
     Sanctum::actingAs($this->administradorGeneral, ['*']);
     $totales = $this->getJson('/api/reportes/ingresos-egresos?desde=2026-09-01&hasta=2026-09-30')
         ->assertSuccessful()->json('data.totales');
 
-    // Los dos movimientos tipo=ingreso que esos flujos generan NO llevan
-    // concepto_id, así que no deben aparecer en la sección Ingresos.
-    expect($totales['ingresos'])->toBe('0.00')
-        ->and($totales['cobranzas'])->toBe('150.00')
-        ->and($totales['ventas'])->toBe('200.00')
-        ->and($totales['total_ingresos'])->toBe('350.00');
+    // Los movimientos de caja de esos cobros NO llevan concepto_id, así que
+    // tampoco entran como Ingresos.
+    expect($totales['cobranzas'])->toBe('0.00')
+        ->and($totales['ingresos'])->toBe('0.00');
+});
+
+it('excludes cobros anulados and ventas cancelled or not yet paid', function () {
+    $credito = ie_creditoCancelado($this->agencia, $this->cliente, $this->asesor, $this->ciclo);
+    ie_cobroEnCaja($this->ciclo, $this->empresa, $credito, $this->cliente, $this->asesor, 70, '2026-09-04', 'anulado', interes: 70);
+
+    ie_ventaDe($this->agencia, $this->cliente, $this->asesor, 'cancelada');
+    ie_ventaDe($this->agencia, $this->cliente, $this->asesor, 'activa');
+
+    Sanctum::actingAs($this->administradorGeneral, ['*']);
+    $totales = $this->getJson('/api/reportes/ingresos-egresos?desde=2026-09-01&hasta=2026-09-30')
+        ->assertSuccessful()->json('data.totales');
+
+    expect($totales['cobranzas'])->toBe('55.00')
+        ->and($totales['ventas'])->toBe('0.00');
+});
+
+it('splits the capital of a crédito with several garantías by their valorización', function () {
+    $collar = Bien::factory()->paraCliente($this->cliente)->create(['valorizacion' => 600]);
+    $reloj = Bien::factory()->paraCliente($this->cliente)->create(['valorizacion' => 400]);
+    $credito = Credito::factory()->paraBienes(collect([$collar, $reloj]))->create(['monto_prestamo' => 1000, 'estado' => 'en_tienda']);
+
+    $venta = ie_ventaDe($this->agencia, $this->cliente, $this->asesor, precio: 900, articulo: $collar, credito: $credito);
+    ie_pagoVenta($this->ciclo, $this->empresa, $venta, $this->asesor, 900, '2026-09-05');
+
+    Sanctum::actingAs($this->administradorGeneral, ['*']);
+    $data = $this->getJson('/api/reportes/ingresos-egresos?desde=2026-09-01&hasta=2026-09-30')->assertSuccessful()->json('data');
+
+    // El collar respaldaba 600 de los 1000 prestados: ganancia 900 − 600.
+    expect($data['totales']['ventas'])->toBe('300.00')
+        ->and($data['ventas']['filas'][0]['descripcion'])->toContain('capital S/ 600.00');
 });
 
 it('excludes el billetaje, que is cash delivered and not income', function () {
@@ -229,20 +298,7 @@ it('excludes el billetaje, que is cash delivered and not income', function () {
         ->and($totales['total_egresos'])->toBe('0.00');
 });
 
-it('excludes cobros anulados and pagos de una venta cancelada', function () {
-    ie_cobroEnCaja($this->ciclo, $this->empresa, $this->credito, $this->cliente, $this->asesor, 150, '2026-09-05', 'anulado');
-    ie_pagoVenta($this->ciclo, $this->empresa, ie_ventaDe($this->agencia, $this->cliente, $this->asesor, 'cancelada'), $this->asesor, 200, '2026-09-05');
-    ie_cobroEnCaja($this->ciclo, $this->empresa, $this->credito, $this->cliente, $this->asesor, 50, '2026-09-06');
-
-    Sanctum::actingAs($this->administradorGeneral, ['*']);
-    $totales = $this->getJson('/api/reportes/ingresos-egresos?desde=2026-09-01&hasta=2026-09-30')
-        ->assertSuccessful()->json('data.totales');
-
-    expect($totales['cobranzas'])->toBe('50.00')
-        ->and($totales['ventas'])->toBe('0.00');
-});
-
-it('separates egresos manuales of desembolsos by their credito', function () {
+it('counts only manual egresos, never desembolsos', function () {
     ie_movimiento($this->ciclo, $this->empresa, 'egreso', 40, '2026-09-05', $this->asesor, ['concepto_id' => $this->concepto->id, 'concepto' => 'Útiles']);
     ie_movimiento($this->ciclo, $this->empresa, 'egreso', 500, '2026-09-05', $this->asesor, ['concepto' => 'Desembolso', 'credito_id' => $this->credito->id]);
 
@@ -251,9 +307,7 @@ it('separates egresos manuales of desembolsos by their credito', function () {
 
     expect($data['egresos']['filas'])->toHaveCount(1)
         ->and($data['egresos']['filas'][0]['monto'])->toBe('40.00')
-        ->and($data['desembolsos']['filas'])->toHaveCount(1)
-        ->and($data['desembolsos']['filas'][0]['monto'])->toBe('500.00')
-        ->and($data['desembolsos']['filas'][0]['descripcion'])->toContain($this->cliente->nombre);
+        ->and($data['totales']['total_egresos'])->toBe('40.00');
 });
 
 it('includes the boleta serie and numero in the descripcion when present', function () {
@@ -333,16 +387,21 @@ it('uses who registered the movimiento as the cuenta, not the owner of the caja'
         ->toBe(trim($this->administradorGeneral->nombre.' '.$this->administradorGeneral->apellido));
 });
 
-it('returns a null margen and a positive utilidad when there are no egresos', function () {
+it('computes the margen over ingresos, and returns null when there are no ingresos', function () {
     ie_movimiento($this->ciclo, $this->empresa, 'ingreso', 100, '2026-09-05', $this->asesor, ['concepto_id' => $this->concepto->id]);
 
     Sanctum::actingAs($this->administradorGeneral, ['*']);
     $data = $this->getJson('/api/reportes/ingresos-egresos?desde=2026-09-01&hasta=2026-09-30')->assertSuccessful()->json('data');
 
-    // Sin egresos no hay contra qué dividir el margen, y la utilidad es todo
-    // lo que entró.
-    expect($data['margen_utilidad_bruta'])->toBeNull()
-        ->and($data['utilidad_neta'])->toBe('100.00');
+    // Sin egresos la utilidad es todo lo que entró: margen 100%.
+    expect($data['utilidad_neta'])->toBe('100.00')
+        ->and($data['margen_utilidad_bruta'])->toEqual(1.0);
+
+    ie_movimiento($this->ciclo, $this->empresa, 'egreso', 30, '2026-10-05', $this->asesor, ['concepto_id' => $this->concepto->id]);
+    $sinIngresos = $this->getJson('/api/reportes/ingresos-egresos?desde=2026-10-01&hasta=2026-10-31')->assertSuccessful()->json('data');
+
+    expect($sinIngresos['margen_utilidad_bruta'])->toBeNull()
+        ->and($sinIngresos['utilidad_neta'])->toBe('-30.00');
 });
 
 it('defaults to the current month and only counts what falls in the range', function () {

@@ -58,10 +58,13 @@ class ConfiguracionCreditoController extends Controller
             'max_refrendos' => $data['max_refrendos'] ?? null,
         ];
 
-        // Opcional: si no viene, la fila conserva su valor actual (o el
-        // default 1 al crearse). El formulario de configuración siempre lo envía.
-        if (array_key_exists('max_cuotas', $data)) {
-            $payload['max_cuotas'] = $data['max_cuotas'];
+        // Opcionales: si no vienen, la fila conserva su valor actual (o su
+        // default al crearse — 1 para max_cuotas, null para las tasas de
+        // liquidación).
+        foreach (['max_cuotas', 'tea_compensatoria_maxima', 'tasa_moratoria_anual'] as $opcional) {
+            if (array_key_exists($opcional, $data)) {
+                $payload[$opcional] = $data[$opcional];
+            }
         }
 
         $configuracion = $this->configuracionService->actualizar($empresa, $agencia, $payload, $data['tipo_credito'] ?? 'prendario');

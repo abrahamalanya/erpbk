@@ -38,6 +38,8 @@ class ConfiguracionCredito extends Model
         'tasa_mora_diaria',
         'max_refrendos',
         'max_cuotas',
+        'tea_compensatoria_maxima',
+        'tasa_moratoria_anual',
     ];
 
     /**
@@ -50,6 +52,8 @@ class ConfiguracionCredito extends Model
         return [
             'interes_default' => 'decimal:2',
             'tasa_mora_diaria' => 'decimal:2',
+            'tea_compensatoria_maxima' => 'decimal:2',
+            'tasa_moratoria_anual' => 'decimal:2',
         ];
     }
 

@@ -223,33 +223,9 @@ final class CreditoService
 
             // Generated here (not at aprobar()) so the admin can already
             // review the actual contrato/declaración while the crédito is
-            // still pendiente, instead of deciding blind on raw fields.
-            // Diario no genera ninguno de los dos: su único documento de
-            // deuda es el pagaré, generado recién al desembolsar (ver
-            // desembolsar()) porque necesita el cronograma ya real.
-            if ($tipoClave !== 'diario') {
-                $this->documentos->generarContrato($credito, $actor);
-                $this->documentos->generarDeclaracion($credito, $actor);
-            }
-
-            if ($tipo->generaFotosGarantia()) {
-                $this->documentos->generarFotos($credito, $actor);
-            }
-
-            if ($tipo->generaStickerGarantia()) {
-                $this->documentos->generarSticker($credito, $actor);
-            }
-
-            if ($tipoClave === 'vehicular') {
-                $this->documentos->generarRecepcionVehiculos($credito, $actor);
-            }
-
-            if ($tipoClave === 'hipotecario') {
-                $this->documentos->generarFichaSocioeconomica($credito, $actor);
-                $this->documentos->generarNotificacionPago($credito, $actor);
-                $this->documentos->generarAvisoPrejudicial($credito, $actor);
-                $this->documentos->generarExpediente($credito, $actor);
-            }
+            // still pendiente, instead of deciding blind on raw fields. Qué
+            // documentos le tocan lo decide DocumentoCreditoService::tiposPlantilla().
+            $this->documentos->generarPlantillas($credito, $actor);
 
             $credito = $credito->fresh(['bienes']);
             $this->notificar($credito);
@@ -727,9 +703,7 @@ final class CreditoService
             // El pagaré de diario recién se genera acá (no en registrar())
             // porque necesita el cronograma ya real y persistido —
             // generarCronograma() ya corrió un par de líneas arriba.
-            if ($credito->tipo_credito === 'diario') {
-                $this->documentos->generarPagare($credito, $actor);
-            }
+            $this->documentos->generarPlantillas($credito->fresh(), $actor);
 
             $this->notificar($credito);
             $this->notificaciones->enviar(collect([$credito->registradoPor]), new CreditoDesembolsadoNotification($credito));
@@ -1011,7 +985,7 @@ final class CreditoService
         $ciclo = $this->resolverCicloParaCobro($actor);
         $estadoAnterior = $credito->estado;
 
-        return DB::transaction(function () use ($credito, $actor, $siguienteNumero, $nuevoCapital, $interes, $mora, $descuento, $motivoDescuento, $abonoCapital, $ciclo, $montoPagado, $medio, $comprobante, $modeloGarantia, $estadoAnterior, $tipo): Credito {
+        return DB::transaction(function () use ($credito, $actor, $siguienteNumero, $nuevoCapital, $interes, $mora, $descuento, $motivoDescuento, $abonoCapital, $ciclo, $montoPagado, $medio, $comprobante, $modeloGarantia, $estadoAnterior): Credito {
             $credito->update(['estado' => 'refrendado']);
 
             // Conserva el numero_cuotas del crédito original (p. ej. un
@@ -1049,21 +1023,7 @@ final class CreditoService
             // tasa, mismo tipo de cuota), así que conserva los mismos
             // documentos que un registro nuevo — "adenda" es un documento
             // distinto, reservado para cuando SÍ se modifican las condiciones.
-            $this->documentos->generarContrato($nuevo, $actor);
-            $this->documentos->generarDeclaracion($nuevo, $actor);
-
-            if ($tipo->generaFotosGarantia()) {
-                $this->documentos->generarFotos($nuevo, $actor);
-            }
-
-            if ($credito->tipo_credito === 'hipotecario') {
-                $this->documentos->generarFichaSocioeconomica($nuevo, $actor);
-                $this->documentos->generarNotificacionPago($nuevo, $actor);
-                $this->documentos->generarAvisoPrejudicial($nuevo, $actor);
-                $this->documentos->generarExpediente($nuevo, $actor);
-            } elseif ($tipo->generaStickerGarantia()) {
-                $this->documentos->generarSticker($nuevo, $actor);
-            }
+            $this->documentos->generarPlantillas($nuevo, $actor);
 
             $nuevo = $nuevo->fresh(['bienes']);
             $this->generarCronograma($nuevo, $n, $plazoTotal);
@@ -1166,7 +1126,7 @@ final class CreditoService
         $ciclo = $this->resolverCicloParaCobro($actor);
         $estadoAnterior = $credito->estado;
 
-        return DB::transaction(function () use ($credito, $actor, $nuevoInteres, $nuevoTipoCuota, $nuevoCapital, $interes, $mora, $descuento, $motivoDescuento, $abonoCapital, $configuracion, $ciclo, $montoPagado, $medio, $comprobante, $modeloGarantia, $estadoAnterior, $tipo): Credito {
+        return DB::transaction(function () use ($credito, $actor, $nuevoInteres, $nuevoTipoCuota, $nuevoCapital, $interes, $mora, $descuento, $motivoDescuento, $abonoCapital, $configuracion, $ciclo, $montoPagado, $medio, $comprobante, $modeloGarantia, $estadoAnterior): Credito {
             $credito->update(['estado' => 'adendado']);
 
             $nuevo = Credito::query()->create([
@@ -1202,21 +1162,7 @@ final class CreditoService
 
             $nuevo->garantiasComo($modeloGarantia)->attach($this->garantiasDe($credito)->get()->pluck('id'));
 
-            $this->documentos->generarContrato($nuevo, $actor);
-            $this->documentos->generarDeclaracion($nuevo, $actor);
-
-            if ($tipo->generaFotosGarantia()) {
-                $this->documentos->generarFotos($nuevo, $actor);
-            }
-
-            if ($credito->tipo_credito === 'hipotecario') {
-                $this->documentos->generarFichaSocioeconomica($nuevo, $actor);
-                $this->documentos->generarNotificacionPago($nuevo, $actor);
-                $this->documentos->generarAvisoPrejudicial($nuevo, $actor);
-                $this->documentos->generarExpediente($nuevo, $actor);
-            } elseif ($tipo->generaStickerGarantia()) {
-                $this->documentos->generarSticker($nuevo, $actor);
-            }
+            $this->documentos->generarPlantillas($nuevo, $actor);
 
             $nuevo = $nuevo->fresh(['bienes']);
             $cobro = $this->registrarCobroEnCaja($ciclo, $actor, $credito, $montoPagado, $medio, $comprobante, "Adenda de crédito prendario #{$credito->id}", [
@@ -1383,13 +1329,7 @@ final class CreditoService
 
             $nuevo->garantiasComo($modeloGarantia)->attach($this->garantiasDe($credito)->get()->pluck('id'));
 
-            $this->documentos->generarContrato($nuevo, $actor);
-            $this->documentos->generarDeclaracion($nuevo, $actor);
-            $this->documentos->generarFotos($nuevo, $actor);
-            $this->documentos->generarFichaSocioeconomica($nuevo, $actor);
-            $this->documentos->generarNotificacionPago($nuevo, $actor);
-            $this->documentos->generarAvisoPrejudicial($nuevo, $actor);
-            $this->documentos->generarExpediente($nuevo, $actor);
+            $this->documentos->generarPlantillas($nuevo, $actor);
 
             $nuevo = $nuevo->fresh(['inmuebles']);
             $this->generarCronograma($nuevo, $nuevoNumeroCuotas);
@@ -1843,13 +1783,7 @@ final class CreditoService
 
             $nuevo->garantiasComo($modeloGarantia)->attach($this->garantiasDe($credito)->get()->pluck('id'));
 
-            $this->documentos->generarContrato($nuevo, $actor);
-            $this->documentos->generarDeclaracion($nuevo, $actor);
-            $this->documentos->generarFotos($nuevo, $actor);
-            $this->documentos->generarFichaSocioeconomica($nuevo, $actor);
-            $this->documentos->generarNotificacionPago($nuevo, $actor);
-            $this->documentos->generarAvisoPrejudicial($nuevo, $actor);
-            $this->documentos->generarExpediente($nuevo, $actor);
+            $this->documentos->generarPlantillas($nuevo, $actor);
 
             $nuevo = $nuevo->fresh(['inmuebles']);
             $cobro = $this->registrarCobroRefinanciamiento($actor, $credito, $montoPagado, $medio, $comprobante, [
@@ -1998,7 +1932,7 @@ final class CreditoService
             $comprobante = $credito->comprobanteAceptadoReciente();
             throw new DomainException(
                 "No se puede anular este cobro: el crédito {$credito->codigo} ya tiene el comprobante {$comprobante->numeroFormateado()} ".
-                "aceptado por SUNAT. Debe emitir una nota de crédito para corregirlo."
+                'aceptado por SUNAT. Debe emitir una nota de crédito para corregirlo.'
             );
         }
 

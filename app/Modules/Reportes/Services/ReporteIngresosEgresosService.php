@@ -5,39 +5,42 @@ namespace App\Modules\Reportes\Services;
 use App\Modules\Caja\Models\CajaMovimiento;
 use App\Modules\Caja\Services\CajaBovedaHierarchyService;
 use App\Modules\Cobranza\Models\Cobro;
+use App\Modules\Credito\Models\Credito;
 use App\Modules\Usuario\Models\User;
-use App\Modules\Venta\Models\PagoVenta;
+use App\Modules\Venta\Models\Venta;
 use Carbon\Carbon;
 use DateTimeInterface;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Support\Collection;
 
 /**
- * Estado de resultados por agencia: los 5 grupos de dinero que atraviesan las
- * cajas, cada uno con su detalle línea a línea y su total, más utilidad y
- * margen.
+ * Estado de resultados por agencia: lo que la empresa GANA y lo que GASTA en
+ * el periodo —no el flujo de caja—, cada grupo con su detalle línea a línea y
+ * su total, más utilidad y margen.
  *
- * Los 5 grupos son mutuamente excluyentes y salen todos de la misma fuente —el
- * movimiento de caja—, que es donde el dinero efectivamente entra y sale:
+ * Ingresos (lo que se gana):
  *
- * - ingresos:    CajaMovimiento tipo=ingreso CON concepto del catálogo, que es
- *                exactamente lo que registra el módulo Ingresos
- *                (CajaService::registrarMovimiento()).
- * - cobranzas:   Cobro no anulado. Cada cobro genera su propio movimiento
- *                tipo=ingreso SIN concepto_id (CreditoService::registrarCobroEnCaja()),
- *                así que contarlo por acá —y no como ingreso— es lo que evita
- *                contarlo dos veces.
- * - ventas:      PagoVenta no anulado, misma lógica: VentaService::registrarPago()
- *                crea un movimiento tipo=ingreso sin concepto_id.
- * - egresos:     CajaMovimiento tipo=egreso SIN credito_id — el módulo Egresos.
- * - desembolsos: CajaMovimiento tipo=egreso CON credito_id — el módulo
- *                Desembolsos, generado por CreditoService::desembolsar(), el
- *                único punto del código que crea un egreso con credito_id.
+ * - ingresos:  CajaMovimiento tipo=ingreso CON concepto del catálogo, que es
+ *              exactamente lo que registra el módulo Ingresos
+ *              (CajaService::registrarMovimiento()).
+ * - cobranzas: el interés + mora de los créditos que se CANCELARON en el
+ *              periodo, sumando todo lo que pagó la deuda en su vida (el
+ *              crédito y los predecesores de su cadena: refrendos, adendas,
+ *              pagos de cuota). Se reconoce en la fecha del cobro que lo
+ *              canceló. El capital devuelto no es ganancia, y un crédito aún
+ *              vigente todavía no aporta.
+ * - ventas:    la ganancia de las ventas de tienda que quedaron PAGADAS en el
+ *              periodo: precio de venta − capital prestado sobre el artículo.
  *
- * El billetaje (tipo=billetaje) queda fuera a propósito: es la entrega de
- * efectivo de la bóveda al asesor, no un ingreso. Ya reaparece dentro de su
- * caja como Ingresos, Cobranzas o Ventas, así que sumarlo lo duplicaría.
+ * Egresos (lo que se gasta):
+ *
+ * - egresos:   CajaMovimiento tipo=egreso SIN credito_id — el módulo Egresos.
+ *
+ * Los desembolsos quedan fuera: prestar dinero no es un gasto, es capital que
+ * vuelve. La planilla todavía no se suma (pendiente de ajustes en ese módulo).
+ * El billetaje tampoco: es la entrega de efectivo de la bóveda al asesor.
  */
 final class ReporteIngresosEgresosService
 {
@@ -49,7 +52,6 @@ final class ReporteIngresosEgresosService
      *     cobranzas: array{filas: Collection<int, array<string, mixed>>, total: string},
      *     ventas: array{filas: Collection<int, array<string, mixed>>, total: string},
      *     egresos: array{filas: Collection<int, array<string, mixed>>, total: string},
-     *     desembolsos: array{filas: Collection<int, array<string, mixed>>, total: string},
      *     totales: array<string, string>,
      *     utilidad_neta: string,
      *     margen_utilidad_bruta: float|null
@@ -65,7 +67,6 @@ final class ReporteIngresosEgresosService
             'cobranzas' => $this->cobranzas($inicio, $fin, $actor, $agenciaId),
             'ventas' => $this->ventas($inicio, $fin, $actor, $agenciaId),
             'egresos' => $this->egresos($inicio, $fin, $actor, $agenciaId),
-            'desembolsos' => $this->desembolsos($inicio, $fin, $actor, $agenciaId),
         ];
 
         $totalIngresos = $this->sumar(
@@ -74,10 +75,8 @@ final class ReporteIngresosEgresosService
             $secciones['ventas']['total'],
         );
 
-        $totalEgresos = $this->sumar(
-            $secciones['egresos']['total'],
-            $secciones['desembolsos']['total'],
-        );
+        $totalEgresos = $secciones['egresos']['total'];
+        $utilidad = bcsub($totalIngresos, $totalEgresos, 2);
 
         return [
             ...$secciones,
@@ -86,13 +85,13 @@ final class ReporteIngresosEgresosService
                 'total_ingresos' => $totalIngresos,
                 'total_egresos' => $totalEgresos,
             ],
-            'utilidad_neta' => bcsub($totalIngresos, $totalEgresos, 2),
-            // Ratio, no porcentaje: ingresos sobre egresos. Sin egresos ni
-            // desembolsos no hay contra qué dividir, así que va null en vez de
-            // 0 — que en pantalla se leería como "no rentable".
-            'margen_utilidad_bruta' => bccomp($totalEgresos, '0', 2) === 0
+            'utilidad_neta' => $utilidad,
+            // Ratio utilidad / ingresos (0.25 = 25%). Sin ingresos no hay
+            // contra qué dividir, así que va null en vez de 0 — que en
+            // pantalla se leería como "margen cero".
+            'margen_utilidad_bruta' => bccomp($totalIngresos, '0', 2) === 0
                 ? null
-                : (float) bcdiv($totalIngresos, $totalEgresos, 4),
+                : (float) bcdiv($utilidad, $totalIngresos, 4),
         ];
     }
 
@@ -140,102 +139,125 @@ final class ReporteIngresosEgresosService
     }
 
     /**
-     * @return array{filas: Collection<int, array<string, mixed>>, total: string}
-     */
-    private function desembolsos(Carbon $inicio, Carbon $fin, User $actor, ?int $agenciaId): array
-    {
-        $filas = $this->movimientosDeCaja($inicio, $fin, $actor, $agenciaId)
-            // desembolsos() = tipo egreso CON credito_id (el módulo Desembolsos).
-            ->desembolsos()
-            ->with(['credito.cliente:id,nombre,apellido'])
-            ->get()
-            ->map(fn (CajaMovimiento $m): array => $this->fila([
-                'cuenta' => $this->nombre($m->registradoPor),
-                'fecha' => $m->fecha_caja,
-                'descripcion' => $this->componer([
-                    $m->concepto,
-                    $m->descripcion,
-                    $this->nombre($m->credito?->cliente),
-                ]),
-                'monto' => $m->monto,
-                'serie' => $m->serie,
-                'numero' => $m->numero,
-            ]));
-
-        return $this->seccion($filas);
-    }
-
-    /**
+     * Interés + mora de los créditos cancelados en el periodo. El cobro que
+     * los canceló es el último no anulado de un crédito liquidado; su fecha de
+     * caja y su caja deciden el periodo, la agencia y la visibilidad.
+     *
      * @return array{filas: Collection<int, array<string, mixed>>, total: string}
      */
     private function cobranzas(Carbon $inicio, Carbon $fin, User $actor, ?int $agenciaId): array
     {
-        $filas = Cobro::query()
+        $cancelaciones = Cobro::query()
             ->where('estado', '!=', 'anulado')
+            ->whereHas('credito', fn (Builder $q) => $q->whereIn('estado', ['liquidado', 'liquidado_pendiente']))
+            ->whereNotExists(fn (QueryBuilder $q) => $q->from('cobros as posterior')
+                ->whereColumn('posterior.credito_id', 'cobros.credito_id')
+                ->whereColumn('posterior.id', '>', 'cobros.id')
+                ->where('posterior.estado', '!=', 'anulado'))
             ->whereHas('cajaMovimiento', fn (Builder $q) => $this->enRango($q, $inicio, $fin))
             ->whereHas('cajaCiclo.caja', fn (Builder $q) => $this->hierarchy->cajasVisibles($q, $actor))
             ->when($agenciaId, fn (Builder $q) => $q->whereHas('cajaCiclo.caja', fn (Builder $c) => $c->where('agencia_id', $agenciaId)))
             ->with([
                 'registradoPor:id,nombre,apellido',
                 'cliente:id,nombre,apellido',
-                'cajaMovimiento:id,concepto,fecha_caja',
+                'credito',
+                'cajaMovimiento:id,fecha_caja',
             ])
-            ->get(['id', 'caja_movimiento_id', 'cliente_id', 'registrado_por', 'monto_pagado'])
-            ->map(fn (Cobro $c): array => $this->fila([
-                'cuenta' => $this->nombre($c->registradoPor),
-                // La fecha contable es la del ciclo de caja, no la del INSERT
-                // del cobro: un cobro registrado con el caja reabierta a
-                // destiempo pertenece al día que se cobró, no al día que se
-                // escribió la fila.
-                'fecha' => $c->cajaMovimiento?->fecha_caja,
-                'descripcion' => $this->componer([
-                    $c->cajaMovimiento?->concepto,
-                    $this->nombre($c->cliente),
-                ]),
-                'monto' => $c->monto_pagado,
-            ]));
+            ->get();
+
+        $cadenas = $cancelaciones->mapWithKeys(fn (Cobro $c): array => [$c->id => $c->credito->cadena()->pluck('id')]);
+
+        $cobrosPorCredito = Cobro::query()
+            ->whereIn('credito_id', $cadenas->flatten()->unique())
+            ->where('estado', '!=', 'anulado')
+            ->get(['credito_id', 'interes', 'mora'])
+            ->groupBy('credito_id');
+
+        $filas = $cancelaciones
+            ->map(function (Cobro $cancelacion) use ($cadenas, $cobrosPorCredito): array {
+                $cobros = $cadenas[$cancelacion->id]->flatMap(fn (int $id) => $cobrosPorCredito->get($id, collect()));
+                $interes = $this->sumar(...$cobros->map(fn (Cobro $c): string => (string) $c->interes)->all());
+                $mora = $this->sumar(...$cobros->map(fn (Cobro $c): string => (string) ($c->mora ?? '0'))->all());
+
+                return $this->fila([
+                    'cuenta' => $this->nombre($cancelacion->registradoPor),
+                    'fecha' => $cancelacion->cajaMovimiento?->fecha_caja,
+                    'descripcion' => $this->componer([
+                        "Crédito {$cancelacion->credito->codigo}",
+                        $this->nombre($cancelacion->cliente),
+                        'Interés S/ '.number_format((float) $interes, 2).' + mora S/ '.number_format((float) $mora, 2),
+                    ]),
+                    'monto' => bcadd($interes, $mora, 2),
+                ]);
+            })
+            ->filter(fn (array $fila): bool => bccomp($fila['monto'], '0', 2) > 0);
 
         return $this->seccion($filas);
     }
 
     /**
-     * Pagos recibidos sobre ventas de tienda. Se excluyen los de una venta
-     * cancelada y los anulados individualmente: una venta cancelada no es
-     * ingreso, por más que su pago siga en la tabla (VentaService::cancelar()
-     * no da de baja los pagos). Es el mismo criterio con el que la cobranza
-     * excluye los Cobro anulados.
+     * Ganancia de las ventas de tienda pagadas en el periodo: precio de venta
+     * − capital prestado sobre el artículo (ver capitalDelArticulo()). Una
+     * venta a pérdida resta.
      *
      * @return array{filas: Collection<int, array<string, mixed>>, total: string}
      */
     private function ventas(Carbon $inicio, Carbon $fin, User $actor, ?int $agenciaId): array
     {
-        $filas = PagoVenta::query()
-            ->whereNull('anulado_at')
-            ->whereHas('venta', fn (Builder $q) => $q->where('estado', '!=', 'cancelada'))
-            ->whereHas('cajaMovimiento', fn (Builder $q) => $this->enRango($q, $inicio, $fin))
-            ->whereHas('cajaCiclo.caja', fn (Builder $q) => $this->hierarchy->cajasVisibles($q, $actor))
-            ->when($agenciaId, fn (Builder $q) => $q->whereHas('cajaCiclo.caja', fn (Builder $c) => $c->where('agencia_id', $agenciaId)))
-            ->with([
-                'registradoPor:id,nombre,apellido',
-                'venta.cliente:id,nombre,apellido',
-                'cajaMovimiento:id,concepto,fecha_caja',
-            ])
-            ->get(['id', 'venta_id', 'caja_movimiento_id', 'registrado_por', 'monto'])
-            ->map(fn (PagoVenta $p): array => $this->fila([
-                'cuenta' => $this->nombre($p->registradoPor),
-                'fecha' => $p->cajaMovimiento?->fecha_caja,
-                'descripcion' => $this->componer([
-                    $p->cajaMovimiento?->concepto,
-                    $this->nombre($p->venta?->cliente),
-                ]),
-                'monto' => $p->monto,
-            ]));
+        $filas = Venta::query()
+            ->where('estado', 'pagada')
+            ->whereDate('pagada_at', '>=', $inicio->toDateString())
+            ->whereDate('pagada_at', '<=', $fin->toDateString())
+            ->whereHas('pagos.cajaCiclo.caja', fn (Builder $q) => $this->hierarchy->cajasVisibles($q, $actor))
+            ->when($agenciaId, fn (Builder $q) => $q->where('agencia_id', $agenciaId))
+            ->with(['vendidoPor:id,nombre,apellido', 'cliente:id,nombre,apellido', 'creditoOrigen', 'articulo'])
+            ->get()
+            ->map(function (Venta $venta): array {
+                $capital = $this->capitalDelArticulo($venta);
+
+                return $this->fila([
+                    'cuenta' => $this->nombre($venta->vendidoPor),
+                    'fecha' => $venta->pagada_at,
+                    'descripcion' => $this->componer([
+                        $venta->creditoOrigen ? "Crédito {$venta->creditoOrigen->codigo}" : null,
+                        $this->nombre($venta->cliente),
+                        'Venta S/ '.number_format((float) $venta->precio_venta, 2).' − capital S/ '.number_format((float) $capital, 2),
+                    ]),
+                    'monto' => bcsub((string) $venta->precio_venta, $capital, 2),
+                ]);
+            });
 
         return $this->seccion($filas);
     }
 
     /**
-     * Query base de Ingresos, Egresos y Desembolsos — las tres salen de
+     * Capital del crédito de origen que respaldaba el artículo vendido. Si el
+     * crédito tenía varias garantías, su capital se reparte según la
+     * valorización de cada una. Sin crédito de origen no hay capital que
+     * descontar.
+     */
+    private function capitalDelArticulo(Venta $venta): string
+    {
+        $credito = $venta->creditoOrigen;
+
+        if (! $credito instanceof Credito || ! $venta->articulo) {
+            return '0.00';
+        }
+
+        $capital = (string) $credito->monto_prestamo;
+        $valorizacionTotal = $this->sumar(
+            ...$credito->garantiasComo($venta->articulo::class)->get()->map(fn (Model $g): string => (string) $g->valorizacion)->all(),
+        );
+
+        if (bccomp($valorizacionTotal, '0', 2) <= 0) {
+            return bcadd($capital, '0', 2);
+        }
+
+        return bcdiv(bcmul($capital, (string) $venta->articulo->valorizacion, 6), $valorizacionTotal, 2);
+    }
+
+    /**
+     * Query base de Ingresos y Egresos — las dos salen de
      * caja_movimientos con filtros distintos, pero comparten alcance del actor,
      * agencia y rango de fechas. El alcance es el de
      * CajaService::listarMovimientos(): un asesor solo ve su caja, un
@@ -258,8 +280,8 @@ final class ReporteIngresosEgresosService
 
     /**
      * Rango de fechas sobre un query que YA es de caja_movimientos: se pasa
-     * como closure a whereHas desde las fuentes de Cobro y PagoVenta, que
-     * llegan hasta el movimiento por relación en vez de por columna propia.
+     * como closure a whereHas desde la fuente de Cobro, que llega hasta el
+     * movimiento por relación en vez de por columna propia.
      */
     private function enRango(Builder $query, Carbon $inicio, Carbon $fin): void
     {
@@ -337,7 +359,7 @@ final class ReporteIngresosEgresosService
 
     /**
      * Nombre de una persona — un User (la "cuenta" del reporte) o un Cliente
-     * (en la descripción de cobranzas, ventas y desembolsos). Ambos tienen
+     * (en la descripción de cobranzas y ventas). Ambos tienen
      * nombre + apellido, así que comparten el mismo formato.
      */
     private function nombre(?Model $persona): string

@@ -82,7 +82,7 @@ abstract class CreditoTipoSupervisado implements CreditoTipo
      *
      * @var list<string>
      */
-    private const VISTAS_PROPIAS = ['contrato', 'ficha_socioeconomica', 'notificacion_pago', 'aviso_prejudicial', 'expediente', 'contrato_transferencia'];
+    private const VISTAS_PROPIAS = ['contrato', 'ficha_socioeconomica', 'notificacion_pago', 'aviso_prejudicial', 'saldo_deudor', 'expediente', 'contrato_transferencia'];
 
     public function vistaDocumento(string $tipoDocumento): string
     {

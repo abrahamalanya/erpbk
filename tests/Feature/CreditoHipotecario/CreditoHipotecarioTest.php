@@ -95,6 +95,7 @@ it('generates the hipotecario-only documentos when registering (ficha + cobranza
     expect($tipos)->toContain('ficha_socioeconomica')
         ->and($tipos)->toContain('notificacion_pago')
         ->and($tipos)->toContain('aviso_prejudicial')
+        ->and($tipos)->toContain('saldo_deudor')
         ->and($tipos)->toContain('expediente')
         // El sticker se pega sobre un bien/vehículo físico en tienda; un
         // hipotecario no tiene artículo que etiquetar.

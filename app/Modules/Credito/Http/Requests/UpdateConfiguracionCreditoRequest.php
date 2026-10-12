@@ -39,6 +39,11 @@ class UpdateConfiguracionCreditoRequest extends FormRequest
             // Opcional: si no viene, la config conserva su valor actual (o el
             // default 1 al crearse). El formulario de configuración sí lo envía.
             'max_cuotas' => ['sometimes', 'integer', 'min:1'],
+            // Tasas anuales efectivas (%) de la liquidación de saldo deudor
+            // hipotecario. Opcionales, igual que max_cuotas: si no vienen se
+            // conservan.
+            'tea_compensatoria_maxima' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:1000'],
+            'tasa_moratoria_anual' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:1000'],
         ];
     }
 }

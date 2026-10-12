@@ -12,8 +12,10 @@ use App\Nucleo\Services\PdfGeneratorService;
 use DomainException;
 use Endroid\QrCode\QrCode;
 use Endroid\QrCode\Writer\PngWriter;
+use Illuminate\Database\Eloquent\Collection as EloquentCollection;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -26,7 +28,7 @@ final class DocumentoCreditoService
         'contrato', 'declaracion', 'adenda', 'fotos', 'devolucion',
         'voucher_desembolso', 'voucher_pago', 'sticker',
         'carta_no_adeudo', 'recepcion_vehiculos', 'ficha_socioeconomica',
-        'notificacion_pago', 'aviso_prejudicial', 'expediente',
+        'notificacion_pago', 'aviso_prejudicial', 'saldo_deudor', 'expediente',
         'contrato_transferencia', 'pagare',
     ];
 
@@ -34,44 +36,94 @@ final class DocumentoCreditoService
         private readonly PdfGeneratorService $pdfGenerator,
         private readonly CreditoTipoManager $tipos,
         private readonly ConfiguracionCreditoService $configuracion,
+        private readonly LiquidacionSaldoDeudorService $liquidacion,
     ) {}
 
-    public function generarContrato(Credito $credito, User $actor): DocumentoCredito
+    /**
+     * Documentos de plantilla: no guardan datos propios, se arman en vivo
+     * desde el crédito cada vez que se ven, y cuáles corresponden depende
+     * solo del tipo y del estado del crédito. La fila en
+     * documentos_credito_prendario de cada uno solo existe para llevar su
+     * estado (impreso, firmado y el escaneo firmado), así que se crea cuando
+     * falta — ver documentosDe().
+     *
+     * - contrato + declaración: todos menos diario.
+     * - pagaré: solo diario, y recién desembolsado — necesita el cronograma
+     *   real (montos y fechas exactos de cada cuota), no uno tentativo.
+     * - fotos: la constancia fotográfica de las garantías, para los tipos con
+     *   prenda física.
+     * - sticker: etiqueta del producto en tienda, para los tipos que la usan.
+     * - recepción de vehículos: solo el crédito vehicular original; sus
+     *   sucesores conservan el vehículo ya recibido.
+     * - hipotecario: ficha socioeconómica, documentos de cobranza
+     *   (notificación de pago, aviso prejudicial, liquidación del saldo
+     *   deudor) y expediente.
+     *
+     * @return list<string>
+     */
+    public function tiposPlantilla(Credito $credito): array
     {
-        return $this->generar($credito, $actor, 'contrato');
-    }
+        $tipo = $this->tipos->paraCredito($credito);
+        $esOriginal = $credito->refrendo_de_credito_id === null
+            && $credito->adenda_de_credito_id === null
+            && $credito->refinanciamiento_de_credito_id === null
+            && $credito->pago_cuota_de_credito_id === null;
 
-    public function generarDeclaracion(Credito $credito, User $actor): DocumentoCredito
-    {
-        return $this->generar($credito, $actor, 'declaracion');
+        return array_values(array_filter([
+            $credito->tipo_credito !== 'diario' ? 'contrato' : null,
+            $credito->tipo_credito !== 'diario' ? 'declaracion' : null,
+            $credito->tipo_credito === 'diario' && $credito->fecha_desembolso ? 'pagare' : null,
+            $tipo->generaFotosGarantia() ? 'fotos' : null,
+            $tipo->generaStickerGarantia() ? 'sticker' : null,
+            $credito->tipo_credito === 'vehicular' && $esOriginal ? 'recepcion_vehiculos' : null,
+            ...($credito->tipo_credito === 'hipotecario'
+                ? ['ficha_socioeconomica', 'notificacion_pago', 'aviso_prejudicial', 'saldo_deudor', 'expediente']
+                : []),
+        ]));
     }
 
     /**
-     * Pagaré y reconocimiento de deuda — solo crédito diario, reemplaza a
-     * contrato+declaración para ese tipo. Se genera al desembolsar (no al
-     * registrar) porque necesita el cronograma ya real y persistido (montos
-     * y fechas exactos de cada cuota), no uno tentativo — ver
-     * CreditoService::desembolsar().
+     * Crea las filas de los documentos de plantilla que el crédito aún no
+     * tiene. Idempotente: se llama al registrar o encadenar un crédito, al
+     * desembolsarlo (para el pagaré) y al leer sus documentos.
      */
-    public function generarPagare(Credito $credito, User $actor): DocumentoCredito
+    public function generarPlantillas(Credito $credito, ?User $actor = null): void
     {
-        return $this->generar($credito, $actor, 'pagare');
+        DB::transaction(function () use ($credito, $actor): void {
+            Credito::query()->whereKey($credito->id)->lockForUpdate()->first();
+
+            $existentes = $credito->documentos()->pluck('tipo')->all();
+
+            foreach (array_diff($this->tiposPlantilla($credito), $existentes) as $tipo) {
+                DocumentoCredito::query()->create([
+                    'credito_id' => $credito->id,
+                    'empresa_id' => $credito->empresa_id,
+                    'tipo' => $tipo,
+                    'generado_por' => $actor?->id ?? $credito->registrado_por,
+                    'generado_at' => $actor ? now() : ($credito->created_at ?? now()),
+                ]);
+            }
+        });
+    }
+
+    /**
+     * Los documentos del crédito para mostrarlos: completa los de plantilla
+     * que falten (créditos importados o anteriores a un documento nuevo) y
+     * devuelve todos, incluidos los de evento (vouchers, devolución, carta de
+     * no adeudo, contrato de transferencia).
+     *
+     * @return EloquentCollection<int, DocumentoCredito>
+     */
+    public function documentosDe(Credito $credito): EloquentCollection
+    {
+        $this->generarPlantillas($credito);
+
+        return $credito->documentos()->get();
     }
 
     public function generarAdenda(Credito $credito, User $actor): DocumentoCredito
     {
         return $this->generar($credito, $actor, 'adenda');
-    }
-
-    /**
-     * The "constancia fotográfica" — the client's photo with each bien plus
-     * the bien's own product photos, printed for the client to sign
-     * alongside the contrato/declaración (same firma_at gate before
-     * desembolsar).
-     */
-    public function generarFotos(Credito $credito, User $actor): DocumentoCredito
-    {
-        return $this->generar($credito, $actor, 'fotos');
     }
 
     /**
@@ -86,56 +138,6 @@ final class DocumentoCreditoService
     }
 
     /**
-     * Acta de recepción de vehículos — solo para créditos vehiculares, se
-     * genera al registrar el crédito y el cliente la firma al entregar el
-     * vehículo (mismo ciclo firma-escaneo que contrato/declaración).
-     */
-    public function generarRecepcionVehiculos(Credito $credito, User $actor): DocumentoCredito
-    {
-        return $this->generar($credito, $actor, 'recepcion_vehiculos');
-    }
-
-    /**
-     * Ficha socioeconómica — solo para créditos hipotecarios, se genera al
-     * registrar el crédito. Se arma desde la ficha del cliente
-     * (Cliente::fichaSocioeconomica); si el cliente aún no la tiene, el PDF
-     * sale con los campos en blanco y se regenera fresco cada vez que se ve.
-     */
-    public function generarFichaSocioeconomica(Credito $credito, User $actor): DocumentoCredito
-    {
-        return $this->generar($credito, $actor, 'ficha_socioeconomica');
-    }
-
-    /**
-     * Documentos de cobranza de créditos hipotecarios: la notificación /
-     * requerimiento de pago (plazo 72 horas) y la carta de aviso prejudicial
-     * (plazo 5 días hábiles, antesala de la ejecución de la hipoteca). Se
-     * generan al registrar el crédito y se arman en vivo desde las cuotas
-     * vencidas — sin cuotas vencidas salen con la tabla vacía.
-     */
-    public function generarNotificacionPago(Credito $credito, User $actor): DocumentoCredito
-    {
-        return $this->generar($credito, $actor, 'notificacion_pago');
-    }
-
-    public function generarAvisoPrejudicial(Credito $credito, User $actor): DocumentoCredito
-    {
-        return $this->generar($credito, $actor, 'aviso_prejudicial');
-    }
-
-    /**
-     * Expediente del crédito hipotecario — dossier completo (portada con
-     * deudor + garantes, fotos por persona, cronograma, ficha
-     * socioeconómica, copia/certificado literal, hoja de datos). Se genera
-     * al registrar el crédito y se arma en vivo desde las fotos subidas
-     * (Credito::expedienteDocumentos) + las que ya tiene el cliente.
-     */
-    public function generarExpediente(Credito $credito, User $actor): DocumentoCredito
-    {
-        return $this->generar($credito, $actor, 'expediente');
-    }
-
-    /**
      * Carta de no adeudo — se genera cuando el crédito queda liquidado por
      * completo (acta de devolución firmada); certifica que el cliente ya no
      * mantiene deuda con la empresa.
@@ -143,20 +145,6 @@ final class DocumentoCreditoService
     public function generarCartaNoAdeudo(Credito $credito, User $actor): DocumentoCredito
     {
         return $this->generar($credito, $actor, 'carta_no_adeudo');
-    }
-
-    /**
-     * Etiqueta sticker del producto (una por garantía del crédito): nombre
-     * del producto, cliente, monto y fecha de desembolso, fecha de
-     * vencimiento, fecha de remate (vencimiento + días de espera
-     * configurados, ver ConfiguracionCredito::dias_espera_mora) y el código
-     * único de la garantía como QR. Se genera al registrar el crédito y se
-     * renderiza en vivo, así que las fechas/monto de desembolso aparecen en
-     * cuanto el crédito se desembolsa.
-     */
-    public function generarSticker(Credito $credito, User $actor): DocumentoCredito
-    {
-        return $this->generar($credito, $actor, 'sticker');
     }
 
     /**
@@ -273,6 +261,10 @@ final class DocumentoCreditoService
             'tentativo' => $cronogramaTentativo,
             'fotoDataUri' => fn (?string $path, int $maxAncho = 900): ?string => $this->fotoDataUri($path, $maxAncho),
         ];
+
+        if ($documento->tipo === 'saldo_deudor') {
+            $datos['liquidacion'] = $this->liquidacion->liquidar($credito, now());
+        }
 
         if ($documento->tipo === 'sticker') {
             $datos['fechaRemate'] = $this->fechaRemate($credito);

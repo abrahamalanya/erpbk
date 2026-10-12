@@ -181,7 +181,8 @@ class CreditoController extends Controller
     {
         Gate::authorize('view', $credito);
 
-        $credito->load(['bienes.fotos', 'vehiculos.fotos', 'inmuebles', 'cliente', 'aval', 'aval2', 'registradoPor', 'supervisadoPor', 'aprobadoPor', 'documentos', 'cuotas', 'expedienteDocumentos']);
+        $credito->load(['bienes.fotos', 'vehiculos.fotos', 'inmuebles', 'cliente', 'aval', 'aval2', 'registradoPor', 'supervisadoPor', 'aprobadoPor', 'cuotas', 'expedienteDocumentos']);
+        $credito->setRelation('documentos', $this->documentoService->documentosDe($credito));
 
         if (in_array($credito->estado, ['activo', 'vencido'], true)) {
             $this->creditoService->adjuntarMontosSugeridos($credito);

@@ -14,7 +14,9 @@ use App\Modules\Facturacion\Models\Comprobante;
 use App\Modules\Usuario\Models\User;
 use App\Nucleo\Concerns\BelongsToTenant;
 use Database\Factories\CreditoFactory;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Casts\Attribute;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -25,6 +27,15 @@ class Credito extends Model
 {
     /** @use HasFactory<CreditoFactory> */
     use BelongsToTenant, HasFactory;
+
+    /**
+     * Columnas con las que un crédito apunta al que lo originó.
+     *
+     * @var list<string>
+     */
+    private const COLUMNAS_PREDECESOR = [
+        'refrendo_de_credito_id', 'adenda_de_credito_id', 'refinanciamiento_de_credito_id', 'pago_cuota_de_credito_id',
+    ];
 
     /**
      * The table associated with the model.
@@ -247,6 +258,59 @@ class Credito extends Model
     public function cobros(): HasMany
     {
         return $this->hasMany(Cobro::class, 'credito_id');
+    }
+
+    /**
+     * La deuda completa a la que pertenece este crédito: el original y todos
+     * los sucesores que nacieron de él (refrendo, adenda, refinanciamiento,
+     * pago de cuota), el original primero. Ningún sucesor entrega dinero
+     * nuevo, así que la cadena es una sola deuda.
+     *
+     * @return Collection<int, self>
+     */
+    public function cadena(): Collection
+    {
+        $original = $this;
+        $visitados = [$this->id];
+
+        while ($predecesorId = $original->predecesorId()) {
+            if (in_array($predecesorId, $visitados, true)) {
+                break;
+            }
+
+            $visitados[] = $predecesorId;
+            $original = self::query()->findOrFail($predecesorId);
+        }
+
+        $cadena = new Collection([$original]);
+        $frontera = [$original->id];
+
+        while ($frontera !== []) {
+            $sucesores = self::query()
+                ->where(function (Builder $query) use ($frontera): void {
+                    foreach (self::COLUMNAS_PREDECESOR as $columna) {
+                        $query->orWhereIn($columna, $frontera);
+                    }
+                })
+                ->whereNotIn('id', $cadena->pluck('id'))
+                ->get();
+
+            $cadena = $cadena->concat($sucesores);
+            $frontera = $sucesores->pluck('id')->all();
+        }
+
+        return $cadena;
+    }
+
+    private function predecesorId(): ?int
+    {
+        foreach (self::COLUMNAS_PREDECESOR as $columna) {
+            if ($this->{$columna}) {
+                return (int) $this->{$columna};
+            }
+        }
+
+        return null;
     }
 
     /**
