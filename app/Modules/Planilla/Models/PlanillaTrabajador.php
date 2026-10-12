@@ -42,6 +42,8 @@ class PlanillaTrabajador extends Model
         'nombres',
         'situacion',
         'ingresos',
+        'bonificaciones',
+        'es_afp',
         'descuentos_devengado',
         'descuentos_pagado',
         'onp',
@@ -61,6 +63,8 @@ class PlanillaTrabajador extends Model
     {
         return [
             'ingresos' => 'decimal:2',
+            'bonificaciones' => 'decimal:2',
+            'es_afp' => 'boolean',
             'descuentos_devengado' => 'decimal:2',
             'descuentos_pagado' => 'decimal:2',
             'onp' => 'decimal:2',

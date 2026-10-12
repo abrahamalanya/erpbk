@@ -129,6 +129,8 @@ final class PlanillaService
                 'nombres' => $user->nombre,
                 'situacion' => $linea['situacion'] ?? 'activo',
                 'ingresos' => $ingresos,
+                'bonificaciones' => $bonificaciones,
+                'es_afp' => (bool) ($linea['es_afp'] ?? false),
                 'descuentos_devengado' => bcadd((string) ($linea['descuentos_devengado'] ?? '0'), '0', 2),
                 'descuentos_pagado' => $descuentosPagados,
                 ...$tributos,

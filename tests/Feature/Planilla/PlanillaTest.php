@@ -133,6 +133,25 @@ it('calculates aportes on the sueldo without bonificaciones', function () {
         ->and($linea['neto'])->toBe('1130.00');
 });
 
+it('exposes the original line inputs so the line can be edited', function () {
+    Sanctum::actingAs($this->administradorGeneral, ['*']);
+    $planillaId = crearPlanilla($this->administradorGeneral);
+
+    $this->postJson("/api/planillas/{$planillaId}/lineas", [
+        'lineas' => [
+            ['user_id' => $this->trabajador->id, 'ingresos' => 1000.00, 'bonificaciones' => 200.00, 'es_afp' => true, 'afp' => 100.00],
+        ],
+    ])->assertSuccessful();
+
+    $linea = collect($this->getJson("/api/planillas/{$planillaId}")->assertSuccessful()->json('data.trabajadores'))->first();
+
+    expect($linea['sueldo_base'])->toBe('1000.00')
+        ->and($linea['bonificaciones'])->toBe('200.00')
+        ->and($linea['es_afp'])->toBeTrue()
+        ->and($linea['afp'])->toBe('100.00')
+        ->and($linea['ingresos'])->toBe('1200.00');
+});
+
 it('takes the AFP monto as declared, not from a global rate', function () {
     Sanctum::actingAs($this->administradorGeneral, ['*']);
     $planillaId = crearPlanilla($this->administradorGeneral);
