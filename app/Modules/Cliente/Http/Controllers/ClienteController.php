@@ -142,7 +142,7 @@ class ClienteController extends Controller
             $query->where('agencia_id', request()->integer('agencia_id'));
         }
 
-        $porPagina = max(1, min(request()->integer('per_page', 15), 100));
+        $porPagina = max(1, min(request()->integer('per_page', 50), 100));
 
         return $this->successResponse($query->paginate($porPagina));
     }

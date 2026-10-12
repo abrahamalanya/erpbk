@@ -5,6 +5,7 @@ namespace App\Modules\Facturacion\Services;
 use App\Modules\Facturacion\Models\Comprobante;
 use App\Modules\Facturacion\Models\ComprobanteDetalle;
 use App\Modules\Facturacion\Models\CredencialSunat;
+use App\Modules\Facturacion\Models\SerieComprobante;
 use App\Modules\Facturacion\Services\Sunat\CdrParser;
 use App\Modules\Facturacion\Services\Sunat\SunatBajaClient;
 use App\Modules\Facturacion\Services\Sunat\SunatClientInterface;
@@ -12,8 +13,10 @@ use App\Modules\Facturacion\Services\Sunat\SunatSoapClient;
 use App\Modules\Facturacion\Services\Sunat\UblBuilder;
 use App\Modules\Facturacion\Tipos\EstadoComprobante;
 use App\Modules\Facturacion\Tipos\TipoComprobante;
+use App\Modules\Usuario\Models\User;
+use App\Nucleo\Support\NumeroALetras;
 use DomainException;
-use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 
 /**
@@ -107,6 +110,7 @@ final class ComprobanteSunatService
     public function consultarEstado(Comprobante $comprobante, CredencialSunat $credencial, string $modo): array
     {
         $client = new SunatSoapClient($credencial, $modo);
+
         return $client->consultarEstado($comprobante);
     }
 
@@ -132,6 +136,7 @@ final class ComprobanteSunatService
     public function consultarResumenDiario(string $ticket, CredencialSunat $credencial, string $modo): array
     {
         $client = new SunatSoapClient($credencial, $modo);
+
         return $client->consultarResumenDiario($ticket);
     }
 
@@ -141,6 +146,7 @@ final class ComprobanteSunatService
     public function verificarCupo(CredencialSunat $credencial, string $modo): array
     {
         $client = new SunatSoapClient($credencial, $modo);
+
         return $client->verificarCupo();
     }
 
@@ -189,6 +195,7 @@ final class ComprobanteSunatService
             if (str_starts_with((string) $respuesta['cdr_codigo'], '2')) {
                 return EstadoComprobante::Observado->value;
             }
+
             return EstadoComprobante::Error->value;
         }
 
@@ -251,6 +258,7 @@ final class ComprobanteSunatService
     public function comunicarBaja(Comprobante $comprobante, CredencialSunat $credencial, string $modo, string $motivo): array
     {
         $client = new SunatBajaClient($credencial, $modo);
+
         return $client->comunicarBaja($comprobante, $motivo);
     }
 
@@ -295,13 +303,14 @@ final class ComprobanteSunatService
     public function consultarCdrBajaResumen(string $ticket, CredencialSunat $credencial, string $modo): array
     {
         $client = new SunatBajaClient($credencial, $modo);
+
         return $client->consultarCdrResumen($ticket);
     }
 
     /**
      * Emite una nota de crédito (tipo 07) referenciando un comprobante origen.
      *
-     * @param array<int, array{descripcion: string, cantidad: float, valor_unitario: float, total: float, igv: float, categoria: string}> $lineas
+     * @param  array<int, array{descripcion: string, cantidad: float, valor_unitario: float, total: float, igv: float, categoria: string}>  $lineas
      * @return Comprobante La nota de crédito creada (estado: generado)
      */
     public function emitirNotaCredito(
@@ -310,7 +319,7 @@ final class ComprobanteSunatService
         string $modo,
         string $motivo,
         array $lineas,
-        \App\Modules\Usuario\Models\User $actor
+        User $actor
     ): Comprobante {
         // Validar que el origen está aceptado/observado
         if (! in_array($comprobanteOrigen->estado->value, ['aceptado', 'observado'], true)) {
@@ -323,9 +332,16 @@ final class ComprobanteSunatService
         $total = '0.00';
 
         foreach ($lineas as $linea) {
-            $subtotal = bcadd($subtotal, (string) $linea['valor_venta'] ?? $linea['valor_unitario'], 2);
-            $igv = bcadd($igv, (string) $linea['igv'], 2);
-            $total = bcadd($total, (string) $linea['total'], 2);
+            // `valor_venta` no es un campo que EmitirNotaCreditoRequest pida
+            // (ni el frontend lo manda): el subtotal de la línea sale de
+            // total − igv, que es consistente pase lo que pase con
+            // valor_unitario × cantidad (p. ej. si hay descuento de línea).
+            $lineaIgv = (string) $linea['igv'];
+            $lineaTotal = (string) $linea['total'];
+
+            $subtotal = bcadd($subtotal, bcsub($lineaTotal, $lineaIgv, 2), 2);
+            $igv = bcadd($igv, $lineaIgv, 2);
+            $total = bcadd($total, $lineaTotal, 2);
         }
 
         // Obtener siguiente correlativo para nota de crédito (serie BC01, BC02, etc.)
@@ -352,7 +368,7 @@ final class ComprobanteSunatService
             'subtotal' => $subtotal,
             'igv' => $igv,
             'total' => $total,
-            'importe_letras' => \App\Nucleo\Support\NumeroALetras::soles($total),
+            'importe_letras' => NumeroALetras::soles($total),
             'porcentaje_igv' => $comprobanteOrigen->porcentaje_igv,
             'forma_pago' => $comprobanteOrigen->forma_pago,
             'medio_pago' => $comprobanteOrigen->medio_pago,
@@ -429,9 +445,9 @@ final class ComprobanteSunatService
     /**
      * Obtiene la serie para notas de crédito (BC01, BC02, etc.).
      */
-    private function obtenerSerieNotaCredito(int $empresaId, ?int $agenciaId): \App\Modules\Facturacion\Models\SerieComprobante
+    private function obtenerSerieNotaCredito(int $empresaId, ?int $agenciaId): SerieComprobante
     {
-        $serie = \App\Modules\Facturacion\Models\SerieComprobante::query()
+        $serie = SerieComprobante::query()
             ->where('empresa_id', $empresaId)
             ->where('agencia_id', $agenciaId)
             ->where('tipo_documento', '07')
@@ -440,7 +456,7 @@ final class ComprobanteSunatService
 
         if (! $serie) {
             // Fallback a casa matriz
-            $serie = \App\Modules\Facturacion\Models\SerieComprobante::query()
+            $serie = SerieComprobante::query()
                 ->where('empresa_id', $empresaId)
                 ->whereNull('agencia_id')
                 ->where('tipo_documento', '07')
@@ -458,10 +474,10 @@ final class ComprobanteSunatService
     /**
      * Reserva el siguiente correlativo para nota de crédito.
      */
-    private function siguienteCorrelativoNotaCredito(\App\Modules\Facturacion\Models\SerieComprobante $serie): int
+    private function siguienteCorrelativoNotaCredito(SerieComprobante $serie): int
     {
-        return \Illuminate\Support\Facades\DB::transaction(function () use ($serie): int {
-            $bloqueada = \App\Modules\Facturacion\Models\SerieComprobante::query()
+        return DB::transaction(function () use ($serie): int {
+            $bloqueada = SerieComprobante::query()
                 ->whereKey($serie->getKey())
                 ->lockForUpdate()
                 ->firstOrFail();
