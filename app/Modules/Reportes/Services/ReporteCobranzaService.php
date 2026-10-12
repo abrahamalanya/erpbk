@@ -45,7 +45,7 @@ final class ReporteCobranzaService
             ->visibleQuery(Credito::query(), $actor)
             ->whereIn('estado', ['activo', 'vencido'])
             ->whereHas('cuotas', fn (Builder $q) => $q->pendientes()->whereDate('fecha_vencimiento', '<=', $hoy))
-            ->with(['cliente', 'agencia'])
+            ->with(['cliente.telefonos', 'agencia'])
             ->get()
             ->load(['cuotas' => fn ($q) => $q->pendientes()->whereDate('fecha_vencimiento', '<=', $hoy)->orderBy('fecha_vencimiento')]);
 

@@ -89,7 +89,7 @@
         <div class="exp-rol">({{ $p['etiqueta'] }})</div>
         <table class="exp-datos">
             <tr><td class="k">DNI</td><td>: {{ $cl->numero_documento }}</td></tr>
-            <tr><td class="k">Teléfono</td><td>: {{ $cl->telefono }}</td></tr>
+            <tr><td class="k">Teléfono</td><td>: {{ $cl->telefonos->pluck('numero')->implode(', ') }}</td></tr>
             <tr><td class="k">Estado civil</td><td>: {{ mb_strtoupper((string) $cl->estado_civil) }}</td></tr>
             <tr><td class="k">Dirección</td><td>: {{ mb_strtoupper((string) $cl->direccion) }}</td></tr>
             <tr><td class="k">Ocupación</td><td>: {{ mb_strtoupper((string) $p['ocupacion']) }}</td></tr>

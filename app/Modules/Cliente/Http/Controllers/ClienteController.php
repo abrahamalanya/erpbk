@@ -9,6 +9,7 @@ use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Cliente\Models\ClienteFoto;
 use App\Modules\Cliente\Services\ClienteFotoService;
 use App\Modules\Cliente\Services\ClienteHierarchyService;
+use App\Modules\Cliente\Services\ClienteTelefonoService;
 use App\Modules\Usuario\Models\User;
 use App\Nucleo\Concerns\GestionaImagenes;
 use App\Nucleo\Http\Controllers\Controller;
@@ -47,19 +48,29 @@ class ClienteController extends Controller
     ];
 
     /**
-     * Relaciones que se cargan siempre: `fotos` alimenta la respuesta y el PDF
-     * del expediente, `ubigeoDistrito*` son accessors en $appends.
+     * Campos que se resuelven aparte, vía relación, y por lo tanto tampoco
+     * deben pasar por mass assignment sobre el propio Cliente.
+     *
+     * @var list<string>
+     */
+    private const CAMPOS_RELACION = ['telefonos'];
+
+    /**
+     * Relaciones que se cargan siempre: `fotos`/`telefonos` alimentan la
+     * respuesta y el PDF del expediente, `ubigeoDistrito*` son accessors en
+     * $appends.
      *
      * @var list<string>
      */
     private const RELACIONES = [
-        'agencia', 'asesor', 'registradoPor', 'fotos',
+        'agencia', 'asesor', 'registradoPor', 'fotos', 'telefonos',
         'ubigeoDistrito.provincia.departamento', 'ubigeoDistritoNegocio.provincia.departamento',
     ];
 
     public function __construct(
         private readonly ClienteHierarchyService $hierarchy,
         private readonly ClienteFotoService $fotos,
+        private readonly ClienteTelefonoService $telefonos,
         private readonly ConsultaDniService $consultaDni,
         private readonly ConsultaRucService $consultaRuc,
     ) {}
@@ -151,7 +162,7 @@ class ClienteController extends Controller
     {
         Gate::authorize('create', Cliente::class);
 
-        $data = Arr::except($request->validated(), self::CAMPOS_ARCHIVO);
+        $data = Arr::except($request->validated(), [...self::CAMPOS_ARCHIVO, ...self::CAMPOS_RELACION]);
         $actor = $request->user();
 
         $cliente = Cliente::query()->create([
@@ -167,7 +178,7 @@ class ClienteController extends Controller
             'sexo' => $data['sexo'] ?? null,
             'estado_civil' => $data['estado_civil'] ?? null,
             'email' => $data['email'] ?? null,
-            'telefono' => $data['telefono'] ?? null,
+            'whatsapp' => $data['whatsapp'] ?? null,
             'direccion' => $data['direccion'] ?? null,
             'ubigeo_distrito_id' => $data['ubigeo_distrito_id'] ?? null,
             'referencia' => $data['referencia'] ?? null,
@@ -183,6 +194,7 @@ class ClienteController extends Controller
 
         $this->storeImagenes($request, $cliente, self::IMAGENES, 'clientes');
         $this->fotos->sincronizar($cliente, $request);
+        $this->telefonos->sincronizar($cliente, $request);
 
         return $this->successResponse(
             $cliente->fresh(self::RELACIONES),
@@ -202,11 +214,12 @@ class ClienteController extends Controller
     {
         Gate::authorize('update', $cliente);
 
-        $data = Arr::except($request->validated(), self::CAMPOS_ARCHIVO);
+        $data = Arr::except($request->validated(), [...self::CAMPOS_ARCHIVO, ...self::CAMPOS_RELACION]);
         $cliente->update($data);
 
         $this->storeImagenes($request, $cliente, self::IMAGENES, 'clientes');
         $this->fotos->sincronizar($cliente, $request);
+        $this->telefonos->sincronizar($cliente, $request);
 
         return $this->successResponse(
             $cliente->fresh(self::RELACIONES),

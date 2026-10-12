@@ -114,7 +114,7 @@
         <tr>
             <td class="lbl">Grado de instrucción</td><td class="val">{{ $g($f->grado_instruccion ?? null) }}</td>
             <td class="lbl">Profesión</td><td class="val">{{ $g($f->profesion ?? null) }}</td>
-            <td class="lbl">Teléfono</td><td class="val">{{ $g($c->telefono) }}</td>
+            <td class="lbl">Teléfono</td><td class="val">{{ $g($c->telefonos->pluck('numero')->implode(', ')) }}</td>
         </tr>
         <tr>
             <td class="lbl">Domicilio</td><td class="val">{{ $g($c->direccion) }}</td>

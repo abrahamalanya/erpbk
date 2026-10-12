@@ -41,7 +41,7 @@ class Cliente extends Model
         'sexo',
         'estado_civil',
         'email',
-        'telefono',
+        'whatsapp',
         'direccion',
         'ubigeo_distrito_id',
         'referencia',
@@ -140,6 +140,15 @@ class Cliente extends Model
     public function fotos(): HasMany
     {
         return $this->hasMany(ClienteFoto::class)->orderBy('orden');
+    }
+
+    /**
+     * Teléfonos múltiples del cliente, distintos del WhatsApp (que es único
+     * y vive en `whatsapp`).
+     */
+    public function telefonos(): HasMany
+    {
+        return $this->hasMany(ClienteTelefono::class)->orderBy('orden');
     }
 
     /** Distrito de la dirección del negocio/trabajo del cliente — opcional, separado de la casa. */

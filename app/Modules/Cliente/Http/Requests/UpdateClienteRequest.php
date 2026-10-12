@@ -3,6 +3,7 @@
 namespace App\Modules\Cliente\Http\Requests;
 
 use App\Modules\Cliente\Models\ClienteFoto;
+use App\Modules\Cliente\Models\ClienteTelefono;
 use App\Nucleo\Rules\DocumentoDeIdentidadValido;
 use App\Nucleo\Support\DocumentoIdentidad;
 use Illuminate\Contracts\Validation\ValidationRule;
@@ -41,7 +42,13 @@ class UpdateClienteRequest extends FormRequest
             'sexo' => ['nullable', Rule::in(['m', 'f'])],
             'estado_civil' => ['nullable', 'string', 'max:50'],
             'email' => ['nullable', 'email', 'max:255'],
-            'telefono' => ['nullable', 'string', 'max:20'],
+            'whatsapp' => ['nullable', 'string', 'max:20'],
+            'telefonos' => ['nullable', 'array', 'max:'.ClienteTelefono::MAX_POR_CLIENTE],
+            // nullable porque un multipart/FormData vacío de verdad llega
+            // como null (ConvertEmptyStringsToNull): es el marcador de "la
+            // lista quedó vacía" que usan el frontend/app, y el servicio lo
+            // descarta igual que un string en blanco.
+            'telefonos.*' => ['nullable', 'string', 'max:20'],
             'direccion' => ['nullable', 'string', 'max:255'],
             'ubigeo_distrito_id' => ['nullable', 'integer', 'exists:ubigeo_distritos,id'],
             'referencia' => ['nullable', 'string', 'max:500'],
@@ -93,6 +100,7 @@ class UpdateClienteRequest extends FormRequest
             'fotos_casa_conservar.*.exists' => 'Una de las fotos de la casa indicadas no existe',
             'fotos_negocio_conservar.*.exists' => 'Una de las fotos del negocio indicadas no existe',
             'fotos_adicionales_conservar.*.exists' => 'Una de las fotos adicionales indicadas no existe',
+            'telefonos.max' => 'No puedes agregar más de '.ClienteTelefono::MAX_POR_CLIENTE.' números de teléfono',
         ];
     }
 }

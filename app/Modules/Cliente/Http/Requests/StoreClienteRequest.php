@@ -3,6 +3,7 @@
 namespace App\Modules\Cliente\Http\Requests;
 
 use App\Modules\Cliente\Models\ClienteFoto;
+use App\Modules\Cliente\Models\ClienteTelefono;
 use App\Modules\Empresa\Models\Agencia;
 use App\Nucleo\Rules\DocumentoDeIdentidadValido;
 use App\Nucleo\Support\DocumentoIdentidad;
@@ -45,7 +46,13 @@ class StoreClienteRequest extends FormRequest
             'sexo' => ['nullable', Rule::in(['m', 'f'])],
             'estado_civil' => ['nullable', 'string', 'max:50'],
             'email' => ['nullable', 'email', 'max:255'],
-            'telefono' => ['nullable', 'string', 'max:20'],
+            'whatsapp' => ['nullable', 'string', 'max:20'],
+            'telefonos' => ['nullable', 'array', 'max:'.ClienteTelefono::MAX_POR_CLIENTE],
+            // nullable porque un multipart/FormData vacío de verdad llega
+            // como null (ConvertEmptyStringsToNull): es el marcador de "la
+            // lista quedó vacía" que usan el frontend/app, y el servicio lo
+            // descarta igual que un string en blanco.
+            'telefonos.*' => ['nullable', 'string', 'max:20'],
             'direccion' => ['nullable', 'string', 'max:255'],
             'ubigeo_distrito_id' => ['nullable', 'integer', 'exists:ubigeo_distritos,id'],
             'referencia' => ['nullable', 'string', 'max:500'],
@@ -122,6 +129,7 @@ class StoreClienteRequest extends FormRequest
             'fotos_casa.max' => 'No puedes subir más de '.ClienteFoto::MAX_POR_TIPO.' fotos de la casa',
             'fotos_negocio.max' => 'No puedes subir más de '.ClienteFoto::MAX_POR_TIPO.' fotos del negocio',
             'fotos_adicionales.max' => 'No puedes subir más de '.ClienteFoto::MAX_POR_TIPO.' fotos adicionales',
+            'telefonos.max' => 'No puedes agregar más de '.ClienteTelefono::MAX_POR_CLIENTE.' números de teléfono',
             'fotos_casa.*.image' => 'Cada foto de la casa debe ser una imagen',
             'fotos_negocio.*.image' => 'Cada foto del negocio debe ser una imagen',
             'fotos_adicionales.*.image' => 'Cada foto adicional debe ser una imagen',

@@ -42,7 +42,7 @@ class ProduccionClientesSeeder extends Seeder
                 'sexo' => $datos['sexo'] ?? null,
                 'estado_civil' => $datos['estado_civil'] ?? null,
                 'email' => $datos['email'] ?? null,
-                'telefono' => $datos['telefono'],
+                'whatsapp' => $datos['telefono'],
                 'direccion' => $datos['direccion'],
                 'ubigeo_distrito_id' => $this->resolverDistritoId($datos, 'ubigeo_distrito'),
                 'referencia' => $datos['referencia'],

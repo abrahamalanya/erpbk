@@ -35,7 +35,7 @@ class ClienteFactory extends Factory
             'sexo' => fake()->randomElement(['M', 'F']),
             'estado_civil' => fake()->randomElement(['soltero', 'casado', 'conviviente']),
             'email' => fake()->unique()->safeEmail(),
-            'telefono' => fake()->phoneNumber(),
+            'whatsapp' => fake()->phoneNumber(),
             'direccion' => fake()->address(),
             'referencia' => fake()->sentence(),
             'latitud' => fake()->latitude(-12, -3),

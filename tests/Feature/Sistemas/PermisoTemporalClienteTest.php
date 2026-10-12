@@ -39,7 +39,7 @@ it('quita clientes.editar al rol asesor por defecto', function () {
 
 it('concede al asesor una hora de edición para un cliente concreto', function () {
     Sanctum::actingAs($this->asesor, ['*']);
-    $this->putJson("/api/clientes/{$this->cliente->id}", ['telefono' => '111111111'])->assertForbidden();
+    $this->putJson("/api/clientes/{$this->cliente->id}", ['whatsapp' => '111111111'])->assertForbidden();
 
     $response = concederPermisoEnTest($this->cliente, $this->admin)->assertCreated();
 
@@ -56,9 +56,9 @@ it('concede al asesor una hora de edición para un cliente concreto', function (
         ->assertJsonPath('data.data.0.concedido_por_usuario.id', $this->admin->id);
 
     Sanctum::actingAs($this->asesor, ['*']);
-    $this->putJson("/api/clientes/{$this->cliente->id}", ['telefono' => '999999999'])
+    $this->putJson("/api/clientes/{$this->cliente->id}", ['whatsapp' => '999999999'])
         ->assertSuccessful()
-        ->assertJsonPath('data.telefono', '999999999');
+        ->assertJsonPath('data.whatsapp', '999999999');
 
     $this->getJson('/api/auth/me')
         ->assertSuccessful()
@@ -83,7 +83,7 @@ it('no permite una segunda concesión mientras la primera siga vigente y sí per
     ])->assertSuccessful();
 
     Sanctum::actingAs($this->asesor, ['*']);
-    $this->putJson("/api/clientes/{$this->cliente->id}", ['telefono' => '888888888'])
+    $this->putJson("/api/clientes/{$this->cliente->id}", ['whatsapp' => '888888888'])
         ->assertForbidden();
 
     concederPermisoEnTest($this->cliente, $this->admin, 'Nueva solicitud después de revocar')->assertCreated();
@@ -94,7 +94,7 @@ it('bloquea al asesor cuando la concesión expira y permite emitir otra después
     PermisoTemporal::query()->findOrFail($grant['id'])->update(['expira_at' => now()->subMinute()]);
 
     Sanctum::actingAs($this->asesor, ['*']);
-    $this->putJson("/api/clientes/{$this->cliente->id}", ['telefono' => '777777777'])->assertForbidden();
+    $this->putJson("/api/clientes/{$this->cliente->id}", ['whatsapp' => '777777777'])->assertForbidden();
 
     concederPermisoEnTest($this->cliente, $this->admin, 'Nueva concesión después de expirar')->assertCreated();
 });
@@ -107,10 +107,10 @@ it('invalida para el asesor anterior y exige una nueva concesión si se reasigna
     $this->cliente->update(['asesor_id' => $nuevoAsesor->id]);
 
     Sanctum::actingAs($this->asesor, ['*']);
-    $this->putJson("/api/clientes/{$this->cliente->id}", ['telefono' => '111111111'])->assertForbidden();
+    $this->putJson("/api/clientes/{$this->cliente->id}", ['whatsapp' => '111111111'])->assertForbidden();
 
     Sanctum::actingAs($nuevoAsesor, ['*']);
-    $this->putJson("/api/clientes/{$this->cliente->id}", ['telefono' => '222222222'])->assertForbidden();
+    $this->putJson("/api/clientes/{$this->cliente->id}", ['whatsapp' => '222222222'])->assertForbidden();
 
     Sanctum::actingAs($this->admin, ['*']);
     $this->postJson("/api/gestion/permisos-temporales/{$this->cliente->id}", [
@@ -125,7 +125,7 @@ it('invalida para el asesor anterior y exige una nueva concesión si se reasigna
     ])->assertCreated();
 
     Sanctum::actingAs($nuevoAsesor, ['*']);
-    $this->putJson("/api/clientes/{$this->cliente->id}", ['telefono' => '333333333'])->assertSuccessful();
+    $this->putJson("/api/clientes/{$this->cliente->id}", ['whatsapp' => '333333333'])->assertSuccessful();
 });
 
 it('no concede permisos a clientes sin asesor asignado', function () {

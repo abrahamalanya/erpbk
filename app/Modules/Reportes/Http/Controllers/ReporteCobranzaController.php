@@ -78,7 +78,7 @@ class ReporteCobranzaController extends Controller
             ucfirst($item['tipo_credito']),
             strtoupper($cliente->nombre.' '.$cliente->apellido),
             $cliente->numero_documento ?? '—',
-            $cliente->telefono ?? '—',
+            $cliente->telefonos->pluck('numero')->implode(', ') ?: '—',
             strtoupper($agencia->nombre),
             ucfirst(str_replace('_', ' ', $item['estado'])),
             $item['vence_hoy'] ? 'Vence hoy' : "{$item['dias_atraso']} ".($item['dias_atraso'] === 1 ? 'día' : 'días').' de atraso',

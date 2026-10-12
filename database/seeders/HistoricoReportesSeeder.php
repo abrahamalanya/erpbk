@@ -221,7 +221,7 @@ class HistoricoReportesSeeder extends Seeder
             'apellido' => "Reporte {$sufijo}",
             'tipo_documento' => 'dni',
             'email' => "reporte.{$anio}.{$mes}.{$numero}@demo.local",
-            'telefono' => '900000000',
+            'whatsapp' => '900000000',
             'direccion' => 'Dirección demo para reportes históricos',
             'referencia' => 'Cliente generado para los gráficos de cobranza.',
             'estado' => 'activo',
