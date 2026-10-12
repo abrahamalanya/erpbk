@@ -2,18 +2,14 @@
 
 namespace App\Modules\Empresa\Http\Controllers\Facturacion;
 
-use App\Modules\Empresa\Http\Requests\StoreCredencialSunatRequest;
+use App\Modules\Empresa\Http\Requests\Facturacion\StoreCredencialSunatRequest;
 use App\Modules\Empresa\Models\Empresa;
-use App\Modules\Facturacion\Console\Commands\FacturacionValidarCertificado;
 use App\Modules\Facturacion\Models\CredencialSunat;
-use App\Modules\Facturacion\Notifications\CertificadoPorVencer;
-use App\Modules\Facturacion\Notifications\CertificadoVencido;
+use App\Modules\Facturacion\Services\Sunat\FirmanteDigital;
 use App\Nucleo\Http\Controllers\Controller;
 use App\Nucleo\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Gate;
-use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\StreamedResponse;
 
@@ -71,19 +67,26 @@ class CredencialesSunatController extends Controller
     /**
      * Crea o actualiza las credenciales SUNAT (incluye subida de .pfx).
      */
-    public function store(StoreCredencialSunatRequest $request, Empresa $empresa): JsonResponse
+    public function store(StoreCredencialSunatRequest $request, Empresa $empresa, FirmanteDigital $firmante): JsonResponse
     {
         Gate::authorize('update', $empresa);
 
         $data = $request->validated();
 
-        // Subir certificado .pfx a disco privado
+        // Subir certificado .pfx a disco privado. Los .pfx que emite
+        // RENIEC/ECEP suelen cifrar el certificado con un algoritmo que
+        // OpenSSL 3 ya no soporta por defecto (ver FirmanteDigital) — se
+        // normaliza acá, una sola vez, para que firmar y validar después no
+        // vuelvan a toparse con eso.
         $certificadoPath = null;
         if ($request->hasFile('certificado')) {
-            $certificadoPath = $request->file('certificado')->store(
-                "credenciales_sunat/{$empresa->id}",
-                'privado'
+            $contenido = $firmante->normalizarPfx(
+                file_get_contents($request->file('certificado')->getRealPath()),
+                $data['certificado_password'] ?? '',
             );
+
+            $certificadoPath = "credenciales_sunat/{$empresa->id}/".$request->file('certificado')->hashName();
+            Storage::disk('privado')->put($certificadoPath, $contenido);
         }
 
         $credencial = CredencialSunat::updateOrCreate(
@@ -150,7 +153,7 @@ class CredencialesSunatController extends Controller
             $diasRestantes = (int) (($fin - time()) / 86400);
 
             if ($diasRestantes <= 0) {
-                throw new \RuntimeException("Certificado VENCIDO hace " . abs($diasRestantes) . " días");
+                throw new \RuntimeException('Certificado VENCIDO hace '.abs($diasRestantes).' días');
             }
 
             // Probar firma SHA-1
@@ -190,7 +193,7 @@ class CredencialesSunatController extends Controller
                 'ultima_validacion_error' => $e->getMessage(),
             ]);
 
-            return $this->errorResponse('Validación fallida: ' . $e->getMessage(), 422);
+            return $this->errorResponse('Validación fallida: '.$e->getMessage(), 422);
         }
     }
 
@@ -268,6 +271,7 @@ class CredencialesSunatController extends Controller
         if ($longitud <= 4) {
             return str_repeat('*', $longitud);
         }
-        return substr($valor, 0, 2) . str_repeat('*', $longitud - 4) . substr($valor, -2);
+
+        return substr($valor, 0, 2).str_repeat('*', $longitud - 4).substr($valor, -2);
     }
 }

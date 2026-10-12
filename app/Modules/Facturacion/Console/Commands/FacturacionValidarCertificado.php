@@ -4,7 +4,6 @@ namespace App\Modules\Facturacion\Console\Commands;
 
 use App\Modules\Facturacion\Models\CredencialSunat;
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 
 /**
@@ -36,6 +35,7 @@ class FacturacionValidarCertificado extends Command
 
         if ($credenciales->isEmpty()) {
             $this->warn('No hay credenciales con certificado para validar.');
+
             return Command::SUCCESS;
         }
 
@@ -79,13 +79,14 @@ class FacturacionValidarCertificado extends Command
                 $venceEn = $fin - $ahora;
                 $diasRestantes = (int) ($venceEn / 86400);
 
-                $this->line("   Válido desde: " . date('d/m/Y', $inicio));
-                $this->line("   Vence el: " . date('d/m/Y', $fin));
+                $this->line('   Válido desde: '.date('d/m/Y', $inicio));
+                $this->line('   Vence el: '.date('d/m/Y', $fin));
                 $this->line("   Días restantes: {$diasRestantes}");
 
                 if ($diasRestantes <= 0) {
-                    $this->error("   ❌ CERTIFICADO VENCIDO");
+                    $this->error('   ❌ CERTIFICADO VENCIDO');
                     $invalidos++;
+
                     continue;
                 }
 
@@ -94,8 +95,11 @@ class FacturacionValidarCertificado extends Command
                     $porVencer++;
                 }
 
-                // 4. Verificar que la clave privada coincide
-                $keyDetails = openssl_pkey_get_details($pkey);
+                // 4. Verificar que la clave privada coincide. openssl_pkcs12_read()
+                // devuelve la llave como string PEM; openssl_pkey_get_details()
+                // necesita el objeto, no el string — hay que resolverlo primero.
+                $llave = openssl_pkey_get_private($pkey);
+                $keyDetails = $llave ? openssl_pkey_get_details($llave) : false;
                 if (! $keyDetails) {
                     throw new \RuntimeException('No se pudo obtener detalles de la clave privada');
                 }
@@ -115,7 +119,7 @@ class FacturacionValidarCertificado extends Command
                     throw new \RuntimeException('La firma generada no se puede verificar');
                 }
 
-                $this->line("   ✅ Certificado válido y firmando correctamente (SHA-1)");
+                $this->line('   ✅ Certificado válido y firmando correctamente (SHA-1)');
 
                 // Actualizar timestamp de validación
                 $credencial->update([

@@ -78,7 +78,11 @@ class CredencialSunat extends Model
      */
     public function diasParaVencer(): ?int
     {
-        return $this->certificado_vence_en?->diffInDays(now())->inclusivedays * ($this->certificado_vence_en->isPast() ? -1 : 1);
+        if ($this->certificado_vence_en === null) {
+            return null;
+        }
+
+        return $this->certificado_vence_en->diffInDays(now())->inclusivedays * ($this->certificado_vence_en->isPast() ? -1 : 1);
     }
 
     public function estaVencido(): bool

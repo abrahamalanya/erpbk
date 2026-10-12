@@ -38,6 +38,17 @@ return [
             'report' => false,
         ],
 
+        // Certificados digitales de facturación electrónica (credenciales_sunat):
+        // nunca deben ser accesibles por URL ni mezclarse con otros archivos
+        // privados, así que tienen su propia raíz. Ver CredencialSunat.
+        'privado' => [
+            'driver' => 'local',
+            'root' => storage_path('app/privado'),
+            'serve' => false,
+            'throw' => false,
+            'report' => false,
+        ],
+
         'public' => [
             'driver' => 'local',
             'root' => storage_path('app/public'),

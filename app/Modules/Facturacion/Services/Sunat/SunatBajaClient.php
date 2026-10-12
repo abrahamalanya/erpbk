@@ -4,37 +4,33 @@ namespace App\Modules\Facturacion\Services\Sunat;
 
 use App\Modules\Facturacion\Models\Comprobante;
 use App\Modules\Facturacion\Models\CredencialSunat;
-use Greenter\Ws\Services\SunatEndpoints;
-use Greenter\Ws\Services\SunatSendService;
-use Greenter\Report\Report;
-use DomainException;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Cliente para comunicación de baja (anulación) y notas de crédito.
+ * Cliente para comunicación de baja (anulación) de un comprobante ya
+ * aceptado por SUNAT.
  *
- * Extiende la funcionalidad de SunatSoapClient para operaciones
- * que usan sendSummary (baja, resumen diario).
+ * PENDIENTE: esta clase apuntaba a `Greenter\Ws\Services\SunatSendService` y
+ * `Greenter\Ws\SummaryResponse`, ninguna de las dos existe en los paquetes
+ * instalados (verificado: `grep -rn "class SunatSendService\|class
+ * SummaryResponse" vendor/greenter` no encuentra nada) — fatalaba al cargar
+ * la clase. La comunicación de baja es, igual que el resumen diario
+ * (ver SunatSoapClient::enviarResumenDiario()), un `SummarySender::send()`
+ * con el XML "Comunicación de Baja" construido con
+ * `Greenter\Xml\Builder\VoidedBuilder`/un modelo `Summary` marcado como baja
+ * — ese paso de construcción del XML nunca se implementó. Hasta que se
+ * resuelva, ambos métodos devuelven error explícito en vez de fatalar o
+ * fingir éxito.
  */
 final class SunatBajaClient
 {
-    private readonly SunatSendService $service;
-
     public function __construct(
         private readonly CredencialSunat $credencial,
         private readonly string $modo,
-    ) {
-        $this->service = new SunatSendService();
-        $this->service->setEndpoints(
-            $modo === 'produccion' ? SunatEndpoints::FE_PRODUCCION : SunatEndpoints::FE_BETA
-        );
-    }
+    ) {}
 
     /**
      * Comunica la baja de un comprobante ya aceptado.
-     *
-     * Usa sendSummary con tipo de documento = baja (según catálogo 01).
-     * Requiere que el comprobante esté en estado Aceptado u Observado.
      *
      * @return array{
      *     exito: bool,
@@ -47,72 +43,19 @@ final class SunatBajaClient
      */
     public function comunicarBaja(Comprobante $comprobante, string $motivo): array
     {
-        try {
-            $this->configurarCredenciales();
+        Log::warning('Comunicación de baja solicitada, pero no está implementada', [
+            'comprobante' => $comprobante->numero,
+            'empresa' => $this->credencial->empresa_id,
+        ]);
 
-            // Validaciones previas
-            if (! in_array($comprobante->estado->value, ['aceptado', 'observado'], true)) {
-                return [
-                    'exito' => false,
-                    'ticket' => null,
-                    'cdr_codigo' => null,
-                    'cdr_descripcion' => 'Solo se puede comunicar baja de comprobantes aceptados u observados',
-                    'cdr_xml' => null,
-                    'error' => 'Estado inválido para baja',
-                ];
-            }
-
-            // Generar ZIP con la comunicación de baja
-            $zipPath = $this->generarZipBaja($comprobante, $motivo);
-
-            // Enviar como resumen diario con un solo item (baja)
-            $report = new Report();
-            $report->setCompany($this->credencial->empresa->ruc);
-
-            // Para comunicación de baja, el tipo es el mismo del comprobante
-            // pero se marca como 'void' en el reporte
-            $report->addItem([
-                'type' => $comprobante->tipo_documento, // 01, 03
-                'serie' => $comprobante->serie,
-                'correlative' => (string) $comprobante->correlativo,
-                'date' => $comprobante->fecha_emision->format('Y-m-d'),
-                'currency' => $comprobante->moneda,
-                'total' => (string) $comprobante->total,
-                'customer' => [
-                    'type' => $this->tipoDocReceptor($comprobante),
-                    'num' => $comprobante->receptor_numero_documento,
-                ],
-                'void' => true, // Marca como comunicación de baja
-                'void_description' => $motivo,
-            ]);
-
-            $filename = 'RA-BAJA-'.$comprobante->fecha_emision->format('Ymd').'-'.$comprobante->serie.$comprobante->correlativo;
-
-            $response = $this->service->sendSummary(
-                ruc: $this->credencial->empresa->ruc,
-                filename: $filename,
-                zipFile: $zipPath,
-                report: $report,
-            );
-
-            return $this->procesarRespuestaBaja($response, $zipPath);
-
-        } catch (\Throwable $e) {
-            Log::error('Error comunicando baja en SUNAT', [
-                'comprobante' => $comprobante->numero,
-                'empresa' => $this->credencial->empresa_id,
-                'error' => $e->getMessage(),
-            ]);
-
-            return [
-                'exito' => false,
-                'ticket' => null,
-                'cdr_codigo' => null,
-                'cdr_descripcion' => null,
-                'cdr_xml' => null,
-                'error' => $e->getMessage(),
-            ];
-        }
+        return [
+            'exito' => false,
+            'ticket' => null,
+            'cdr_codigo' => null,
+            'cdr_descripcion' => null,
+            'cdr_xml' => null,
+            'error' => 'Comunicación de baja no implementada: falta construir el XML de baja (VoidedBuilder). Ver SunatBajaClient.',
+        ];
     }
 
     /**
@@ -120,85 +63,15 @@ final class SunatBajaClient
      */
     public function consultarCdrResumen(string $ticket): array
     {
-        try {
-            $this->configurarCredenciales();
-
-            $response = $this->service->getStatusCdr(
-                ruc: $this->credencial->empresa->ruc,
-                ticket: $ticket,
-            );
-
-            $exito = $response->isSuccess();
-            $cdr = $response->getCdrResponse();
-
-            return [
-                'exito' => $exito,
-                'cdr_codigo' => $cdr?->getCode() ?? ($exito ? '0' : null),
-                'cdr_descripcion' => $cdr?->getDescription() ?? ($exito ? 'Aceptado' : 'Error'),
-                'cdr_xml' => $cdr?->getXml() ?? null,
-                'cdr_digests' => $cdr?->getDigest() ? ['value' => $cdr->getDigest()] : null,
-                'error' => $exito ? null : ($cdr?->getDescription() ?? 'Error consultando CDR'),
-            ];
-
-        } catch (\Throwable $e) {
-            Log::error('Error consultando CDR resumen/baja', [
-                'ticket' => $ticket,
-                'error' => $e->getMessage(),
-            ]);
-
-            return [
-                'exito' => false,
-                'cdr_codigo' => null,
-                'cdr_descripcion' => null,
-                'cdr_xml' => null,
-                'cdr_digests' => null,
-                'error' => $e->getMessage(),
-            ];
-        }
-    }
-
-    private function configurarCredenciales(): void
-    {
-        $this->service->setCertificate(
-            file_get_contents(\Illuminate\Support\Facades\Storage::disk('privado')->path($this->credencial->certificado_path)),
-            $this->credencial->certificado_password
-        );
-        $this->service->setClaveSOL(
-            $this->credencial->usuario_sol,
-            $this->credencial->clave_sol
-        );
-    }
-
-    private function tipoDocReceptor(Comprobante $comprobante): string
-    {
-        return match ($comprobante->receptor_tipo_documento) {
-            'dni' => '1',
-            'ruc' => '6',
-            'ce' => '4',
-            'pasaporte' => '7',
-            default => '0',
-        };
-    }
-
-    private function generarZipBaja(Comprobante $comprobante, string $motivo): string
-    {
-        // El ZIP real se genera internamente en Greenter al llamar sendSummary
-        // Solo necesitamos un placeholder
-        return sys_get_temp_dir().'/baja-'.$comprobante->numero.'.zip';
-    }
-
-    private function procesarRespuestaBaja(\Greenter\Ws\SummaryResponse $response, string $zipPath): array
-    {
-        $exito = $response->isSuccess();
-        $cdr = $response->getCdrResponse();
+        Log::warning('Consulta de CDR de baja/resumen solicitada, pero no está implementada', ['ticket' => $ticket]);
 
         return [
-            'exito' => $exito,
-            'ticket' => $response->getTicket() ?? null,
-            'cdr_codigo' => $cdr?->getCode() ?? ($exito ? '0' : null),
-            'cdr_descripcion' => $cdr?->getDescription() ?? ($exito ? 'Baja comunicada' : 'Error'),
-            'cdr_xml' => $cdr?->getXml() ?? null,
-            'error' => $exito ? null : ($cdr?->getDescription() ?? 'Error comunicando baja'),
+            'exito' => false,
+            'cdr_codigo' => null,
+            'cdr_descripcion' => null,
+            'cdr_xml' => null,
+            'cdr_digests' => null,
+            'error' => 'Consulta de CDR de baja/resumen no implementada: greenter/ws no expone esa operación por ticket. Ver SunatSoapClient::consultarResumenDiario().',
         ];
     }
 }
