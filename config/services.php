@@ -39,4 +39,9 @@ return [
         'token' => env('CONSULTASPERU_TOKEN'),
     ],
 
+    // Trazado por calles de la ruta de cobranza (TrazadoRutaService).
+    'openrouteservice' => [
+        'key' => env('OPENROUTESERVICE_KEY'),
+    ],
+
 ];

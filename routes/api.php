@@ -332,6 +332,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::get('rutas-cobranza/asesores', [RutaCobranzaController::class, 'asesores'])->name('rutas-cobranza.asesores');
     Route::get('rutas-cobranza', [RutaCobranzaController::class, 'show'])->name('rutas-cobranza.show');
+    Route::get('rutas-cobranza/trazado', [RutaCobranzaController::class, 'trazado'])->name('rutas-cobranza.trazado');
     Route::post('rutas-cobranza/reordenar', [RutaCobranzaController::class, 'reordenar'])->name('rutas-cobranza.reordenar');
     Route::post('rutas-cobranza/clientes/{cliente}/clonar', [RutaCobranzaController::class, 'clonar'])->name('rutas-cobranza.clonar');
     Route::delete('rutas-cobranza/clientes/{cliente}', [RutaCobranzaController::class, 'quitar'])->name('rutas-cobranza.quitar');

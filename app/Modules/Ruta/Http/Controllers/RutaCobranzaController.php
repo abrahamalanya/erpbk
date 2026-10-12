@@ -9,6 +9,7 @@ use App\Modules\Ruta\Http\Requests\MostrarRutaCobranzaRequest;
 use App\Modules\Ruta\Http\Requests\QuitarClienteRutaCobranzaRequest;
 use App\Modules\Ruta\Http\Requests\ReordenarRutaCobranzaRequest;
 use App\Modules\Ruta\Services\RutaCobranzaService;
+use App\Modules\Ruta\Services\TrazadoRutaService;
 use App\Modules\Usuario\Models\User;
 use App\Nucleo\Http\Controllers\Controller;
 use App\Nucleo\Traits\ApiResponse;
@@ -38,6 +39,25 @@ class RutaCobranzaController extends Controller
         $asesor = $this->resolverAsesor();
 
         return $this->successResponse($this->rutaCobranzaService->rutaDe($asesor, $request->validated('tipo_credito'), $request->user()));
+    }
+
+    /**
+     * Recorrido por las calles que une las paradas de la ruta (las que tienen
+     * coordenadas) en su orden de visita, para dibujarlo en el mapa. Mismos
+     * filtros y alcance que show(); va aparte para que reordenar la lista no
+     * espere al servicio de rutas.
+     */
+    public function trazado(MostrarRutaCobranzaRequest $request, TrazadoRutaService $trazadoRuta): JsonResponse
+    {
+        Gate::authorize('viewAny', Credito::class);
+
+        $paradas = $this->rutaCobranzaService->rutaDe($this->resolverAsesor(), $request->validated('tipo_credito'), $request->user())
+            ->filter(fn (array $parada): bool => $parada['latitud'] !== null && $parada['longitud'] !== null)
+            ->map(fn (array $parada): array => [$parada['latitud'], $parada['longitud']])
+            ->values()
+            ->all();
+
+        return $this->successResponse($trazadoRuta->trazar($paradas));
     }
 
     /**
