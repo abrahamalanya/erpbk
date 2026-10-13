@@ -3,13 +3,15 @@
 namespace App\Modules\Sistemas\Http\Controllers;
 
 use App\Modules\Sistemas\Http\Requests\LoginRequest;
-use App\Modules\Sistemas\Services\ModuloService;
-use App\Modules\Sistemas\Services\PermisoTemporalService;
+use App\Modules\Sistemas\Services\UserPresenterService;
+use App\Modules\Usuario\Models\Impersonacion;
 use App\Modules\Usuario\Models\User;
+use App\Modules\Usuario\Services\ImpersonacionService;
 use App\Nucleo\Http\Controllers\Controller;
 use App\Nucleo\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Hash;
 
 class AuthController extends Controller
@@ -17,8 +19,8 @@ class AuthController extends Controller
     use ApiResponse;
 
     public function __construct(
-        private readonly ModuloService $modulos,
-        private readonly PermisoTemporalService $permisosTemporales,
+        private readonly UserPresenterService $presenter,
+        private readonly ImpersonacionService $impersonaciones,
     ) {}
 
     public function login(LoginRequest $request): JsonResponse
@@ -38,7 +40,7 @@ class AuthController extends Controller
         $token = $user->createToken('erp-token')->plainTextToken;
 
         return $this->successResponse([
-            'user' => $this->withPermissions($user),
+            'user' => $this->presenter->decorar($user),
             'access_token' => $token,
             'token_type' => 'Bearer',
         ], 'Login exitoso');
@@ -46,39 +48,50 @@ class AuthController extends Controller
 
     public function logout(Request $request): JsonResponse
     {
-        $request->user()->currentAccessToken()->delete();
+        $token = $request->user()->currentAccessToken();
+        $impersonacion = $this->impersonaciones->activaParaToken($token->id ?? null);
+
+        if ($impersonacion !== null) {
+            // El admin salió por "logout" en vez de "volver a mi cuenta": de
+            // todas formas hay que cerrar la bitácora con finalizado_at, o
+            // quedaría una fila "activa" para siempre.
+            $this->impersonaciones->finalizar($impersonacion);
+        } else {
+            $token->delete();
+        }
 
         return $this->successResponse(null, 'Logout exitoso');
     }
 
     public function me(Request $request): JsonResponse
     {
-        return $this->successResponse($this->withPermissions($request->user()));
+        $user = $this->presenter->decorar($request->user());
+        $impersonacion = $this->impersonaciones->activaParaToken($request->user()->currentAccessToken()->id ?? null);
+
+        $user->setAttribute('impersonacion', $this->describirImpersonacion($impersonacion));
+
+        return $this->successResponse($user);
     }
 
     /**
-     * Attaches the user's effective permission names (via their roles) to
-     * the response, so the frontend can gate UI by permission instead of
-     * hardcoding role names.
-     *
-     * Named "permission_names" (not "permissions") because Spatie's
-     * HasRoles trait already defines a "permissions" relationship (direct,
-     * non-role permissions) on User — reusing that key would silently be
-     * shadowed by the (empty, in this app) relation during serialization.
-     *
-     * Also attaches "modulos_efectivos": the user's *resolved* módulos
-     * (their own override, or else their role's default — see
-     * ModuloService::modulosEfectivos()) so the frontend can gate nav items
-     * without knowing about role defaults itself. Distinct from the
-     * "modulos" column already on $user, which is only the raw override.
+     * @return array{activa: true, actor_real: array{id: int, nombre: string, apellido: string}, desde: Carbon}|null
      */
-    private function withPermissions(User $user): User
+    private function describirImpersonacion(?Impersonacion $impersonacion): ?array
     {
-        $user->load(['roles', 'empresa']);
-        $user->setAttribute('permission_names', $user->getAllPermissions()->pluck('name')->values());
-        $user->setAttribute('modulos_efectivos', $this->modulos->modulosEfectivos($user));
-        $user->setAttribute('permisos_temporales_clientes', $this->permisosTemporales->activasParaUsuario($user));
+        if ($impersonacion === null) {
+            return null;
+        }
 
-        return $user;
+        $actor = $impersonacion->iniciadoPor;
+
+        return [
+            'activa' => true,
+            'actor_real' => [
+                'id' => $actor->id,
+                'nombre' => $actor->nombre,
+                'apellido' => $actor->apellido,
+            ],
+            'desde' => $impersonacion->created_at,
+        ];
     }
 }

@@ -52,6 +52,7 @@ use App\Modules\Tienda\Http\Controllers\TiendaProductoController;
 use App\Modules\Ubicacion\Http\Controllers\UbicacionAsesorController;
 use App\Modules\Ubigeo\Http\Controllers\UbigeoController;
 use App\Modules\Usuario\Http\Controllers\FotocheckController;
+use App\Modules\Usuario\Http\Controllers\ImpersonacionController;
 use App\Modules\Usuario\Http\Controllers\UserController;
 use App\Modules\Usuario\Http\Controllers\UsuarioModuloController;
 use App\Modules\Venta\Http\Controllers\CatalogoVentaController;
@@ -90,6 +91,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('usuarios/roles-asignables', [UserController::class, 'rolesAsignables'])->name('usuarios.roles-asignables');
     Route::get('usuarios/{user}/modulos', [UsuarioModuloController::class, 'show'])->name('usuarios.modulos.show');
     Route::put('usuarios/{user}/modulos', [UsuarioModuloController::class, 'update'])->name('usuarios.modulos.update');
+    Route::post('usuarios/{user}/impersonar', [ImpersonacionController::class, 'iniciar'])->name('usuarios.impersonar');
+    Route::post('impersonaciones/finalizar', [ImpersonacionController::class, 'finalizar'])->name('impersonaciones.finalizar');
     Route::apiResource('usuarios', UserController::class)->parameters(['usuarios' => 'user']);
     Route::post('usuarios/fotocheck/pdf', [FotocheckController::class, 'pdf'])->name('usuarios.fotocheck.pdf');
     Route::apiResource('roles', RoleController::class)->only(['index', 'show', 'update']);

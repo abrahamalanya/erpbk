@@ -58,4 +58,20 @@ class UserPolicy
             && $this->hierarchy->canManage($user, $target)
             && $user->id !== $target->id;
     }
+
+    /**
+     * "Ingresar como". El rol del target debe estar dentro del techo
+     * estructural que el actor puede asignar (excluye estructuralmente
+     * impersonar a otro `administrador_general` o a `sistemas`). Las
+     * invariantes de negocio (auto-impersonación, target inactivo,
+     * anti-anidamiento, etc.) viven en ImpersonacionService — antes()
+     * bypassa esta ability para `sistemas`, así que esta Policy sola no
+     * basta para cubrirlas.
+     */
+    public function impersonar(User $user, User $target): bool
+    {
+        return $user->can('usuarios.impersonar')
+            && array_intersect($target->getRoleNames()->all(), $this->hierarchy->assignableRoles($user)) !== []
+            && $this->hierarchy->canManage($user, $target);
+    }
 }
