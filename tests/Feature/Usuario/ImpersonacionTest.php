@@ -111,7 +111,7 @@ it('blocks impersonating an inactive user', function () {
     $this->postJson("/api/usuarios/{$target->id}/impersonar")->assertStatus(422);
 });
 
-it('blocks starting a second impersonation while already impersonating (anti-nesting)', function () {
+it('supersedes (auto-closes) a previous impersonation left open by the same actor', function () {
     $sistemas = User::factory()->forEmpresa($this->empresaA)->create();
     $sistemas->assignRole('sistemas');
     Sanctum::actingAs($sistemas, ['*']);
@@ -121,21 +121,29 @@ it('blocks starting a second impersonation while already impersonating (anti-nes
     $target2 = User::factory()->forEmpresa($this->empresaA)->create();
     $target2->assignRole('asesor');
 
-    $this->postJson("/api/usuarios/{$target1->id}/impersonar")->assertSuccessful();
+    $first = $this->postJson("/api/usuarios/{$target1->id}/impersonar")->assertSuccessful();
+    $firstImpersonacionId = $first->json('data.impersonacion.id');
 
     // Sigue autenticado con el token ORIGINAL del sistemas (Sanctum::actingAs
-    // no cambia), que es justo el caso que la regla anti-anidamiento cubre.
-    $this->postJson("/api/usuarios/{$target2->id}/impersonar")->assertStatus(422);
+    // no cambia) — exactamente el caso real: el admin abandonó la primera
+    // sesión (app cerrada a la fuerza, nunca llamó a finalizar) y ahora
+    // intenta impersonar a otra persona. Ya no debe bloquearse con 422: la
+    // primera se cierra sola, nunca queda irrecuperable.
+    $this->postJson("/api/usuarios/{$target2->id}/impersonar")->assertSuccessful();
+
+    $this->assertDatabaseHas('impersonaciones', ['id' => $firstImpersonacionId, 'impersonado_id' => $target1->id]);
+    expect(Impersonacion::find($firstImpersonacionId)->finalizado_at)->not->toBeNull();
+    $this->assertDatabaseHas('impersonaciones', ['impersonado_id' => $target2->id, 'finalizado_at' => null]);
 });
 
-it('blocks impersonating a target that is already being impersonated by someone else', function () {
+it('supersedes (auto-closes) a target already being impersonated by someone else', function () {
     $sistemas = User::factory()->forEmpresa($this->empresaA)->create();
     $sistemas->assignRole('sistemas');
 
     $target = User::factory()->forEmpresa($this->empresaA)->create();
     $target->assignRole('asesor');
 
-    Impersonacion::factory()->create([
+    $previa = Impersonacion::factory()->create([
         'empresa_id' => $target->empresa_id,
         'iniciado_por' => User::factory()->forEmpresa($this->empresaA)->create()->id,
         'impersonado_id' => $target->id,
@@ -144,7 +152,10 @@ it('blocks impersonating a target that is already being impersonated by someone 
 
     Sanctum::actingAs($sistemas, ['*']);
 
-    $this->postJson("/api/usuarios/{$target->id}/impersonar")->assertStatus(422);
+    $this->postJson("/api/usuarios/{$target->id}/impersonar")->assertSuccessful();
+
+    expect($previa->fresh()->finalizado_at)->not->toBeNull();
+    $this->assertDatabaseHas('impersonaciones', ['impersonado_id' => $target->id, 'iniciado_por' => $sistemas->id, 'finalizado_at' => null]);
 });
 
 it('denies a role without usuarios.impersonar from impersonating', function () {

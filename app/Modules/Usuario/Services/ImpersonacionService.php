@@ -17,10 +17,10 @@ use Laravel\Sanctum\PersonalAccessToken;
 final class ImpersonacionService
 {
     /**
-     * Invariantes de NEGOCIO, independientes del rol del actor. Corren
-     * siempre — incluido cuando el actor es `sistemas`, a quien
-     * UserPolicy::before() le da bypass total de autorización, así que estas
-     * reglas son las únicas que le aplican a ese rol.
+     * Invariantes de NEGOCIO que SÍ bloquean, independientes del rol del
+     * actor. Corren siempre — incluido cuando el actor es `sistemas`, a
+     * quien UserPolicy::before() le da bypass total de autorización, así
+     * que estas reglas son las únicas que le aplican a ese rol.
      */
     public function autorizar(User $actor, User $target): void
     {
@@ -35,13 +35,32 @@ final class ImpersonacionService
         if ($target->estado !== 'activo') {
             throw new DomainException('No se puede ingresar como un usuario inactivo.');
         }
+    }
 
-        if ($this->activaParaActor($actor) !== null) {
-            throw new DomainException('Ya estás ingresando como otro usuario. Vuelve a tu cuenta antes de iniciar otra sesión.');
+    /**
+     * Cierra cualquier impersonación previa que choque con la que está por
+     * empezar (el actor ya tenía una abierta, o el target ya estaba siendo
+     * impersonado por otra sesión) en vez de bloquear con 422.
+     *
+     * Antes esto lanzaba DomainException, pero una impersonación "colgada"
+     * (app cerrada a la fuerza a mitad de sesión, sin pasar por
+     * finalizar()/logout()) dejaba al admin trabado para siempre sin ninguna
+     * forma de recuperarse — el token de esa sesión vieja ya no existe en
+     * ningún dispositivo suyo. Cerrar la vieja aquí es seguro: esta llamada
+     * solo se alcanza con el token REAL y vigente del actor (nunca con el
+     * token de una impersonación — ver UserPolicy::impersonar(), que ya
+     * exige el permiso `usuarios.impersonar`, algo que un usuario
+     * impersonado de rol inferior nunca tiene), así que no es una vía para
+     * escalar privilegios, solo limpieza de estado abandonado.
+     */
+    private function supersedirConflictos(User $actor, User $target): void
+    {
+        if ($previa = $this->activaParaActor($actor)) {
+            $this->finalizar($previa, 'Cerrada automáticamente: el actor inició una nueva impersonación.');
         }
 
-        if ($this->activaParaTarget($target) !== null) {
-            throw new DomainException('Este usuario ya está siendo impersonado en otra sesión.');
+        if ($previa = $this->activaParaTarget($target)) {
+            $this->finalizar($previa, 'Cerrada automáticamente: otro admin empezó a impersonar a este mismo usuario.');
         }
     }
 
@@ -51,6 +70,7 @@ final class ImpersonacionService
     public function iniciar(User $actor, User $target, ?string $motivo, string $ip, string $userAgent): array
     {
         $this->autorizar($actor, $target);
+        $this->supersedirConflictos($actor, $target);
 
         $token = $target->createToken("impersonacion:{$target->id}");
 
@@ -74,9 +94,14 @@ final class ImpersonacionService
         ];
     }
 
-    public function finalizar(Impersonacion $impersonacion): void
+    public function finalizar(Impersonacion $impersonacion, ?string $notaAutomatica = null): void
     {
-        $impersonacion->update(['finalizado_at' => now()]);
+        $impersonacion->update([
+            'finalizado_at' => now(),
+            'motivo' => $notaAutomatica !== null
+                ? trim(($impersonacion->motivo !== null ? $impersonacion->motivo.' — ' : '').$notaAutomatica)
+                : $impersonacion->motivo,
+        ]);
 
         PersonalAccessToken::find($impersonacion->token_id)?->delete();
     }

@@ -148,6 +148,19 @@ it('filters créditos by fecha_vencimiento range', function () {
         ->and(Carbon::parse($response->json('data.data.0.fecha_vencimiento'))->toDateString())->toBe(now()->addDays(5)->toDateString());
 });
 
+it('filters créditos by fecha_solicitud range (created_at del propio crédito)', function () {
+    $bien = Bien::factory()->paraCliente($this->cliente1)->create();
+    Credito::factory()->paraBien($bien)->activo()->create(['created_at' => now()->subDays(10)]);
+    Credito::factory()->paraBien($bien)->activo()->create(['created_at' => now()]);
+
+    $response = $this->getJson(
+        '/api/creditos-prendarios?fecha_solicitud_desde='.now()->subDays(1)->toDateString()
+    )->assertSuccessful();
+
+    expect($response->json('data.data'))->toHaveCount(1)
+        ->and(Carbon::parse($response->json('data.data.0.created_at'))->toDateString())->toBe(now()->toDateString());
+});
+
 it('filters créditos by fecha_cancelacion range usando el cobro de liquidación', function () {
     $bien1 = Bien::factory()->paraCliente($this->cliente1)->create();
     $bien2 = Bien::factory()->paraCliente($this->cliente2)->create();

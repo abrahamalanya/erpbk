@@ -51,6 +51,17 @@ it('filters clientes by agencia_id', function () {
         ->and($response->json('data.data.0.agencia_id'))->toBe($this->agencia2->id);
 });
 
+it('filters clientes by asesor_id', function () {
+    $asesor = User::factory()->forAgencia($this->agencia1)->create();
+    Cliente::factory()->asignadoA($asesor)->create();
+    Cliente::factory()->forAgencia($this->agencia1)->create();
+
+    $response = $this->getJson("/api/clientes?asesor_id={$asesor->id}")->assertSuccessful();
+
+    expect($response->json('data.data'))->toHaveCount(1)
+        ->and($response->json('data.data.0.asesor_id'))->toBe($asesor->id);
+});
+
 it('combines q with the estado filter', function () {
     Cliente::factory()->forAgencia($this->agencia1)->create(['nombre' => 'Carmen', 'estado' => 'activo']);
     Cliente::factory()->forAgencia($this->agencia1)->create(['nombre' => 'Carmen', 'estado' => 'inactivo']);

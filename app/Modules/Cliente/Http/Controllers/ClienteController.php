@@ -153,6 +153,10 @@ class ClienteController extends Controller
             $query->where('agencia_id', request()->integer('agencia_id'));
         }
 
+        if (request()->filled('asesor_id')) {
+            $query->where('asesor_id', request()->integer('asesor_id'));
+        }
+
         $porPagina = max(1, min(request()->integer('per_page', 50), 100));
 
         return $this->successResponse($query->paginate($porPagina));

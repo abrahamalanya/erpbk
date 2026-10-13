@@ -151,6 +151,14 @@ class CreditoController extends Controller
             $query->whereDate('fecha_vencimiento', '<=', request()->string('fecha_vencimiento_hasta'));
         }
 
+        if (request()->filled('fecha_solicitud_desde')) {
+            $query->whereDate('created_at', '>=', request()->string('fecha_solicitud_desde'));
+        }
+
+        if (request()->filled('fecha_solicitud_hasta')) {
+            $query->whereDate('created_at', '<=', request()->string('fecha_solicitud_hasta'));
+        }
+
         if (request()->filled('fecha_cancelacion_desde')) {
             $desde = request()->string('fecha_cancelacion_desde');
             $query->whereHas('cobros', fn ($q) => $q->where('operacion', 'liquidacion')->where('estado', 'registrado')->whereDate('created_at', '>=', $desde));
