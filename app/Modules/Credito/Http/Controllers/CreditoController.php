@@ -22,6 +22,7 @@ use App\Modules\Credito\Http\Requests\StoreCreditoRequest;
 use App\Modules\Credito\Http\Requests\SubirDocumentoFirmadoRequest;
 use App\Modules\Credito\Http\Requests\VenderCreditoRequest;
 use App\Modules\Credito\Models\Credito;
+use App\Modules\Credito\Models\CuotaCredito;
 use App\Modules\Credito\Models\DocumentoCredito;
 use App\Modules\Credito\Services\ConfiguracionCreditoService;
 use App\Modules\Credito\Services\CreditoHierarchyService;
@@ -109,7 +110,7 @@ class CreditoController extends Controller
     {
         Gate::authorize('viewAny', Credito::class);
 
-        $query = Credito::query()->with(['bienes', 'vehiculos', 'inmuebles', 'cliente', 'registradoPor', 'agencia']);
+        $query = Credito::query()->with(['bienes', 'vehiculos', 'inmuebles', 'cliente.asesor', 'registradoPor', 'agencia']);
         $query = $this->hierarchy->visibleQuery($query, request()->user());
 
         if (request()->filled('tipo_credito')) {
@@ -125,11 +126,71 @@ class CreditoController extends Controller
             $query->whereIn('estado', array_map(strval(...), $estados));
         }
 
+        if (request()->filled('agencia_id')) {
+            $query->where('agencia_id', request()->integer('agencia_id'));
+        }
+
+        if (request()->filled('asesor_id')) {
+            $asesorId = request()->integer('asesor_id');
+            $query->whereHas('cliente', fn ($q) => $q->where('asesor_id', $asesorId));
+        }
+
+        if (request()->filled('fecha_desembolso_desde')) {
+            $query->whereDate('fecha_desembolso', '>=', request()->string('fecha_desembolso_desde'));
+        }
+
+        if (request()->filled('fecha_desembolso_hasta')) {
+            $query->whereDate('fecha_desembolso', '<=', request()->string('fecha_desembolso_hasta'));
+        }
+
+        if (request()->filled('fecha_vencimiento_desde')) {
+            $query->whereDate('fecha_vencimiento', '>=', request()->string('fecha_vencimiento_desde'));
+        }
+
+        if (request()->filled('fecha_vencimiento_hasta')) {
+            $query->whereDate('fecha_vencimiento', '<=', request()->string('fecha_vencimiento_hasta'));
+        }
+
+        if (request()->filled('fecha_cancelacion_desde')) {
+            $desde = request()->string('fecha_cancelacion_desde');
+            $query->whereHas('cobros', fn ($q) => $q->where('operacion', 'liquidacion')->where('estado', 'registrado')->whereDate('created_at', '>=', $desde));
+        }
+
+        if (request()->filled('fecha_cancelacion_hasta')) {
+            $hasta = request()->string('fecha_cancelacion_hasta');
+            $query->whereHas('cobros', fn ($q) => $q->where('operacion', 'liquidacion')->where('estado', 'registrado')->whereDate('created_at', '<=', $hasta));
+        }
+
+        $query->with([
+            'cuotas',
+            'cobros' => fn ($q) => $q->where('operacion', 'liquidacion')->where('estado', 'registrado')->latest('created_at'),
+        ]);
+
         $creditos = $query->latest()->paginate(15);
-        $creditos->getCollection()->each(function (Credito $credito): void {
+
+        $hoy = now()->startOfDay();
+        $creditos->getCollection()->each(function (Credito $credito) use ($hoy): void {
             if ($credito->estado === 'vencido') {
                 $credito->setAttribute('puede_enviar_tienda', $this->creditoService->superaEsperaMora($credito));
             }
+
+            $cuotasAtrasadas = $credito->cuotas
+                ->filter(fn (CuotaCredito $cuota): bool => $cuota->pagada_at === null && $cuota->fecha_vencimiento->lt($hoy))
+                ->sortBy(fn (CuotaCredito $cuota): int => $cuota->fecha_vencimiento->getTimestamp());
+            $diasAtraso = $cuotasAtrasadas->isEmpty() ? 0 : (int) $cuotasAtrasadas->first()->fecha_vencimiento->diffInDays($hoy);
+
+            $total = (float) $credito->cuotas->sum('monto_total');
+            $abonado = (float) $credito->cuotas->sum('monto_abonado');
+
+            $fechaCancelacion = $credito->cobros->first()?->created_at?->toDateString();
+
+            $credito->setAttribute('dias_atraso', $diasAtraso);
+            $credito->setAttribute('total', $total);
+            $credito->setAttribute('saldo', max($total - $abonado, 0));
+            $credito->setAttribute('asesor', $credito->cliente?->asesor);
+            $credito->setAttribute('fecha_cancelacion', $fechaCancelacion);
+
+            $credito->unsetRelation('cuotas')->unsetRelation('cobros');
         });
 
         return $this->successResponse($creditos);
