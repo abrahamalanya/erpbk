@@ -95,12 +95,14 @@ class CobroController extends Controller
     }
 
     /**
-     * Mismos filtros que index() (q/operacion/estado/registrado_por/desde/
-     * hasta/anulado_desde/anulado_hasta) y misma jerarquía de visibilidad —
-     * lo comparten index()/pdf()/excel() para no triplicar el armado del
-     * query. anulado_desde/anulado_hasta son distintos de desde/hasta (fecha
-     * del cobro original): para el reporte de "historial de anulaciones" el
-     * rango relevante es CUÁNDO se anuló, no cuándo se registró el cobro.
+     * Mismos filtros que index() (q/operacion/estado/registrado_por/
+     * cliente_id/credito_id/desde/hasta/anulado_desde/anulado_hasta) y misma
+     * jerarquía de visibilidad — lo comparten index()/pdf()/excel() para no
+     * triplicar el armado del query. anulado_desde/anulado_hasta son
+     * distintos de desde/hasta (fecha del cobro original): para el reporte
+     * de "historial de anulaciones" el rango relevante es CUÁNDO se anuló,
+     * no cuándo se registró el cobro. credito_id permite ver el historial de
+     * abonos de un crédito puntual en vez de todos los del cliente.
      */
     private function filtrarQuery(User $actor): Builder
     {
@@ -131,6 +133,10 @@ class CobroController extends Controller
 
         if (request()->filled('cliente_id')) {
             $query->where('cliente_id', request()->integer('cliente_id'));
+        }
+
+        if (request()->filled('credito_id')) {
+            $query->where('credito_id', request()->integer('credito_id'));
         }
 
         if (request()->filled('desde')) {

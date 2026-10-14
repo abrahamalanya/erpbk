@@ -64,11 +64,18 @@ it('lists the ruta of clientes en mora, one row per cliente even with 2 crédito
     expect($response->json('data'))->toHaveCount(2);
 
     $filaA = collect($response->json('data'))->firstWhere('cliente_id', $clienteA->id);
+    $creditosPorId = collect($filaA['creditos'])->keyBy('id');
     expect($filaA['creditos_vencidos'])->toBe(2)
         ->and($filaA['numero_documento'])->toBe($clienteA->numero_documento)
-        ->and(collect($filaA['creditos'])->pluck('id')->sort()->values()->all())
+        ->and($creditosPorId->keys()->sort()->values()->all())
         ->toBe(collect([$creditoA1->id, $creditoA2->id])->sort()->values()->all())
-        ->and($filaA['creditos'][0])->toHaveKeys(['id', 'codigo', 'tipo_credito']);
+        ->and($filaA['creditos'][0])->toHaveKeys(['id', 'codigo', 'tipo_credito', 'monto', 'permite_refinanciar'])
+        ->and($creditosPorId[$creditoA1->id]['monto'])->toBe($creditoA1->monto_prestamo)
+        // Un diario nunca permite refinanciar (regla exclusiva de hipotecario).
+        ->and($filaA['creditos'][0]['permite_refinanciar'])->toBeFalse()
+        ->and($filaA)->toHaveKeys(['foto_cliente_url', 'telefono', 'direccion_negocio', 'latitud_negocio', 'longitud_negocio', 'fotos'])
+        ->and($filaA['telefono'])->toBe($clienteA->whatsapp)
+        ->and($filaA['direccion_negocio'])->toBe($clienteA->direccion_negocio);
 
     // El más atrasado (cliente B, 10 días) entra primero de los nuevos.
     expect($response->json('data.0.cliente_id'))->toBe($clienteB->id);
@@ -453,6 +460,50 @@ function prendarioEnMoraParaRuta(Empresa $empresa, Agencia $agencia, Cliente $cl
 
     return $credito;
 }
+
+/** Crédito hipotecario activo con una única cuota vencida hace $diasAtraso días. */
+function hipotecarioEnMoraParaRuta(Empresa $empresa, Agencia $agencia, Cliente $cliente, User $asesor, int $diasAtraso): Credito
+{
+    $credito = Credito::factory()->hipotecario()->create([
+        'registrado_por' => $asesor->id,
+        'empresa_id' => $empresa->id,
+        'agencia_id' => $agencia->id,
+        'cliente_id' => $cliente->id,
+        'estado' => 'activo',
+    ]);
+
+    CuotaCredito::factory()->paraCredito($credito)->create([
+        'numero_cuota' => 1,
+        'fecha_vencimiento' => now()->subDays($diasAtraso)->toDateString(),
+        'monto_capital' => 100, 'monto_interes' => 10, 'monto_total' => 110,
+    ]);
+
+    return $credito;
+}
+
+it('marks permite_refinanciar only on créditos hipotecarios without cuotas pagadas', function () {
+    $cliente = Cliente::factory()->asignadoA($this->asesor)->create();
+    $hipotecario = hipotecarioEnMoraParaRuta($this->empresa, $this->agencia, $cliente, $this->asesor, 5);
+    $prendario = prendarioEnMoraParaRuta($this->empresa, $this->agencia, $cliente, $this->asesor, 5);
+
+    // Un segundo hipotecario, pero con una cuota ya pagada: no se puede
+    // refinanciar un crédito que ya tiene abonos — mismo criterio que
+    // CreditoService::asegurarSinCuotasPagadas().
+    $hipotecarioConAbono = hipotecarioEnMoraParaRuta($this->empresa, $this->agencia, $cliente, $this->asesor, 5);
+    CuotaCredito::factory()->paraCredito($hipotecarioConAbono)->create([
+        'numero_cuota' => 2,
+        'fecha_vencimiento' => now()->subDays(2)->toDateString(),
+        'pagada_at' => now(),
+        'monto_capital' => 100, 'monto_interes' => 10, 'monto_total' => 110,
+    ]);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $creditos = collect($this->getJson('/api/rutas-cobranza')->json('data.0.creditos'))->keyBy('id');
+
+    expect($creditos[$hipotecario->id]['permite_refinanciar'])->toBeTrue()
+        ->and($creditos[$prendario->id]['permite_refinanciar'])->toBeFalse()
+        ->and($creditos[$hipotecarioConAbono->id]['permite_refinanciar'])->toBeFalse();
+});
 
 it('filters the ruta by tipo de crédito', function () {
     $clienteDiario = Cliente::factory()->asignadoA($this->asesor)->create();

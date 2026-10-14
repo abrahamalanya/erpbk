@@ -4,6 +4,7 @@ namespace App\Modules\Ruta\Services;
 
 use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Credito\Models\Credito;
+use App\Modules\Credito\Models\CuotaCredito;
 use App\Modules\Ruta\Models\RutaClienteOrden;
 use App\Modules\Usuario\Models\User;
 use DomainException;
@@ -35,7 +36,7 @@ final class RutaCobranzaService
      * tipo — la ruta se recorre por tipo (diario, prendario, hipotecario,
      * vehicular) — y los conteos y días de atraso salen solo de ellos.
      *
-     * @return Collection<int, array{cliente: Cliente, dias_atraso_max: int, creditos_vencidos: int, credito_codigos: list<string>, creditos: list<array{id: int, codigo: string, tipo_credito: string}>}>
+     * @return Collection<int, array{cliente: Cliente, dias_atraso_max: int, creditos_vencidos: int, credito_codigos: list<string>, creditos: list<array{id: int, codigo: string, tipo_credito: string, monto: string, permite_refinanciar: bool}>}>
      */
     private function clientesEnMoraDe(User $propietario, ?string $tipoCredito): Collection
     {
@@ -54,13 +55,22 @@ final class RutaCobranzaService
                 }
             })
             ->whereHas('cuotas', fn (Builder $q) => $q->pendientes()->whereDate('fecha_vencimiento', '<=', $hoy))
-            ->with(['cliente'])
+            ->with(['cliente.fotos'])
             ->get()
             ->load(['cuotas' => fn ($q) => $q->pendientes()->whereDate('fecha_vencimiento', '<=', $hoy)->orderBy('fecha_vencimiento')]);
 
+        // Un solo query para los `credito_id` con alguna cuota pagada, en vez
+        // de uno por crédito dentro del map() de abajo (N+1) — mismo criterio
+        // que CreditoService::asegurarSinCuotasPagadas().
+        $idsConCuotaPagada = CuotaCredito::query()
+            ->whereIn('credito_id', $creditos->pluck('id'))
+            ->pagadas()
+            ->distinct()
+            ->pluck('credito_id');
+
         return $creditos
             ->groupBy('cliente_id')
-            ->map(function (Collection $creditosDelCliente): array {
+            ->map(function (Collection $creditosDelCliente) use ($idsConCuotaPagada): array {
                 $diasAtraso = $creditosDelCliente->map(
                     fn (Credito $c) => (int) $c->cuotas->first()->fecha_vencimiento->diffInDays(now()->startOfDay())
                 );
@@ -74,6 +84,13 @@ final class RutaCobranzaService
                         'id' => $c->id,
                         'codigo' => $c->codigo,
                         'tipo_credito' => $c->tipo_credito,
+                        'monto' => $c->monto_prestamo,
+                        // Misma regla que CreditoService::refinanciar(): solo
+                        // hipotecario, activo/vencido (ya lo está, por el
+                        // filtro de arriba) y sin ninguna cuota pagada.
+                        'permite_refinanciar' => $c->tipo_credito === 'hipotecario'
+                            && in_array($c->estado, ['activo', 'vencido'], true)
+                            && ! $idsConCuotaPagada->contains($c->id),
                     ])->values()->all(),
                 ];
             })
@@ -149,10 +166,16 @@ final class RutaCobranzaService
                 'nombre' => $fila['cliente']->nombre,
                 'apellido' => $fila['cliente']->apellido,
                 'numero_documento' => $fila['cliente']->numero_documento,
+                'foto_cliente_url' => $fila['cliente']->foto_cliente_url,
+                'telefono' => $fila['cliente']->whatsapp,
                 'direccion' => $fila['cliente']->direccion,
                 'referencia' => $fila['cliente']->referencia,
                 'latitud' => $fila['cliente']->latitud !== null ? (float) $fila['cliente']->latitud : null,
                 'longitud' => $fila['cliente']->longitud !== null ? (float) $fila['cliente']->longitud : null,
+                'direccion_negocio' => $fila['cliente']->direccion_negocio,
+                'latitud_negocio' => $fila['cliente']->latitud_negocio !== null ? (float) $fila['cliente']->latitud_negocio : null,
+                'longitud_negocio' => $fila['cliente']->longitud_negocio !== null ? (float) $fila['cliente']->longitud_negocio : null,
+                'fotos' => $fila['cliente']->fotos,
                 'dias_atraso_max' => $fila['dias_atraso_max'],
                 'creditos_vencidos' => $fila['creditos_vencidos'],
                 'credito_codigos' => $fila['credito_codigos'],

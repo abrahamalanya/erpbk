@@ -7,6 +7,11 @@
 /opt/cpanel/ea-php82/root/usr/bin/php artisan db:seed --class=PermissionSeeder
 ```
 
+```bash
+php -S 0.0.0.0:8000 -t public
+adb reverse tcp:8000 tcp:8000
+```
+
 ## ⚠️ El servidor es PHP 8.2 — no regenerar el lock con PHP 8.4
 
 En local, Herd tiene PHP 8.4 como `php` por defecto, pero **producción corre 8.2**

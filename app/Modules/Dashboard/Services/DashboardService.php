@@ -3,7 +3,9 @@
 namespace App\Modules\Dashboard\Services;
 
 use App\Modules\Caja\Models\CajaMovimiento;
+use App\Modules\Caja\Services\CajaBovedaHierarchyService;
 use App\Modules\Cobranza\Models\Cobro;
+use App\Modules\Credito\Models\Credito;
 use App\Modules\Credito\Services\CreditoHierarchyService;
 use App\Modules\Usuario\Models\User;
 use App\Modules\Venta\Models\PagoVenta;
@@ -25,6 +27,14 @@ use Illuminate\Database\Eloquent\Builder;
  * "Desembolso" son los egresos de caja que cancelan un crédito
  * (CajaMovimiento::desembolsos()), que es el único egreso que genera
  * CreditoService::desembolsar().
+ *
+ * "Egresos" son los egresos de caja MANUALES (CajaMovimiento::egresosManuales(),
+ * tipo=egreso SIN credito_id) — gastos generales, deliberadamente distintos
+ * de "desembolso" para no contar el mismo movimiento en las dos cards.
+ *
+ * "Vencidos" no es "del día": es la cartera vencida visible para el actor en
+ * este momento (cantidad de créditos + su saldo pendiente), mismo cálculo de
+ * saldo que ReporteAtrasosService.
  */
 final class DashboardService
 {
@@ -44,7 +54,10 @@ final class DashboardService
      */
     public const TIPOS = [...self::TIPOS_CREDITO, self::TIPO_VENTAS];
 
-    public function __construct(private readonly CreditoHierarchyService $creditos) {}
+    public function __construct(
+        private readonly CreditoHierarchyService $creditos,
+        private readonly CajaBovedaHierarchyService $cajas,
+    ) {}
 
     /**
      * Resumen del día para el actor, acotado por los filtros opcionales.
@@ -65,6 +78,8 @@ final class DashboardService
             // Lo que quedó en caja por la operación del día. Puede ser
             // negativo: es la diferencia, no un saldo de cuentas.
             'neto' => round($cobranza['total'] - $desembolso['total'], 2),
+            'egresos' => $this->totalEgresos($actor, $agenciaId, $asesorId, $hoy),
+            'vencidos' => $this->totalVencidos($actor, $agenciaId, $asesorId, $tipoCredito),
         ];
     }
 
@@ -163,6 +178,83 @@ final class DashboardService
         [$suma, $conteo] = $this->sumar($query, 'monto');
 
         return ['total' => round($suma, 2), 'cantidad' => $conteo];
+    }
+
+    /**
+     * Egresos manuales de caja del día (gastos generales) — deliberadamente
+     * `egresosManuales()` (tipo=egreso SIN credito_id, ver
+     * CajaMovimiento::scopeEgresosManuales()) y no todo tipo=egreso, para no
+     * contar dos veces el mismo movimiento que ya suma `desembolso`
+     * (CajaMovimiento::scopeDesembolsos() es tipo=egreso CON credito_id).
+     * Mismo criterio de visibilidad de caja que ReporteIngresosEgresosService
+     * (cajaCiclo.caja + CajaBovedaHierarchyService::cajasVisibles()), no el
+     * de créditos: un egreso manual no tiene crédito del que colgarse.
+     *
+     * `tipo_credito` no aplica aquí (un gasto general no es de ningún tipo de
+     * crédito) y se ignora a propósito; `asesor_id` sí filtra, igual que en
+     * cobranza/desembolso, por quien registró el movimiento.
+     *
+     * @return array{total: float, cantidad: int}
+     */
+    private function totalEgresos(User $actor, ?int $agenciaId, ?int $asesorId, string $hoy): array
+    {
+        $query = CajaMovimiento::query()
+            ->egresosManuales()
+            ->whereDate('created_at', $hoy)
+            ->whereHas('cajaCiclo.caja', function (Builder $q) use ($actor, $agenciaId): void {
+                $this->cajas->cajasVisibles($q, $actor);
+
+                if ($agenciaId) {
+                    $q->where('agencia_id', $agenciaId);
+                }
+            });
+
+        if ($asesorId) {
+            $query->where('registrado_por', $asesorId);
+        }
+
+        [$suma, $conteo] = $this->sumar($query, 'monto');
+
+        return ['total' => round($suma, 2), 'cantidad' => $conteo];
+    }
+
+    /**
+     * Créditos vencidos visibles para el actor: cantidad y saldo pendiente
+     * (misma fórmula que ReporteAtrasosService::mapearFila() —
+     * sum(cuotas.monto_total) - sum(cuotas.monto_abonado), nunca negativo).
+     * No es "del día": un crédito vencido lo sigue estando aunque no haya
+     * movimiento hoy, así que no hay filtro de fecha acá.
+     *
+     * @return array{total: float, cantidad: int}
+     */
+    private function totalVencidos(User $actor, ?int $agenciaId, ?int $asesorId, ?string $tipo): array
+    {
+        $query = Credito::query()
+            ->where('estado', 'vencido')
+            ->with('cuotas');
+
+        $query = $this->creditos->visibleQuery($query, $actor);
+
+        if ($agenciaId) {
+            $query->where('agencia_id', $agenciaId);
+        }
+
+        if ($tipo) {
+            $query->where('tipo_credito', $tipo);
+        }
+
+        if ($asesorId) {
+            $query->whereHas('cliente', fn (Builder $q) => $q->where('asesor_id', $asesorId));
+        }
+
+        $creditos = $query->get();
+
+        $total = $creditos->sum(fn (Credito $credito): float => max(
+            (float) $credito->cuotas->sum('monto_total') - (float) $credito->cuotas->sum('monto_abonado'),
+            0.0,
+        ));
+
+        return ['total' => round($total, 2), 'cantidad' => $creditos->count()];
     }
 
     /**

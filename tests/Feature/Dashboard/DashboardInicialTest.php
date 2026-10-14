@@ -6,6 +6,7 @@ use App\Modules\Caja\Models\CajaMovimiento;
 use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Cobranza\Models\Cobro;
 use App\Modules\Credito\Models\Credito;
+use App\Modules\Credito\Models\CuotaCredito;
 use App\Modules\CreditoPrendario\Models\Bien;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
@@ -196,6 +197,30 @@ function egresoManualHoy(User $user, string $monto = '777.00'): CajaMovimiento
     return movimientoHoy($user, 'egreso', $monto);
 }
 
+/**
+ * Crédito vencido con una sola cuota de saldo conocido (monto_total -
+ * monto_abonado), para probar el total de "vencidos" del dashboard sin
+ * depender del cronograma real. El filtro asesor_id de "vencidos" mira
+ * cliente.asesor_id (igual que CreditoController::index()), no
+ * credito.registrado_por — asignar el asesor al $cliente *antes* de llamar
+ * a esta función, con `Cliente::factory()->asignadoA($asesor)`.
+ */
+function creditoVencidoDe(Cliente $cliente, string $montoTotal, string $montoAbonado, string $tipo = 'prendario'): Credito
+{
+    $bien = Bien::factory()->paraCliente($cliente)->create();
+
+    $credito = Credito::factory()->paraBien($bien)->vencido()->create(['tipo_credito' => $tipo]);
+
+    CuotaCredito::factory()->paraCredito($credito)->create([
+        'numero_cuota' => 1,
+        'fecha_vencimiento' => now()->subDays(5)->toDateString(),
+        'monto_total' => $montoTotal,
+        'monto_abonado' => $montoAbonado,
+    ]);
+
+    return $credito;
+}
+
 it('sums the cobranzas and desembolsos of the day', function () {
     $cliente = clienteEn($this->agencia);
     $credito = créditoDe($cliente);
@@ -244,7 +269,7 @@ it('excludes anulados from the cobranza total', function () {
     expect($data['cobranza']['cantidad'])->toBe(1);
 });
 
-it('does not count a manual egreso as a desembolso', function () {
+it('does not count a manual egreso as a desembolso, and reports it separately as egresos', function () {
     $cliente = clienteEn($this->agencia);
     $credito = créditoDe($cliente);
 
@@ -254,7 +279,61 @@ it('does not count a manual egreso as a desembolso', function () {
 
     Sanctum::actingAs($this->admin, ['*']);
 
-    assertTotal(300.00, $this->getJson('/api/dashboard/resumen')->assertSuccessful()->json('data.desembolso.total'));
+    $data = $this->getJson('/api/dashboard/resumen')->assertSuccessful()->json('data');
+
+    assertTotal(300.00, $data['desembolso']['total']);
+    assertTotal(777.00, $data['egresos']['total']);
+    expect($data['egresos']['cantidad'])->toBe(1);
+});
+
+it('sums several egresos manuales of the day and ignores other days', function () {
+    egresoManualHoy($this->asesor, '100.00');
+    egresoManualHoy($this->asesor, '50.00');
+    $otroDia = movimientoHoy($this->asesor, 'egreso', '999.00');
+    CajaMovimiento::query()->where('id', $otroDia->id)->update(['created_at' => now()->subDay()]);
+
+    Sanctum::actingAs($this->admin, ['*']);
+
+    $data = $this->getJson('/api/dashboard/resumen')->assertSuccessful()->json('data');
+
+    assertTotal(150.00, $data['egresos']['total']);
+    expect($data['egresos']['cantidad'])->toBe(2);
+});
+
+it('filters egresos by agencia (via the caja that recorded them)', function () {
+    $otroAsesor = User::factory()->forAgencia($this->otraAgencia)->create();
+    $otroAsesor->assignRole('asesor');
+    $otroCiclo = cicloDe($otroAsesor, $this->empresa, $this->otraAgencia);
+
+    egresoManualHoy($this->asesor, '100.00');
+    CajaMovimiento::query()->create([
+        'caja_ciclo_id' => $otroCiclo->id,
+        'empresa_id' => $otroCiclo->empresa_id,
+        'tipo' => 'egreso',
+        'concepto_id' => null,
+        'credito_id' => null,
+        'registrado_por' => $otroAsesor->id,
+        'monto' => '900.00',
+        'fecha_caja' => $otroCiclo->fecha,
+        'created_at' => now(),
+    ]);
+
+    Sanctum::actingAs($this->admin, ['*']);
+
+    assertTotal(100.00, $this->getJson("/api/dashboard/resumen?agencia_id={$this->agencia->id}")
+        ->assertSuccessful()
+        ->json('data.egresos.total'));
+});
+
+it('filters egresos by the asesor who registered them', function () {
+    egresoManualHoy($this->asesor, '100.00');
+    egresoManualHoy($this->otroAsesor, '900.00');
+
+    Sanctum::actingAs($this->admin, ['*']);
+
+    assertTotal(100.00, $this->getJson("/api/dashboard/resumen?asesor_id={$this->asesor->id}")
+        ->assertSuccessful()
+        ->json('data.egresos.total'));
 });
 
 it('filters by agencia', function () {
@@ -443,7 +522,12 @@ it('returns zeroed totals when there is no movement at all', function () {
     assertTotal(0.00, $data['neto']);
 
     expect($data['cobranza']['cantidad'])->toBe(0)
-        ->and($data['desembolso']['cantidad'])->toBe(0);
+        ->and($data['desembolso']['cantidad'])->toBe(0)
+        ->and($data['egresos']['cantidad'])->toBe(0)
+        ->and($data['vencidos']['cantidad'])->toBe(0);
+
+    assertTotal(0.00, $data['egresos']['total']);
+    assertTotal(0.00, $data['vencidos']['total']);
 });
 
 it('reports a negative neto when desembolsos exceed cobranzas', function () {
@@ -456,4 +540,64 @@ it('reports a negative neto when desembolsos exceed cobranzas', function () {
     Sanctum::actingAs($this->admin, ['*']);
 
     assertTotal(-800.00, $this->getJson('/api/dashboard/resumen')->assertSuccessful()->json('data.neto'));
+});
+
+it('sums the pending saldo of vencido créditos, not a flat count', function () {
+    $cliente = clienteEn($this->agencia);
+
+    creditoVencidoDe($cliente, '1000.00', '600.00'); // saldo 400
+    creditoVencidoDe($cliente, '500.00', '0.00'); // saldo 500
+    créditoDe($cliente); // activo, no debe entrar
+
+    Sanctum::actingAs($this->admin, ['*']);
+
+    $data = $this->getJson('/api/dashboard/resumen')->assertSuccessful()->json('data');
+
+    assertTotal(900.00, $data['vencidos']['total']);
+    expect($data['vencidos']['cantidad'])->toBe(2);
+});
+
+it('never reports a negative saldo for an overpaid vencido crédito', function () {
+    $cliente = clienteEn($this->agencia);
+
+    creditoVencidoDe($cliente, '100.00', '150.00');
+
+    Sanctum::actingAs($this->admin, ['*']);
+
+    $data = $this->getJson('/api/dashboard/resumen')->assertSuccessful()->json('data');
+
+    assertTotal(0.00, $data['vencidos']['total']);
+});
+
+it('filters vencidos by agencia_id, asesor_id and tipo_credito', function () {
+    $clienteDelAsesor = Cliente::factory()->asignadoA($this->asesor)->create();
+    $clienteDelOtroAsesor = Cliente::factory()->asignadoA($this->otroAsesor)->create();
+    $clienteB = clienteEn($this->otraAgencia);
+
+    creditoVencidoDe($clienteDelAsesor, '400.00', '0.00', 'prendario');
+    creditoVencidoDe($clienteDelOtroAsesor, '600.00', '0.00', 'hipotecario');
+    creditoVencidoDe($clienteB, '900.00', '0.00');
+
+    Sanctum::actingAs($this->admin, ['*']);
+
+    assertTotal(1000.00, $this->getJson("/api/dashboard/resumen?agencia_id={$this->agencia->id}")
+        ->assertSuccessful()->json('data.vencidos.total'));
+
+    assertTotal(400.00, $this->getJson("/api/dashboard/resumen?asesor_id={$this->asesor->id}")
+        ->assertSuccessful()->json('data.vencidos.total'));
+
+    assertTotal(600.00, $this->getJson('/api/dashboard/resumen?tipo_credito=hipotecario')
+        ->assertSuccessful()->json('data.vencidos.total'));
+});
+
+it('does not let a vencidos filter widen what an administrador_agencia can see', function () {
+    $adminAgencia = User::factory()->forAgencia($this->agencia)->create();
+    $adminAgencia->assignRole('administrador_agencia');
+
+    creditoVencidoDe(clienteEn($this->otraAgencia), '900.00', '0.00');
+
+    Sanctum::actingAs($adminAgencia, ['*']);
+
+    assertTotal(0.00, $this->getJson("/api/dashboard/resumen?agencia_id={$this->otraAgencia->id}")
+        ->assertSuccessful()->json('data.vencidos.total'));
 });
