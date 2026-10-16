@@ -303,6 +303,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('reportes/cobranza-mensual', [ReporteCobranzaMensualController::class, 'cobranzaMensual'])->name('reportes.cobranza-mensual');
     Route::get('reportes/cobranza-mensual/anual', [ReporteCobranzaMensualController::class, 'cobranzaAnual'])->name('reportes.cobranza-mensual.anual');
     Route::get('reportes/cajas-apertura-cierre', [ReporteCajasController::class, 'aperturasCierres'])->name('reportes.cajas-apertura-cierre');
+    Route::get('reportes/cajas-apertura-cierre/{ciclo}/reporte', [ReporteCajasController::class, 'reporteCierre'])->name('reportes.cajas-apertura-cierre.reporte');
+    Route::get('reportes/cajas-apertura-cierre/{ciclo}/reporte/pdf', [ReporteCajasController::class, 'reporteCierrePdf'])->name('reportes.cajas-apertura-cierre.reporte.pdf');
     Route::get('reportes/cajas-apertura-cierre/{ciclo}/detalle', [ReporteCajasController::class, 'detalle'])->name('reportes.cajas-apertura-cierre.detalle');
     Route::get('reportes/cajas-apertura-cierre/pdf', [ReporteCajasController::class, 'aperturasCierresPdf'])->name('reportes.cajas-apertura-cierre.pdf');
     Route::get('reportes/cajas-apertura-cierre/excel', [ReporteCajasController::class, 'aperturasCierresExcel'])->name('reportes.cajas-apertura-cierre.excel');

@@ -27,12 +27,12 @@ final class ReporteCajasService
      * alcance que CajaBovedaHierarchyService::cajasVisibles(). Los 5 totales
      * son mutuamente excluyentes entre sí:
      *
-     * - total_ingresos / total_egresos: movimientos manuales (con un
-     *   concepto del catálogo de la empresa — ver CajaService::registrarMovimiento()).
+     * - total_ingresos: ingresos distintos de los movimientos de cobros (incluye ventas).
+     *   total_egresos: egresos manuales sin credito_id.
      * - total_billetaje: billetajes aprobados que entraron a este ciclo.
      * - total_cobranza: suma de Cobro::monto_pagado (no anulados) del ciclo —
      *   refrendos, liquidaciones, pagos de cuota, adendas, refinanciamientos.
-     * - total_desembolso: egresos SIN concepto de catálogo (ver
+     * - total_desembolso: egresos ligados a un credito (ver
      *   CreditoService::desembolsar()) — el único caso que genera un egreso
      *   así.
      *
@@ -52,9 +52,9 @@ final class ReporteCajasService
             ->when($hasta, fn (Builder $q) => $q->whereDate('fecha', '<=', $hasta))
             ->when($estado, fn (Builder $q) => $q->where('estado', $estado))
             ->with(['caja.user', 'caja.agencia', 'cerradaPor'])
-            ->withSum(['movimientos as total_ingresos' => fn (Builder $q) => $q->where('tipo', 'ingreso')->whereNotNull('concepto_id')], 'monto')
-            ->withSum(['movimientos as total_egresos' => fn (Builder $q) => $q->where('tipo', 'egreso')->whereNotNull('concepto_id')], 'monto')
-            ->withSum(['movimientos as total_desembolso' => fn (Builder $q) => $q->where('tipo', 'egreso')->whereNull('concepto_id')], 'monto')
+            ->withSum(['movimientos as total_ingresos' => fn (Builder $q) => $q->where('tipo', 'ingreso')->whereNotIn('id', Cobro::query()->select('caja_movimiento_id')->whereNotNull('caja_movimiento_id'))], 'monto')
+            ->withSum(['movimientos as total_egresos' => fn (Builder $q) => $q->egresosManuales()], 'monto')
+            ->withSum(['movimientos as total_desembolso' => fn (Builder $q) => $q->desembolsos()], 'monto')
             ->withSum(['movimientos as total_billetaje' => fn (Builder $q) => $q->where('tipo', 'billetaje')], 'monto')
             ->withSum(['cobros as total_cobranza' => fn (Builder $q) => $q->where('estado', '!=', 'anulado')], 'monto_pagado')
             ->latest('fecha')
@@ -114,15 +114,15 @@ final class ReporteCajasService
             ->get();
 
         $ingresos = CajaMovimiento::query()
-            ->where('caja_ciclo_id', $ciclo->id)->where('tipo', 'ingreso')->whereNotNull('concepto_id')
+            ->where('caja_ciclo_id', $ciclo->id)->where('tipo', 'ingreso')->whereNotIn('id', Cobro::query()->select('caja_movimiento_id')->whereNotNull('caja_movimiento_id'))
             ->with(['registradoPor', 'fotos'])->orderBy('created_at')->get();
 
         $egresos = CajaMovimiento::query()
-            ->where('caja_ciclo_id', $ciclo->id)->where('tipo', 'egreso')->whereNotNull('concepto_id')
+            ->where('caja_ciclo_id', $ciclo->id)->egresosManuales()
             ->with(['registradoPor', 'fotos'])->orderBy('created_at')->get();
 
         $desembolsos = CajaMovimiento::query()
-            ->where('caja_ciclo_id', $ciclo->id)->where('tipo', 'egreso')->whereNull('concepto_id')
+            ->where('caja_ciclo_id', $ciclo->id)->desembolsos()
             ->with(['registradoPor', 'credito.cliente'])->orderBy('created_at')->get();
 
         $cobrosPorMedio = Cobro::query()

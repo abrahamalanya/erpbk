@@ -5,6 +5,7 @@ namespace App\Modules\Reportes\Http\Controllers;
 use App\Modules\Caja\Models\Caja;
 use App\Modules\Caja\Models\CajaCiclo;
 use App\Modules\Reportes\Services\ReporteCajasService;
+use App\Modules\Reportes\Services\ReporteCierreCajaService;
 use App\Nucleo\Http\Controllers\Controller;
 use App\Nucleo\Services\ExcelGeneratorService;
 use App\Nucleo\Services\PdfGeneratorService;
@@ -65,6 +66,20 @@ class ReporteCajasController extends Controller
         Gate::authorize('viewAny', Caja::class);
 
         return $this->successResponse($this->reporteCajasService->detalle(request()->user(), $ciclo));
+    }
+
+    public function reporteCierre(CajaCiclo $ciclo, ReporteCierreCajaService $reporte): JsonResponse
+    {
+        Gate::authorize('viewAny', Caja::class);
+
+        return $this->successResponse($reporte->reporte(request()->user(), $ciclo));
+    }
+
+    public function reporteCierrePdf(CajaCiclo $ciclo, ReporteCierreCajaService $reporte, PdfGeneratorService $pdf): Response
+    {
+        Gate::authorize('viewAny', Caja::class);
+
+        return $pdf->renderizarDesdeVista('reportes.cierre-caja', $reporte->reporte(request()->user(), $ciclo));
     }
 
     /**
