@@ -166,6 +166,6 @@ final class CajaBovedaHierarchyService
             });
         }
 
-        return $query->where('solicitado_por', $actor->id);
+        return $query->where('asesor_id', $actor->id);
     }
 }

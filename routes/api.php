@@ -162,7 +162,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('cuentas-bancarias/{cuentaBancaria}/conciliaciones', [CuentaBancariaController::class, 'conciliaciones'])->name('cuentas-bancarias.conciliaciones');
 
     Route::apiResource('billetajes', BilletajeController::class)->only(['index', 'store']);
-    Route::post('billetajes/{billetaje}/aprobar', [BilletajeController::class, 'aprobar'])->name('billetajes.aprobar');
+    Route::post('billetajes/{billetaje}/aceptar', [BilletajeController::class, 'aceptar'])->name('billetajes.aceptar');
     Route::post('billetajes/{billetaje}/rechazar', [BilletajeController::class, 'rechazar'])->name('billetajes.rechazar');
 
     Route::apiResource('conceptos', ConceptoController::class)->only(['index', 'store', 'update', 'destroy']);
@@ -283,6 +283,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::apiResource('simulaciones-credito', SimuladorController::class)->only(['index', 'store', 'show', 'destroy'])->parameters(['simulaciones-credito' => 'simulacion']);
 
     Route::get('cobros', [CobroController::class, 'index'])->name('cobros.index');
+    Route::get('cobros/resumen', [CobroController::class, 'resumen'])->name('cobros.resumen');
     Route::get('cobros/pdf', [CobroController::class, 'pdf'])->name('cobros.pdf');
     Route::get('cobros/excel', [CobroController::class, 'excel'])->name('cobros.excel');
     Route::get('cobros/creditos-pendientes/{cliente}', [CobroController::class, 'creditosPendientes'])->name('cobros.creditos-pendientes');

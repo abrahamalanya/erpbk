@@ -283,8 +283,9 @@ it('excludes el billetaje, que is cash delivered and not income', function () {
         'empresa_id' => $this->empresa->id,
         'monto' => 1000,
         'estado' => 'aprobado',
-        'solicitado_por' => $this->asesor->id,
-        'aprobado_por' => $this->administradorAgencia->id,
+        'asesor_id' => $this->asesor->id,
+        'solicitado_por' => $this->administradorAgencia->id,
+        'aprobado_por' => $this->asesor->id,
         'fecha_resolucion' => now()->toDateString(),
     ]);
     ie_movimiento($this->ciclo, $this->empresa, 'billetaje', 1000, '2026-09-05', $this->administradorAgencia, ['billetaje_id' => $billetaje->id]);

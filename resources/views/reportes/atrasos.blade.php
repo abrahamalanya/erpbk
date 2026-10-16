@@ -4,9 +4,8 @@
     <meta charset="utf-8">
     <title>{{ $titulo }}</title>
     <style>
-        @page { margin: 1.2cm; size: landscape; }
+        @page { size: A4; margin: 0.5cm; }
         body { font-family: DejaVu Sans, sans-serif; font-size: 8px; color: #1a1a1a; }
-        h1 { font-size: 15px; text-align: center; margin-bottom: 4px; }
         .generado { text-align: center; color: #666; font-size: 9px; margin-bottom: 10px; }
 
         /* La bolita es un SVG inline, no un span redondeado: dompdf no
@@ -28,8 +27,7 @@
     </style>
 </head>
 <body>
-    <h1>{{ $titulo }}</h1>
-    <p class="generado">Generado el {{ now()->locale('es')->translatedFormat('d \\d\\e F \\d\\e\\l Y, H:i') }}</p>
+    <p class="generado">{{ $titulo }} | Generado el {{ now()->locale('es')->translatedFormat('d \\d\\e F \\d\\e\\l Y, H:i') }}</p>
 
     <div class="leyenda">
         @foreach ($leyenda as $bloque)

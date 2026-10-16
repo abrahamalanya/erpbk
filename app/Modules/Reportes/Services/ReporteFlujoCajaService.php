@@ -138,8 +138,8 @@ final class ReporteFlujoCajaService
         return [
             'billetaje' => [
                 $billetajes,
-                fn (CajaMovimiento $m): ?int => $m->billetaje?->solicitado_por,
-                fn (CajaMovimiento $m): ?User => $m->billetaje?->solicitadoPor,
+                fn (CajaMovimiento $m): ?int => $m->billetaje?->asesor_id,
+                fn (CajaMovimiento $m): ?User => $m->billetaje?->asesor,
                 fn (CajaMovimiento $m): float => (float) $m->monto,
                 fn (CajaMovimiento $m): Carbon => $m->fecha_caja,
             ],
@@ -216,8 +216,8 @@ final class ReporteFlujoCajaService
             ->whereDate('fecha_caja', '<=', $fin->toDateString())
             ->whereHas('cajaCiclo.caja', fn (Builder $q) => $this->hierarchy->cajasVisibles($q, $actor))
             ->when($agenciaId, fn (Builder $q) => $q->whereHas('cajaCiclo.caja', fn (Builder $c) => $c->where('agencia_id', $agenciaId)))
-            ->when($asesorId, fn (Builder $q) => $q->whereHas('billetaje', fn (Builder $b) => $b->where('solicitado_por', $asesorId)))
-            ->with('billetaje:id,solicitado_por', 'billetaje.solicitadoPor:id,nombre,apellido')
+            ->when($asesorId, fn (Builder $q) => $q->whereHas('billetaje', fn (Builder $b) => $b->where('asesor_id', $asesorId)))
+            ->with('billetaje:id,asesor_id', 'billetaje.asesor:id,nombre,apellido')
             ->get(['id', 'monto', 'billetaje_id', 'fecha_caja']);
     }
 

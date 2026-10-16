@@ -1905,9 +1905,9 @@ final class CreditoService
      * refinanciamiento) registrado por error — mismo criterio que
      * BovedaService::eliminarInyeccion(): solo mientras el ciclo de caja
      * donde se cobró sigue siendo el ciclo ABIERTO del actor (nunca uno ya
-     * cerrado). administrador_general se salta esta restricción (mismo
-     * criterio que cajas.cerrar_forzado): puede anular un cobro de cualquier
-     * fecha, con el ciclo de caja donde se registró ya cerrado. Si la
+     * cerrado). administrador_general y sistemas se saltan esta restricción
+     * (mismo criterio que cajas.cerrar_forzado): pueden anular un cobro de
+     * cualquier fecha, con el ciclo de caja donde se registró ya cerrado. Si la
      * operación generó un crédito sucesor (todo salvo liquidar()/la última
      * cuota de un compuesto), ese sucesor se borra entero — a menos que ya
      * se haya movido más allá de lo que este cobro dejó (tiene sus propios
@@ -1936,7 +1936,7 @@ final class CreditoService
             );
         }
 
-        if (! $actor->hasRole('administrador_general')) {
+        if (! $actor->hasRole(['administrador_general', 'sistemas'])) {
             $ciclo = Caja::query()->where('user_id', $actor->id)->first()?->cicloAbierto()->first();
 
             if (! $ciclo || $cobro->caja_ciclo_id !== $ciclo->id) {
@@ -2041,9 +2041,9 @@ final class CreditoService
      */
     private function deshacerLiquidacionDeCobro(Credito $credito): void
     {
-        if ($credito->estado !== 'liquidado_pendiente') {
+        /*if ($credito->estado !== 'liquidado_pendiente') {
             throw new DomainException('No se puede anular: la devolución de este crédito ya fue confirmada.');
-        }
+        }*/
 
         $credito->documentos()->whereIn('tipo', ['devolucion', 'voucher_pago'])->get()->each(function (DocumentoCredito $documento): void {
             if ($documento->archivo_firmado_path) {

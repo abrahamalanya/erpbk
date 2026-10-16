@@ -55,21 +55,41 @@ class CobroController extends Controller
 
         // `puede_anular` evita que el frontend tenga que adivinar la regla
         // de negocio (mismo ciclo de caja, todavía abierto, del actor) —
-        // ver CreditoService::anularCobro(). administrador_general se salta
-        // esa regla y puede anular cualquier cobro registrado, sin importar
-        // la fecha o si su ciclo de caja ya está cerrado.
-        $esAdministradorGeneral = $actor->hasRole('administrador_general');
+        // ver CreditoService::anularCobro(). administrador_general y sistemas
+        // se saltan esa regla y pueden anular cualquier cobro registrado, sin
+        // importar la fecha o si su ciclo de caja ya está cerrado.
+        $puedeAnularSiempre = $actor->hasRole(['administrador_general', 'sistemas']);
         $cicloAbiertoId = Caja::query()->where('user_id', $actor->id)->first()?->cicloAbierto()->first()?->id;
 
         $paginado->getCollection()->each(
             fn (Cobro $cobro) => $cobro->setAttribute(
                 'puede_anular',
                 $cobro->estado === 'registrado'
-                    && ($esAdministradorGeneral || ($cicloAbiertoId !== null && $cobro->caja_ciclo_id === $cicloAbiertoId))
+                    && ($puedeAnularSiempre || ($cicloAbiertoId !== null && $cobro->caja_ciclo_id === $cicloAbiertoId))
             )
         );
 
         return $this->successResponse($paginado);
+    }
+
+    /**
+     * Total cobrado y cantidad de cobros del universo completo que calza los
+     * filtros de index() (no de la página): alimenta el card de resumen de la
+     * lista de Cobranzas. No cuenta los anulados — igual que
+     * DashboardService::cobranzaResumen(), un cobro anulado no es cobranza.
+     * Misma visibilidad y mismos filtros que index() (q/operacion/estado/
+     * registrado_por/cliente_id/credito_id/desde/hasta).
+     */
+    public function resumen(): JsonResponse
+    {
+        Gate::authorize('viewAny', Cobro::class);
+
+        $query = $this->filtrarQuery(request()->user())->where('estado', '!=', 'anulado');
+
+        return $this->successResponse([
+            'total' => (float) $query->sum('monto_pagado'),
+            'cantidad' => $query->count(),
+        ]);
     }
 
     public function pdf(PdfGeneratorService $pdf): Response

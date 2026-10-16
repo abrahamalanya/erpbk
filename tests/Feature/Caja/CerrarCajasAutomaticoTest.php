@@ -30,13 +30,15 @@ it('closes a stale-dated open caja ciclo automatically, rejecting pending billet
     $asesor->assignRole('asesor');
     Sanctum::actingAs($asesor, ['*']);
     $this->postJson('/api/caja/aperturar')->assertCreated();
-    $billetajeAprobadoId = $this->postJson('/api/billetajes', ['monto' => 200, 'motivo' => 'Gastos operativos', 'medio_recepcion' => 'efectivo'])->json('data.id');
-    $billetajePendienteId = $this->postJson('/api/billetajes', ['monto' => 50, 'motivo' => 'Gastos operativos', 'medio_recepcion' => 'efectivo'])->json('data.id');
 
     $administradorAgencia = User::factory()->forAgencia($this->agencia)->create();
     $administradorAgencia->assignRole('administrador_agencia');
     Sanctum::actingAs($administradorAgencia, ['*']);
-    $this->postJson("/api/billetajes/{$billetajeAprobadoId}/aprobar")->assertSuccessful();
+    $billetajeAprobadoId = $this->postJson('/api/billetajes', ['asesor_id' => $asesor->id, 'monto' => 200, 'motivo' => 'Gastos operativos', 'medio_egreso' => 'efectivo'])->json('data.id');
+    $billetajePendienteId = $this->postJson('/api/billetajes', ['asesor_id' => $asesor->id, 'monto' => 50, 'motivo' => 'Gastos operativos', 'medio_egreso' => 'efectivo'])->json('data.id');
+
+    Sanctum::actingAs($asesor, ['*']);
+    $this->postJson("/api/billetajes/{$billetajeAprobadoId}/aceptar")->assertSuccessful();
 
     $caja = Caja::query()->where('user_id', $asesor->id)->firstOrFail();
     $caja->cicloAbierto()->update(['fecha' => now()->subDay()->toDateString()]);

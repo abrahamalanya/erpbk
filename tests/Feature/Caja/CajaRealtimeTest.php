@@ -28,7 +28,7 @@ it('broadcasts to its own owner when a caja is aperturada, with saldo 0', functi
         && $event->saldoActual === '0.00');
 });
 
-it('broadcasts to its own owner (not the aprobador) when a billetaje aprobado moves the saldo', function () {
+it('broadcasts to its own owner (not the emisor) when a billetaje aceptado moves the saldo', function () {
     $administradorGeneral = User::factory()->forEmpresa($this->empresa)->create();
     $administradorGeneral->assignRole('administrador_general');
     Sanctum::actingAs($administradorGeneral, ['*']);
@@ -42,14 +42,16 @@ it('broadcasts to its own owner (not the aprobador) when a billetaje aprobado mo
     $asesor->assignRole('asesor');
     Sanctum::actingAs($asesor, ['*']);
     $this->postJson('/api/caja/aperturar')->assertCreated();
-    $billetajeId = $this->postJson('/api/billetajes', ['monto' => 100, 'motivo' => 'Gastos operativos', 'medio_recepcion' => 'efectivo'])->json('data.id');
-
-    Event::fake([CajaActualizada::class]);
 
     $administradorAgencia = User::factory()->forAgencia($this->agencia)->create();
     $administradorAgencia->assignRole('administrador_agencia');
     Sanctum::actingAs($administradorAgencia, ['*']);
-    $this->postJson("/api/billetajes/{$billetajeId}/aprobar")->assertSuccessful();
+    $billetajeId = $this->postJson('/api/billetajes', ['asesor_id' => $asesor->id, 'monto' => 100, 'motivo' => 'Gastos operativos', 'medio_egreso' => 'efectivo'])->json('data.id');
+
+    Event::fake([CajaActualizada::class]);
+
+    Sanctum::actingAs($asesor, ['*']);
+    $this->postJson("/api/billetajes/{$billetajeId}/aceptar")->assertSuccessful();
 
     Event::assertDispatched(CajaActualizada::class, fn (CajaActualizada $event): bool => $event->caja->user_id === $asesor->id
         && $event->saldoActual === '100.00');

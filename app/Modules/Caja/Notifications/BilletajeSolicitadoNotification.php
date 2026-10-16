@@ -35,10 +35,10 @@ class BilletajeSolicitadoNotification extends Notification
      */
     public function toArray(object $notifiable): array
     {
-        $solicitante = $this->billetaje->solicitadoPor;
+        $emisor = $this->billetaje->solicitadoPor;
 
         return [
-            'mensaje' => "Solicitud de billetaje: S/ {$this->billetaje->monto} de {$solicitante->nombre} {$solicitante->apellido}",
+            'mensaje' => "Recibiste un billetaje de S/ {$this->billetaje->monto} de {$emisor->nombre} {$emisor->apellido}",
             'url' => '/billetajes',
             'billetaje_id' => $this->billetaje->id,
         ];

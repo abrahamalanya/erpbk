@@ -335,6 +335,7 @@ it('exporta el pdf con los 13 encabezados de la tabla y la leyenda de los dos se
     $pdf = $this->get('/api/reportes/atrasos-diarios/pdf')->assertOk()->getContent();
 
     expect(substr($pdf, 0, 5))->toBe('%PDF-')
+        ->and(preg_match('/\/MediaBox\s+\[\s*0(?:\.0+)?\s+0(?:\.0+)?\s+841\.\d+\s+595\.\d+\s*\]/', $pdf))->toBe(1)
         ->and(strlen($pdf))->toBeGreaterThan(1000);
 });
 

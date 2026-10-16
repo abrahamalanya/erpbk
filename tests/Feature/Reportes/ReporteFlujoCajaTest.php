@@ -74,10 +74,10 @@ function movimiento(CajaCiclo $ciclo, Empresa $empresa, string $tipo, float $mon
 
 /**
  * Un billetaje aprobado: el CajaMovimiento que genera trae registrado_por =
- * el aprobador, no el solicitante (ver Billetaje::solicitado_por) — así se
- * puede probar que el reporte agrupa por el solicitante real.
+ * el administrador emisor, no el asesor destino (ver Billetaje::asesor_id)
+ * — así se puede probar que el reporte agrupa por el asesor real.
  */
-function billetajeAprobado(CajaCiclo $ciclo, Empresa $empresa, Boveda $boveda, User $solicitante, User $aprobador, float $monto, string $fecha): CajaMovimiento
+function billetajeAprobado(CajaCiclo $ciclo, Empresa $empresa, Boveda $boveda, User $asesor, User $emisor, float $monto, string $fecha): CajaMovimiento
 {
     $billetaje = Billetaje::query()->create([
         'caja_ciclo_id' => $ciclo->id,
@@ -85,12 +85,13 @@ function billetajeAprobado(CajaCiclo $ciclo, Empresa $empresa, Boveda $boveda, U
         'empresa_id' => $empresa->id,
         'monto' => $monto,
         'estado' => 'aprobado',
-        'solicitado_por' => $solicitante->id,
-        'aprobado_por' => $aprobador->id,
+        'asesor_id' => $asesor->id,
+        'solicitado_por' => $emisor->id,
+        'aprobado_por' => $asesor->id,
         'fecha_resolucion' => $fecha,
     ]);
 
-    return movimiento($ciclo, $empresa, 'billetaje', $monto, $fecha, $aprobador, ['billetaje_id' => $billetaje->id]);
+    return movimiento($ciclo, $empresa, 'billetaje', $monto, $fecha, $emisor, ['billetaje_id' => $billetaje->id]);
 }
 
 function cobroEnCaja(CajaCiclo $ciclo, Empresa $empresa, Credito $credito, Cliente $cliente, User $asesor, float $monto, string $fecha): Cobro

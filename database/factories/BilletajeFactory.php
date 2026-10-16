@@ -29,6 +29,7 @@ class BilletajeFactory extends Factory
             'empresa_id' => $cajaCiclo->empresa_id,
             'monto' => fake()->randomFloat(2, 50, 1000),
             'estado' => 'pendiente',
+            'asesor_id' => $cajaCiclo->caja->user_id,
             'solicitado_por' => $cajaCiclo->caja->user_id,
         ];
     }
@@ -42,6 +43,7 @@ class BilletajeFactory extends Factory
             'caja_ciclo_id' => $cajaCiclo->id,
             'boveda_id' => $boveda->id,
             'empresa_id' => $cajaCiclo->empresa_id,
+            'asesor_id' => $cajaCiclo->caja->user_id,
             'solicitado_por' => $cajaCiclo->caja->user_id,
         ]);
     }

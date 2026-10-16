@@ -32,8 +32,7 @@ final class BovedaService
      * Roles whose OWN caja is funded by (and force-closed by) their agencia's
      * bóveda. administrador_agencia is here (not ROLES_PRINCIPAL) because
      * their own caja is funded by the SAME agencia bóveda they control for
-     * asesor/supervisor — they approve their own billetaje request, same as
-     * administrador_general already does for the principal.
+     * asesor/supervisor.
      *
      * @var list<string>
      */

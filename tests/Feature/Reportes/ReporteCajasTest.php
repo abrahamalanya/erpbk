@@ -92,6 +92,7 @@ function prepararCicloDe(User $asesor, Concepto $conceptoIngreso, Concepto $conc
         'monto' => 80,
         'estado' => 'aprobado',
         'motivo' => 'Vuelto insuficiente',
+        'asesor_id' => $asesor->id,
         'solicitado_por' => $asesor->id,
         'fecha_resolucion' => now(),
     ]);

@@ -82,7 +82,7 @@ final class CajaService
         }
 
         if ($ciclo->billetajes()->where('estado', 'pendiente')->exists()) {
-            throw new DomainException('No puedes cerrar tu caja con billetajes pendientes de aprobación.');
+            throw new DomainException('No puedes cerrar tu caja con billetajes pendientes.');
         }
 
         return $this->cerrarCiclo($ciclo, $actor, $montoContado, forzado: false);
@@ -92,7 +92,7 @@ final class CajaService
      * Registers a manual ingreso/gasto against the actor's own caja ciclo —
      * e.g. an unrelated cash top-up, or an operating expense paid out of the
      * cajón. Distinct from a billetaje (which always increases cash and is
-     * only ever created by BilletajeService::aprobar()): here the actor
+     * only ever created by BilletajeService::aceptar()): here the actor
      * picks a concepto from the empresa's catalog and, for a gasto,
      * comprobante is required (see StoreCajaMovimientoRequest).
      *

@@ -33,6 +33,10 @@ class BilletajePolicy
             return true;
         }
 
+        if ($billetaje->asesor_id === $user->id) {
+            return true;
+        }
+
         return $this->hierarchy->puedeControlarBilletaje($user, $billetaje);
     }
 
@@ -41,13 +45,17 @@ class BilletajePolicy
         return $user->can('billetajes.crear');
     }
 
+    /**
+     * Aceptar: only the asesor the billetaje was enviado to — the
+     * administrador that enviado it does NOT resolve it.
+     */
     public function aprobar(User $user, Billetaje $billetaje): bool
     {
-        return $user->can('billetajes.aprobar') && $this->hierarchy->puedeControlarBilletaje($user, $billetaje);
+        return $user->can('billetajes.aprobar') && $billetaje->asesor_id === $user->id;
     }
 
     public function rechazar(User $user, Billetaje $billetaje): bool
     {
-        return $user->can('billetajes.rechazar') && $this->hierarchy->puedeControlarBilletaje($user, $billetaje);
+        return $user->can('billetajes.rechazar') && $billetaje->asesor_id === $user->id;
     }
 }

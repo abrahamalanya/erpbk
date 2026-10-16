@@ -109,7 +109,7 @@ final class ReporteCajasService
         $billetajes = Billetaje::query()
             ->where('caja_ciclo_id', $ciclo->id)
             ->where('estado', 'aprobado')
-            ->with(['solicitadoPor', 'aprobadoPor'])
+            ->with(['solicitadoPor', 'asesor', 'aprobadoPor'])
             ->orderBy('fecha_resolucion')
             ->get();
 
@@ -148,6 +148,7 @@ final class ReporteCajasService
                 'medio_recepcion' => $b->medio_recepcion,
                 'datos_recepcion' => $b->datos_recepcion,
                 'solicitado_por' => $b->solicitadoPor,
+                'asesor' => $b->asesor,
                 'aprobado_por' => $b->aprobadoPor,
             ])->values(),
             'total_billetaje' => $this->formatMonto((string) $billetajes->sum('monto')),

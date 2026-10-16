@@ -43,7 +43,7 @@ class ReporteAtrasosController extends Controller
         $tabla = $this->armarTabla($this->reporteAtrasosService->atrasos(request()->user()));
 
         return $pdf->renderizarDesdeVista('reportes.atrasos', [
-            'titulo' => 'Atrasos diarios',
+            'titulo' => 'REPORTE DIARIO DE CRÉDITOS',
             'encabezados' => $tabla['encabezados'],
             'filas' => $tabla['filas'],
             'bolitas' => $tabla['bolitas'],

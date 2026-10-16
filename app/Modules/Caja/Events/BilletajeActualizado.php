@@ -55,6 +55,7 @@ class BilletajeActualizado implements ShouldBroadcastNow
             'id' => $this->billetaje->id,
             'estado' => $this->billetaje->estado,
             'monto' => (string) $this->billetaje->monto,
+            'asesor_id' => $this->billetaje->asesor_id,
             'solicitado_por' => $this->billetaje->solicitado_por,
             'aprobado_por' => $this->billetaje->aprobado_por,
             'boveda_id' => $this->billetaje->boveda_id,

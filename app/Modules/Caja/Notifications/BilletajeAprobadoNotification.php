@@ -31,7 +31,7 @@ class BilletajeAprobadoNotification extends Notification
     public function toArray(object $notifiable): array
     {
         return [
-            'mensaje' => "Tu solicitud de billetaje de S/ {$this->billetaje->monto} fue aprobada.",
+            'mensaje' => "El billetaje de S/ {$this->billetaje->monto} fue aceptado por el asesor.",
             'url' => '/billetajes',
             'billetaje_id' => $this->billetaje->id,
         ];

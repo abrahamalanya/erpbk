@@ -179,6 +179,50 @@ it('marks puede_anular true for administrador_general even outside their own cic
     expect($response->json('data.data.0.puede_anular'))->toBeTrue();
 });
 
+it('lets sistemas anular a cobro even after its caja ciclo is closed', function () {
+    $credito = Credito::factory()->paraBien($this->bien)
+        ->activo()
+        ->create(['registrado_por' => $this->asesor->id, 'cliente_id' => $this->cliente->id]);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $total = $this->getJson("/api/creditos-prendarios/{$credito->id}")->json('data.monto_liquidacion_sugerido.total');
+    $this->postJson("/api/creditos-prendarios/{$credito->id}/liquidar", ['monto_pagado' => $total, 'medio' => 'efectivo'])
+        ->assertSuccessful();
+
+    $cobro = Cobro::query()->where('credito_id', $credito->id)->firstOrFail();
+    $this->ciclo->update(['estado' => 'cerrada']);
+
+    $sistemas = User::factory()->forAgencia($this->agencia)->create();
+    $sistemas->assignRole('sistemas');
+
+    Sanctum::actingAs($sistemas, ['*']);
+    $this->postJson("/api/cobros/{$cobro->id}/anular", [])
+        ->assertSuccessful()
+        ->assertJsonPath('data.estado', 'activo');
+
+    expect($cobro->fresh()->estado)->toBe('anulado');
+});
+
+it('marks puede_anular true for sistemas even outside their own ciclo', function () {
+    $credito = Credito::factory()->paraBien($this->bien)
+        ->activo()
+        ->create(['registrado_por' => $this->asesor->id, 'cliente_id' => $this->cliente->id]);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $total = $this->getJson("/api/creditos-prendarios/{$credito->id}")->json('data.monto_liquidacion_sugerido.total');
+    $this->postJson("/api/creditos-prendarios/{$credito->id}/liquidar", ['monto_pagado' => $total, 'medio' => 'efectivo'])
+        ->assertSuccessful();
+
+    $this->ciclo->update(['estado' => 'cerrada']);
+
+    $sistemas = User::factory()->forAgencia($this->agencia)->create();
+    $sistemas->assignRole('sistemas');
+
+    Sanctum::actingAs($sistemas, ['*']);
+    $response = $this->getJson('/api/cobros')->assertSuccessful();
+    expect($response->json('data.data.0.puede_anular'))->toBeTrue();
+});
+
 it('rejects anulando a cobro that is already anulado', function () {
     $credito = Credito::factory()->paraBien($this->bien)
         ->activo()

@@ -71,16 +71,23 @@ it('lets administrador_general see cajas across every agencia of their empresa',
     $this->getJson('/api/cajas')->assertSuccessful()->assertJsonCount(2, 'data.data');
 });
 
-it('only shows a supervisor their own billetajes, not other agencias', function () {
+it('only shows an asesor their own billetajes, not those of another agencia', function () {
     $asesorA = User::factory()->forAgencia($this->agenciaA)->create();
     $asesorA->assignRole('asesor');
     Sanctum::actingAs($asesorA, ['*']);
     $this->postJson('/api/caja/aperturar')->assertCreated();
-    $this->postJson('/api/billetajes', ['monto' => 40, 'motivo' => 'Gastos operativos', 'medio_recepcion' => 'efectivo'])->assertCreated();
 
-    $supervisorB = User::factory()->forAgencia($this->agenciaB)->create();
-    $supervisorB->assignRole('supervisor');
-    Sanctum::actingAs($supervisorB, ['*']);
+    $administradorAgenciaA = User::factory()->forAgencia($this->agenciaA)->create();
+    $administradorAgenciaA->assignRole('administrador_agencia');
+    Sanctum::actingAs($administradorAgenciaA, ['*']);
+    $this->postJson('/api/billetajes', ['asesor_id' => $asesorA->id, 'monto' => 40, 'motivo' => 'Gastos operativos', 'medio_egreso' => 'efectivo'])->assertCreated();
+
+    $asesorB = User::factory()->forAgencia($this->agenciaB)->create();
+    $asesorB->assignRole('asesor');
+    Sanctum::actingAs($asesorB, ['*']);
 
     $this->getJson('/api/billetajes')->assertSuccessful()->assertJsonCount(0, 'data.data');
+
+    Sanctum::actingAs($asesorA, ['*']);
+    $this->getJson('/api/billetajes')->assertSuccessful()->assertJsonCount(1, 'data.data');
 });

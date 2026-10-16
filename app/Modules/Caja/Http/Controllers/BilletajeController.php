@@ -2,12 +2,12 @@
 
 namespace App\Modules\Caja\Http\Controllers;
 
-use App\Modules\Caja\Http\Requests\AprobarBilletajeRequest;
 use App\Modules\Caja\Http\Requests\RechazarBilletajeRequest;
 use App\Modules\Caja\Http\Requests\StoreBilletajeRequest;
 use App\Modules\Caja\Models\Billetaje;
 use App\Modules\Caja\Services\BilletajeService;
 use App\Modules\Caja\Services\CajaBovedaHierarchyService;
+use App\Modules\Usuario\Models\User;
 use App\Nucleo\Http\Controllers\Controller;
 use App\Nucleo\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
@@ -26,42 +26,48 @@ class BilletajeController extends Controller
     {
         Gate::authorize('viewAny', Billetaje::class);
 
-        $query = Billetaje::query()->with(['boveda', 'solicitadoPor', 'aprobadoPor', 'cliente', 'fotos']);
+        $query = Billetaje::query()->with(['boveda', 'solicitadoPor', 'asesor', 'aprobadoPor', 'cliente', 'fotos']);
         $query = $this->hierarchy->billetajesVisibles($query, request()->user());
 
         return $this->successResponse($query->latest()->paginate(15));
     }
 
+    /**
+     * A systems/administrador_general/administrador_agencia sends a billetaje
+     * to an asesor. The asesor will only be able to accept or reject it.
+     */
     public function store(StoreBilletajeRequest $request): JsonResponse
     {
         Gate::authorize('create', Billetaje::class);
 
-        $billetaje = $this->billetajeService->solicitar(
+        $asesor = User::query()->findOrFail($request->validated('asesor_id'));
+
+        $billetaje = $this->billetajeService->enviar(
             $request->user(),
+            $asesor,
             (string) $request->validated('monto'),
             $request->validated('motivo'),
-            $request->validated('medio_recepcion'),
-            $request->validated('datos_recepcion'),
-            $request->validated('cliente_id') !== null ? (int) $request->validated('cliente_id') : null,
-        );
-
-        return $this->successResponse($billetaje, 'Billetaje solicitado', 201);
-    }
-
-    public function aprobar(AprobarBilletajeRequest $request, Billetaje $billetaje): JsonResponse
-    {
-        Gate::authorize('aprobar', $billetaje);
-
-        $billetaje = $this->billetajeService->aprobar(
-            $billetaje,
-            $request->user(),
             $request->validated('medio_egreso', 'efectivo'),
             $request->validated('canal_egreso'),
             $request->validated('cuenta_bancaria_id') !== null ? (int) $request->validated('cuenta_bancaria_id') : null,
             $request->file('comprobante'),
+            $request->validated('cliente_id') !== null ? (int) $request->validated('cliente_id') : null,
         );
 
-        return $this->successResponse($billetaje, 'Billetaje aprobado');
+        return $this->successResponse(
+            $billetaje->load(['solicitadoPor', 'asesor', 'boveda', 'cliente', 'fotos']),
+            'Billetaje enviado',
+            201,
+        );
+    }
+
+    public function aceptar(Billetaje $billetaje): JsonResponse
+    {
+        Gate::authorize('aprobar', $billetaje);
+
+        $billetaje = $this->billetajeService->aceptar($billetaje, request()->user());
+
+        return $this->successResponse($billetaje, 'Billetaje aceptado');
     }
 
     public function rechazar(RechazarBilletajeRequest $request, Billetaje $billetaje): JsonResponse

@@ -24,6 +24,7 @@ class Billetaje extends Model
     protected $fillable = [
         'caja_ciclo_id',
         'boveda_id',
+        'asesor_id',
         'empresa_id',
         'monto',
         'estado',
@@ -63,6 +64,19 @@ class Billetaje extends Model
         return $this->belongsTo(Boveda::class);
     }
 
+    /**
+     * The usuario (asesor) the billetaje was enviado to — its caja
+     * (cajaCiclo) is the one that receives the money.
+     */
+    public function asesor(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'asesor_id');
+    }
+
+    /**
+     * The administrador who enviado the billetaje (sistemas /
+     * administrador_general / administrador_agencia).
+     */
     public function solicitadoPor(): BelongsTo
     {
         return $this->belongsTo(User::class, 'solicitado_por');
