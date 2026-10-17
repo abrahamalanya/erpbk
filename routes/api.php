@@ -59,6 +59,7 @@ use App\Modules\Venta\Http\Controllers\CatalogoVentaController;
 use App\Modules\Venta\Http\Controllers\ConfiguracionVentaController;
 use App\Modules\Venta\Http\Controllers\VentaController;
 use App\Nucleo\Http\Controllers\BancoController;
+use App\Nucleo\Http\Middleware\EnsureIdempotency;
 use Illuminate\Support\Facades\Route;
 
 // ===== AUTH ROUTES (públicas) =====
@@ -81,7 +82,9 @@ Route::prefix('tienda')->group(function () {
 });
 
 // ===== PROTECTED ROUTES (requieren autenticación) =====
-Route::middleware('auth:sanctum')->group(function () {
+// EnsureIdempotency va después de auth:sanctum para poder acotar la clave al
+// usuario autenticado; solo actúa si la petición trae el header Idempotency-Key.
+Route::middleware(['auth:sanctum', EnsureIdempotency::class])->group(function () {
     Route::post('/auth/logout', [AuthController::class, 'logout']);
     Route::get('/auth/me', [AuthController::class, 'me']);
 
