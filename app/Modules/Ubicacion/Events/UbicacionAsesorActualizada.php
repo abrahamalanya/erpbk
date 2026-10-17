@@ -2,6 +2,7 @@
 
 namespace App\Modules\Ubicacion\Events;
 
+use App\Modules\Sistemas\Services\ModuloService;
 use App\Modules\Ubicacion\Models\UbicacionAsesor;
 use App\Modules\Usuario\Models\User;
 use Illuminate\Broadcasting\Channel;
@@ -31,10 +32,19 @@ class UbicacionAsesorActualizada implements ShouldBroadcastNow
      */
     public function broadcastOn(): array
     {
-        return [
-            new PrivateChannel('empresa.'.$this->ubicacion->empresa_id.'.ubicaciones-asesores'),
-            new PrivateChannel('sistemas.ubicaciones-asesores'),
-        ];
+        $channels = [new PrivateChannel('sistemas.ubicaciones-asesores')];
+        $usuarios = User::withoutGlobalScopes()->where('empresa_id', $this->ubicacion->empresa_id);
+        if (! (clone $usuarios)->whereNotNull('perfil_acceso_id')->exists()) {
+            $channels[] = new PrivateChannel('empresa.'.$this->ubicacion->empresa_id.'.ubicaciones-asesores');
+
+            return $channels;
+        }
+
+        return array_merge($channels, $usuarios->where('estado', 'activo')->with('roles')->get()
+            ->filter(fn (User $user): bool => $user->hasAnyRole(['administrador_general', 'administrador_agencia', 'supervisor'])
+                && $user->can('ubicaciones_asesores.ver')
+                && app(ModuloService::class)->perfilPermite($user, 'ruta_cobranza'))
+            ->map(fn (User $user): Channel => new PrivateChannel('App.Models.User.'.$user->id))->values()->all());
     }
 
     public function broadcastAs(): string

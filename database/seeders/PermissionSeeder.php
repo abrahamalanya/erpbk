@@ -165,10 +165,10 @@ class PermissionSeeder extends Seeder
         ['key' => 'diario', 'nombre' => 'Créditos diarios', 'grupo' => 'creditos'],
         ['key' => 'hipotecario', 'nombre' => 'Créditos hipotecarios', 'grupo' => 'creditos'],
         ['key' => 'vehicular', 'nombre' => 'Créditos vehiculares', 'grupo' => 'creditos'],
-        ['key' => 'solicitudes', 'nombre' => 'Solicitudes', 'grupo' => 'general'],
-        ['key' => 'cajas', 'nombre' => 'Cajas', 'grupo' => 'general'],
-        ['key' => 'planilla', 'nombre' => 'Planilla', 'grupo' => 'general'],
-        ['key' => 'facturacion', 'nombre' => 'Facturación electrónica', 'grupo' => 'general'],
+        ['key' => 'solicitudes', 'nombre' => 'Solicitudes', 'grupo' => 'creditos'],
+        ['key' => 'cajas', 'nombre' => 'Cajas', 'grupo' => 'finanzas'],
+        ['key' => 'planilla', 'nombre' => 'Planilla', 'grupo' => 'administracion'],
+        ['key' => 'facturacion', 'nombre' => 'Facturación electrónica', 'grupo' => 'facturacion'],
     ];
 
     /**

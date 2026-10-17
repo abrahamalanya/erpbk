@@ -20,16 +20,15 @@ use Illuminate\Database\Eloquent\Collection;
  * mirrors how it bypasses every other authorization check in this app (see
  * UserPolicy::before(), CreditoHierarchyService::visibleQuery()).
  *
- * Only asesor/supervisor can be given a per-user override today (see
- * ROLES_RESTRINGIBLES) — every other role's módulos come solely from its
- * role default, edited from the Roles screen.
+ * Named access profiles replace the module selection without granting any
+ * operation permissions. Users without a profile preserve role defaults and
+ * the legacy asesor/supervisor overrides (ROLES_RESTRINGIBLES).
  *
  * Créditos prendarios/diarios/hipotecarios/vehiculares additionally gate
  * *registering* a new crédito of that tipo (autorizarCreacion()) and
  * *listing/viewing* créditos of a tipo the user no longer has
- * (filtrarPorModulo()) — the post-registro lifecycle itself (refrendar,
- * pagar_cuota, liquidar...) stays shared across every tipo (see
- * CreditoDiarioController), so it isn't gated per módulo.
+ * (filtrarPorModulo()). For profiled users, PerfilCreditoScope also protects
+ * reads, route bindings and the shared post-registration lifecycle.
  */
 final class ModuloService
 {
@@ -50,8 +49,7 @@ final class ModuloService
 
     /**
      * The módulos $user actually has access to right now: every módulo for
-     * 'sistemas', their own override if they've been given one, otherwise
-     * the union of their role(s)' defaults.
+     * 'sistemas', their active profile, or the legacy override/role defaults.
      *
      * @return list<string>
      */
@@ -59,6 +57,12 @@ final class ModuloService
     {
         if ($user->hasRole('sistemas')) {
             return Modulo::query()->pluck('key')->all();
+        }
+
+        if ($user->perfil_acceso_id !== null) {
+            $perfil = $user->perfilAcceso;
+
+            return $perfil?->activo ? $perfil->modulos()->pluck('key')->all() : [];
         }
 
         if ($user->modulos !== null) {
@@ -82,6 +86,13 @@ final class ModuloService
     public function tieneModulo(User $user, string $modulo): bool
     {
         return in_array($modulo, $this->modulosEfectivos($user), true);
+    }
+
+    /** Adds the profile boundary without changing legacy authorization. */
+    public function perfilPermite(User $user, string ...$modulos): bool
+    {
+        return $user->perfil_acceso_id === null || $user->hasRole('sistemas')
+            || array_intersect($modulos, $this->modulosEfectivos($user)) !== [];
     }
 
     /**

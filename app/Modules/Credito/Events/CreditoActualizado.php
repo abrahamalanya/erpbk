@@ -3,6 +3,7 @@
 namespace App\Modules\Credito\Events;
 
 use App\Modules\Credito\Models\Credito;
+use App\Modules\Sistemas\Services\ModuloService;
 use App\Modules\Usuario\Models\User;
 use Illuminate\Broadcasting\Channel;
 use Illuminate\Broadcasting\InteractsWithSockets;
@@ -36,6 +37,7 @@ class CreditoActualizado implements ShouldBroadcastNow
     public function broadcastOn(): array
     {
         return $this->destinatarios
+            ->filter(fn (User $user): bool => app(ModuloService::class)->perfilPermite($user, $this->credito->tipo_credito))
             ->unique('id')
             ->map(fn (User $user): Channel => new PrivateChannel('App.Models.User.'.$user->id))
             ->values()

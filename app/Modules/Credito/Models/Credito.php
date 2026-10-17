@@ -13,6 +13,7 @@ use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Facturacion\Models\Comprobante;
 use App\Modules\Usuario\Models\User;
 use App\Nucleo\Concerns\BelongsToTenant;
+use App\Nucleo\Scopes\PerfilCreditoScope;
 use Database\Factories\CreditoFactory;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Casts\Attribute;
@@ -110,6 +111,8 @@ class Credito extends Model
      */
     public static function booted(): void
     {
+        static::addGlobalScope(new PerfilCreditoScope);
+
         static::created(function (Credito $credito): void {
             if (filled($credito->codigo)) {
                 return;

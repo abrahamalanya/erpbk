@@ -11,7 +11,16 @@ use App\Modules\CreditoPrendario\Models\Bien;
 use App\Modules\CreditoPrendario\Tipos\PrendarioTipo;
 use App\Modules\CreditoVehicular\Models\Vehiculo;
 use App\Modules\CreditoVehicular\Tipos\VehicularTipo;
+use App\Modules\Facturacion\Models\Comprobante;
+use App\Modules\Simulador\Models\SimulacionCredito;
+use App\Modules\Sistemas\Models\PerfilAcceso;
+use App\Modules\Sistemas\Policies\PerfilAccesoPolicy;
+use App\Nucleo\Scopes\PerfilComprobanteScope;
+use App\Nucleo\Scopes\PerfilCreditoScope;
+use App\Nucleo\Scopes\PerfilNotificacionScope;
 use Illuminate\Database\Eloquent\Relations\Relation;
+use Illuminate\Notifications\DatabaseNotification;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -37,6 +46,12 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        Gate::policy(PerfilAcceso::class, PerfilAccesoPolicy::class);
+
+        Comprobante::addGlobalScope(new PerfilComprobanteScope);
+        SimulacionCredito::addGlobalScope(new PerfilCreditoScope);
+        DatabaseNotification::addGlobalScope(new PerfilNotificacionScope);
+
         /**
          * Stable aliases for the polymorphic garantía pivot (credito_garantia)
          * and garantia_fotos. Non-enforcing: models not listed here (e.g. the

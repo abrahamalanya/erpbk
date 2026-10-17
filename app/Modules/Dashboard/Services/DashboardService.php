@@ -7,6 +7,7 @@ use App\Modules\Caja\Services\CajaBovedaHierarchyService;
 use App\Modules\Cobranza\Models\Cobro;
 use App\Modules\Credito\Models\Credito;
 use App\Modules\Credito\Services\CreditoHierarchyService;
+use App\Modules\Sistemas\Services\ModuloService;
 use App\Modules\Usuario\Models\User;
 use App\Modules\Venta\Models\PagoVenta;
 use App\Modules\Venta\Models\Venta;
@@ -120,7 +121,7 @@ final class DashboardService
 
         // Ventas de tienda: solo entran si el filtro no está atado a un tipo de
         // crédito concreto; con un tipo de crédito elegido se leen solo cobros.
-        if ($tipo === null || $tipo === self::TIPO_VENTAS) {
+        if (($tipo === null || $tipo === self::TIPO_VENTAS) && app(ModuloService::class)->perfilPermite($actor, 'ventas')) {
             $pagos = PagoVenta::query()
                 ->whereNull('anulado_at')
                 ->whereDate('created_at', $hoy)
@@ -198,6 +199,10 @@ final class DashboardService
      */
     private function totalEgresos(User $actor, ?int $agenciaId, ?int $asesorId, string $hoy): array
     {
+        if (! app(ModuloService::class)->perfilPermite($actor, 'movimientos', 'mi_caja', 'cajas')) {
+            return ['total' => 0.0, 'cantidad' => 0];
+        }
+
         $query = CajaMovimiento::query()
             ->egresosManuales()
             ->whereDate('created_at', $hoy)

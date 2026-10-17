@@ -3,6 +3,8 @@
 namespace App\Modules\Caja\Events;
 
 use App\Modules\Caja\Models\Caja;
+use App\Modules\Sistemas\Services\ModuloService;
+use App\Modules\Usuario\Models\User;
 use Illuminate\Broadcasting\Channel;
 use Illuminate\Broadcasting\InteractsWithSockets;
 use Illuminate\Broadcasting\PrivateChannel;
@@ -29,6 +31,11 @@ class CajaActualizada implements ShouldBroadcastNow
      */
     public function broadcastOn(): array
     {
+        $owner = User::query()->find($this->caja->user_id);
+        if ($owner !== null && ! app(ModuloService::class)->perfilPermite($owner, 'mi_caja', 'cajas')) {
+            return [];
+        }
+
         return [new PrivateChannel('App.Models.User.'.$this->caja->user_id)];
     }
 

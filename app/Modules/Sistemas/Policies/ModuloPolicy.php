@@ -11,6 +11,6 @@ class ModuloPolicy
      */
     public function viewAny(User $user): bool
     {
-        return $user->hasRole('sistemas');
+        return $user->hasRole('sistemas') || $user->can('usuarios.crear') || $user->can('usuarios.editar');
     }
 }

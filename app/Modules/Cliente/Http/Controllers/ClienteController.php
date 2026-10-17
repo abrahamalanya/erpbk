@@ -127,9 +127,28 @@ class ClienteController extends Controller
 
     public function index(): JsonResponse
     {
+        return $this->listado(false);
+    }
+
+    public function opciones(): JsonResponse
+    {
+        return $this->listado(true);
+    }
+
+    public function opcion(Cliente $cliente): JsonResponse
+    {
+        Gate::authorize('view', $cliente);
+
+        return $this->successResponse($cliente->only(self::CAMPOS_OPCION));
+    }
+
+    private const CAMPOS_OPCION = ['id', 'nombre', 'apellido', 'tipo_documento', 'numero_documento', 'empresa_id', 'agencia_id', 'asesor_id', 'estado'];
+
+    private function listado(bool $opciones): JsonResponse
+    {
         Gate::authorize('viewAny', Cliente::class);
 
-        $query = Cliente::query()->with(self::RELACIONES);
+        $query = Cliente::query()->when(! $opciones, fn (Builder $q) => $q->with(self::RELACIONES));
         $query = $this->hierarchy->visibleQuery($query, request()->user());
 
         if (request()->filled('q')) {
@@ -159,7 +178,12 @@ class ClienteController extends Controller
 
         $porPagina = max(1, min(request()->integer('per_page', 50), 100));
 
-        return $this->successResponse($query->paginate($porPagina));
+        $resultado = $query->paginate($porPagina, $opciones ? self::CAMPOS_OPCION : ['*']);
+        if ($opciones) {
+            $resultado->through(fn (Cliente $cliente): array => $cliente->only(self::CAMPOS_OPCION));
+        }
+
+        return $this->successResponse($resultado);
     }
 
     public function store(StoreClienteRequest $request): JsonResponse

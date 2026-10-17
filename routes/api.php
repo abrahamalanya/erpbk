@@ -42,6 +42,7 @@ use App\Modules\Sistemas\Http\Controllers\ConceptoController;
 use App\Modules\Sistemas\Http\Controllers\ConfiguracionSistemaController;
 use App\Modules\Sistemas\Http\Controllers\ModuloController;
 use App\Modules\Sistemas\Http\Controllers\NotificacionController;
+use App\Modules\Sistemas\Http\Controllers\PerfilAccesoController;
 use App\Modules\Sistemas\Http\Controllers\PermisoTemporalController;
 use App\Modules\Sistemas\Http\Controllers\PermissionController;
 use App\Modules\Sistemas\Http\Controllers\RoleController;
@@ -60,6 +61,7 @@ use App\Modules\Venta\Http\Controllers\ConfiguracionVentaController;
 use App\Modules\Venta\Http\Controllers\VentaController;
 use App\Nucleo\Http\Controllers\BancoController;
 use App\Nucleo\Http\Middleware\EnsureIdempotency;
+use App\Nucleo\Http\Middleware\EnsurePerfilAcceso;
 use Illuminate\Support\Facades\Route;
 
 // ===== AUTH ROUTES (públicas) =====
@@ -84,9 +86,12 @@ Route::prefix('tienda')->group(function () {
 // ===== PROTECTED ROUTES (requieren autenticación) =====
 // EnsureIdempotency va después de auth:sanctum para poder acotar la clave al
 // usuario autenticado; solo actúa si la petición trae el header Idempotency-Key.
-Route::middleware(['auth:sanctum', EnsureIdempotency::class])->group(function () {
+Route::middleware(['auth:sanctum', EnsurePerfilAcceso::class, EnsureIdempotency::class])->group(function () {
     Route::post('/auth/logout', [AuthController::class, 'logout']);
     Route::get('/auth/me', [AuthController::class, 'me']);
+
+    Route::apiResource('perfiles-acceso', PerfilAccesoController::class)
+        ->parameters(['perfiles-acceso' => 'perfilAcceso'])->only(['index', 'store', 'show', 'update']);
 
     Route::apiResource('empresas', EmpresaController::class);
     Route::apiResource('agencias', AgenciaController::class);
@@ -120,6 +125,8 @@ Route::middleware(['auth:sanctum', EnsureIdempotency::class])->group(function ()
     Route::get('ubigeo/distritos/{distrito}', [UbigeoController::class, 'distrito'])->name('ubigeo.distrito');
 
     Route::get('clientes/asesores', [ClienteController::class, 'asesoresParaAsignar'])->name('clientes.asesores');
+    Route::get('opciones/clientes', [ClienteController::class, 'opciones'])->name('opciones.clientes');
+    Route::get('opciones/clientes/{cliente}', [ClienteController::class, 'opcion'])->name('opciones.clientes.show');
     Route::apiResource('clientes', ClienteController::class);
     Route::post('clientes/{cliente}/asignar', [ClienteController::class, 'asignar'])->name('clientes.asignar');
     Route::get('clientes/consultar-dni/{dni}', [ClienteController::class, 'consultarDni'])->name('clientes.consultar-dni');

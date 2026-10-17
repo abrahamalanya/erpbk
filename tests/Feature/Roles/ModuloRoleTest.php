@@ -1,5 +1,6 @@
 <?php
 
+use App\Modules\Sistemas\Models\Modulo;
 use App\Modules\Sistemas\Models\Role;
 use App\Modules\Sistemas\Services\ModuloService;
 use App\Modules\Usuario\Models\User;
@@ -25,9 +26,7 @@ it('gives sistemas every módulo regardless of role_modulo config', function () 
     $sistemas = User::factory()->create();
     $sistemas->assignRole('sistemas');
 
-    expect(app(ModuloService::class)->modulosEfectivos($sistemas))->toEqualCanonicalizing([
-        'prendario', 'diario', 'hipotecario', 'vehicular', 'solicitudes', 'cajas', 'planilla', 'facturacion',
-    ]);
+    expect(app(ModuloService::class)->modulosEfectivos($sistemas))->toEqualCanonicalizing(Modulo::query()->pluck('key')->all());
 });
 
 it('falls back to the role default when the user has no override', function () {
@@ -50,18 +49,18 @@ it('lets a user override replace the role default entirely', function () {
         ->toEqualCanonicalizing(['prendario', 'cajas']);
 });
 
-it('lists the módulo catalog for sistemas only', function () {
+it('lists the módulo catalog for sistemas and user administrators', function () {
     $sistemas = User::factory()->create();
     $sistemas->assignRole('sistemas');
     Sanctum::actingAs($sistemas, ['*']);
 
-    $this->getJson('/api/modulos')->assertSuccessful()->assertJsonCount(8, 'data');
+    $this->getJson('/api/modulos')->assertSuccessful()->assertJsonCount(Modulo::count(), 'data');
 
     $admin = User::factory()->create();
     $admin->assignRole('administrador_general');
     Sanctum::actingAs($admin, ['*']);
 
-    $this->getJson('/api/modulos')->assertForbidden();
+    $this->getJson('/api/modulos')->assertSuccessful();
 });
 
 it('lets sistemas update a rol default módulos alongside its permissions', function () {

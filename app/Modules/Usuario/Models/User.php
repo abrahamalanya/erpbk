@@ -5,6 +5,7 @@ namespace App\Modules\Usuario\Models;
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
+use App\Modules\Sistemas\Models\PerfilAcceso;
 use App\Modules\Ubigeo\Models\UbigeoDistrito;
 use App\Nucleo\Concerns\BelongsToTenant;
 use Database\Factories\UserFactory;
@@ -43,6 +44,7 @@ class User extends Authenticatable
         'agencia_id',
         'supervisor_id',
         'modulos',
+        'perfil_acceso_id',
         'foto_path',
         'qr_yape_path',
         'fecha_nacimiento',
@@ -85,6 +87,7 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
             'modulos' => 'array',
+            'perfil_acceso_id' => 'integer',
             'en_planilla' => 'boolean',
             'fecha_nacimiento' => 'date',
             'latitud' => 'decimal:7',
@@ -95,6 +98,11 @@ class User extends Authenticatable
     public function empresa(): BelongsTo
     {
         return $this->belongsTo(Empresa::class);
+    }
+
+    public function perfilAcceso(): BelongsTo
+    {
+        return $this->belongsTo(PerfilAcceso::class);
     }
 
     public function agencia(): BelongsTo

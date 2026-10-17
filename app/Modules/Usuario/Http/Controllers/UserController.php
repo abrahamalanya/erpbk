@@ -3,6 +3,7 @@
 namespace App\Modules\Usuario\Http\Controllers;
 
 use App\Modules\Empresa\Models\Empresa;
+use App\Modules\Sistemas\Models\PerfilAcceso;
 use App\Modules\Usuario\Http\Requests\StoreUserRequest;
 use App\Modules\Usuario\Http\Requests\UpdateUserRequest;
 use App\Modules\Usuario\Models\User;
@@ -12,6 +13,8 @@ use App\Nucleo\Http\Controllers\Controller;
 use App\Nucleo\Services\ConsultaDniService;
 use App\Nucleo\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 
 class UserController extends Controller
@@ -25,7 +28,7 @@ class UserController extends Controller
      *
      * @var list<string>
      */
-    private const RELACIONES = ['roles', 'empresa', 'agencia', 'ubigeoDistrito.provincia.departamento'];
+    private const RELACIONES = ['roles', 'empresa', 'agencia', 'perfilAcceso', 'ubigeoDistrito.provincia.departamento'];
 
     /**
      * Campos de imagen del recurso: cada uno se persiste en su columna
@@ -109,9 +112,15 @@ class UserController extends Controller
 
     public function store(StoreUserRequest $request): JsonResponse
     {
+        return DB::transaction(fn (): JsonResponse => $this->storeUser($request));
+    }
+
+    private function storeUser(StoreUserRequest $request): JsonResponse
+    {
         Gate::authorize('create', User::class);
 
         $data = $request->safe()->except(self::IMAGENES);
+        $this->validarPerfil($request, $data);
         $actor = $request->user();
         $roles = array_values(array_unique($data['roles']));
         $empresaId = $this->hierarchy->resolveEmpresaId($actor, $data['empresa_id'] ?? null);
@@ -130,6 +139,7 @@ class UserController extends Controller
             'empresa_id' => $empresaId,
             'agencia_id' => $this->hierarchy->resolveAgenciaId($actor, $roles, $data['agencia_id'] ?? null),
             'supervisor_id' => $data['supervisor_id'] ?? null,
+            'perfil_acceso_id' => $data['perfil_acceso_id'] ?? null,
             'fecha_nacimiento' => $data['fecha_nacimiento'] ?? null,
             'direccion' => $data['direccion'] ?? null,
             'referencia' => $data['referencia'] ?? null,
@@ -167,11 +177,17 @@ class UserController extends Controller
 
     public function update(UpdateUserRequest $request, User $user): JsonResponse
     {
+        return DB::transaction(fn (): JsonResponse => $this->updateUser($request, $user));
+    }
+
+    private function updateUser(UpdateUserRequest $request, User $user): JsonResponse
+    {
         Gate::authorize('update', $user);
 
         $data = $request->safe()->except(self::IMAGENES);
         $actor = $request->user();
         $roles = isset($data['roles']) ? array_values(array_unique($data['roles'])) : null;
+        $this->validarPerfil($request, $data, $user);
         unset($data['roles']);
 
         // Whenever the role set or the agencia is part of this request, re-resolve
@@ -194,6 +210,22 @@ class UserController extends Controller
         $this->storeImagenes($request, $user, self::IMAGENES, 'usuarios');
 
         return $this->successResponse($user->load(self::RELACIONES), 'Usuario actualizado');
+    }
+
+    private function validarPerfil(Request $request, array $data, ?User $target = null): void
+    {
+        if (! array_key_exists('perfil_acceso_id', $data)) {
+            return;
+        }
+        $id = $data['perfil_acceso_id'] === null ? null : (int) $data['perfil_acceso_id'];
+        if ($target !== null && $target->perfil_acceso_id === $id) {
+            return;
+        }
+        abort_if($target !== null && ! $request->user()->hasRole('sistemas') && ($target->id === $request->user()->id || $target->hasRole('sistemas')), 403, 'No puedes modificar este perfil de acceso.');
+        if ($id !== null) {
+            $perfil = PerfilAcceso::query()->lockForUpdate()->findOrFail($id);
+            abort_unless($perfil->activo, 422, 'El perfil está inactivo.');
+        }
     }
 
     public function destroy(User $user): JsonResponse

@@ -107,6 +107,7 @@ final class ReporteCobranzaMensualService
     private function cobrosEnRango(Carbon $inicio, Carbon $fin, User $actor, ?int $empresaId, ?int $agenciaId, ?int $asesorId): Collection
     {
         return Cobro::query()
+            ->when($actor->perfil_acceso_id !== null, fn (Builder $q) => $q->whereHas('credito'))
             ->where('estado', '!=', 'anulado')
             ->whereBetween('created_at', [$inicio, $fin])
             ->when($actor->hasRole('sistemas') && $empresaId, fn (Builder $q) => $q->where('empresa_id', $empresaId))
@@ -126,6 +127,7 @@ final class ReporteCobranzaMensualService
     private function desembolsosEnRango(Carbon $inicio, Carbon $fin, User $actor, ?int $empresaId, ?int $agenciaId, ?int $asesorId): Collection
     {
         return CajaMovimiento::query()
+            ->when($actor->perfil_acceso_id !== null, fn (Builder $q) => $q->whereHas('credito'))
             ->where('tipo', 'egreso')
             ->whereNull('concepto_id')
             // whereBetween con solo la fecha (no whereDate) fallaría cuando

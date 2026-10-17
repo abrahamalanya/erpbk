@@ -8,6 +8,7 @@ use App\Modules\Credito\Models\GarantiaFoto;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Usuario\Models\User;
+use App\Nucleo\Scopes\PerfilCreditoScope;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
@@ -86,7 +87,8 @@ trait EsGarantia
     {
         return $query->whereDoesntHave(
             'creditos',
-            fn (Builder $q) => $q->whereIn('estado', ['pendiente', 'aprobado', 'activo', 'vencido', 'pendiente_conformidad', 'en_venta', 'liquidado_pendiente'])
+            fn (Builder $q) => $q->withoutGlobalScope(PerfilCreditoScope::class)
+                ->whereIn('estado', ['pendiente', 'aprobado', 'activo', 'vencido', 'pendiente_conformidad', 'en_venta', 'liquidado_pendiente'])
         );
     }
 

@@ -4,6 +4,7 @@ namespace App\Modules\Usuario\Http\Requests;
 
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
+use App\Modules\Sistemas\Rules\PerfilAsignable;
 use App\Modules\Usuario\Models\User;
 use App\Modules\Usuario\Services\UserHierarchyService;
 use Illuminate\Contracts\Validation\ValidationRule;
@@ -48,6 +49,7 @@ class StoreUserRequest extends FormRequest
 
         return [
             'nombre' => ['required', 'string', 'max:255'],
+            'perfil_acceso_id' => ['sometimes', 'nullable', 'integer', new PerfilAsignable($actor)],
             'apellido' => ['required', 'string', 'max:255'],
             'dni' => ['required', 'string', 'regex:/^\d{8}$/', 'unique:users,dni'],
             'usuario' => ['nullable', 'string', 'max:50', 'alpha_dash'],

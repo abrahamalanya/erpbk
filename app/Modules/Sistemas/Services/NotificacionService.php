@@ -2,8 +2,10 @@
 
 namespace App\Modules\Sistemas\Services;
 
+use App\Modules\Credito\Models\Credito;
 use App\Modules\Sistemas\Events\NotificacionCreada;
 use App\Modules\Usuario\Models\User;
+use App\Nucleo\Scopes\PerfilCreditoScope;
 use Illuminate\Notifications\Channels\DatabaseChannel;
 use Illuminate\Notifications\Notification;
 use Illuminate\Support\Collection;
@@ -28,6 +30,19 @@ final class NotificacionService
         $channel = new DatabaseChannel;
 
         foreach ($destinatarios as $destinatario) {
+            $data = $notification->toArray($destinatario);
+            if (isset($data['credito_id'])) {
+                $tipo = Credito::withoutGlobalScope(PerfilCreditoScope::class)->whereKey($data['credito_id'])->value('tipo_credito');
+                if ($tipo !== null && ! app(ModuloService::class)->perfilPermite($destinatario, $tipo)) {
+                    continue;
+                }
+            }
+            foreach (['billetaje_id' => 'billetajes', 'venta_id' => 'ventas', 'interes_id' => 'tienda_solicitudes'] as $key => $modulo) {
+                if (isset($data[$key]) && ! app(ModuloService::class)->perfilPermite($destinatario, $modulo)) {
+                    continue 2;
+                }
+            }
+
             // A fresh id per recipient — it's the notifications table's
             // primary key, reusing one across recipients would collide.
             $notification->id = (string) Str::uuid();

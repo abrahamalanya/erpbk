@@ -2,6 +2,7 @@
 
 namespace App\Modules\Usuario\Http\Requests;
 
+use App\Modules\Sistemas\Rules\PerfilAsignable;
 use App\Modules\Usuario\Models\User;
 use App\Modules\Usuario\Services\UserHierarchyService;
 use Illuminate\Contracts\Validation\ValidationRule;
@@ -55,6 +56,7 @@ class UpdateUserRequest extends FormRequest
 
         return [
             'nombre' => ['sometimes', 'required', 'string', 'max:255'],
+            'perfil_acceso_id' => ['sometimes', 'nullable', 'integer', new PerfilAsignable($actor, $target)],
             'apellido' => ['sometimes', 'required', 'string', 'max:255'],
             'dni' => [
                 'sometimes', 'required', 'string', 'regex:/^\d{8}$/',

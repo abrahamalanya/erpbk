@@ -28,6 +28,8 @@ class UsuarioModuloController extends Controller
     {
         Gate::authorize('update', $user);
 
+        abort_if($user->perfil_acceso_id !== null, 409, 'Este usuario usa un perfil de acceso. Modifica su perfil en el formulario de usuario.');
+
         $this->modulos->asignar($user, $request->validated('modulos'));
 
         return $this->successResponse($this->estado($user), 'Módulos actualizados');

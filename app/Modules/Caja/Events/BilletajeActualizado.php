@@ -3,6 +3,7 @@
 namespace App\Modules\Caja\Events;
 
 use App\Modules\Caja\Models\Billetaje;
+use App\Modules\Sistemas\Services\ModuloService;
 use App\Modules\Usuario\Models\User;
 use Illuminate\Broadcasting\Channel;
 use Illuminate\Broadcasting\InteractsWithSockets;
@@ -35,6 +36,7 @@ class BilletajeActualizado implements ShouldBroadcastNow
     public function broadcastOn(): array
     {
         return $this->destinatarios
+            ->filter(fn (User $user): bool => app(ModuloService::class)->perfilPermite($user, 'billetajes'))
             ->unique('id')
             ->map(fn (User $user): Channel => new PrivateChannel('App.Models.User.'.$user->id))
             ->values()
