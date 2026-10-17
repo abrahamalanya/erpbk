@@ -2,12 +2,33 @@
 
 namespace App\Modules\Sistemas\Services;
 
+use App\Nucleo\Http\Middleware\EnsurePerfilAcceso;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Route;
 
 /** Associates existing API resources with the shared module catalog. */
 final class AccesoModulo
 {
     public const TIPOS_CREDITO = ['prendario', 'diario', 'hipotecario', 'vehicular'];
+
+    /** @return list<array{metodo: string, ruta: string}> */
+    public static function rutasPara(string $key): array
+    {
+        $rutas = [];
+        foreach (Route::getRoutes() as $route) {
+            if (! in_array(EnsurePerfilAcceso::class, $route->gatherMiddleware(), true)) {
+                continue;
+            }
+            foreach (array_diff($route->methods(), ['HEAD', 'OPTIONS']) as $metodo) {
+                $request = Request::create('/'.$route->uri(), $metodo);
+                if (in_array($key, self::requeridos($request) ?? [], true)) {
+                    $rutas[] = ['metodo' => $metodo, 'ruta' => '/'.$route->uri()];
+                }
+            }
+        }
+
+        return $rutas;
+    }
 
     /** @return list<string>|null Null identifies a shared authenticated utility. */
     public static function requeridos(Request $request): ?array

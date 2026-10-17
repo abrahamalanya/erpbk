@@ -8,6 +8,7 @@ use App\Modules\Sistemas\Services\ModuloService;
 use App\Nucleo\Http\Controllers\Controller;
 use App\Nucleo\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 
 class RoleController extends Controller
@@ -34,12 +35,14 @@ class RoleController extends Controller
     {
         Gate::authorize('update', $role);
 
-        $role->syncPermissions($request->validated('permissions'));
+        return DB::transaction(function () use ($request, $role): JsonResponse {
+            $role->syncPermissions($request->validated('permissions'));
 
-        if ($request->has('modulos')) {
-            $this->modulos->asignarARol($role, $request->validated('modulos'));
-        }
+            if ($request->has('modulos')) {
+                $this->modulos->asignarARol($role, $request->validated('modulos'));
+            }
 
-        return $this->successResponse($role->load(['permissions', 'modulos']), 'Rol actualizado');
+            return $this->successResponse($role->load(['permissions', 'modulos']), 'Rol actualizado');
+        });
     }
 }

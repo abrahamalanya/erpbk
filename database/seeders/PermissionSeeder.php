@@ -236,7 +236,7 @@ class PermissionSeeder extends Seeder
     private function seedModulos(): void
     {
         foreach (self::MODULOS as $modulo) {
-            Modulo::query()->updateOrCreate(['key' => $modulo['key']], $modulo);
+            Modulo::query()->firstOrCreate(['key' => $modulo['key']], $modulo);
         }
 
         foreach (self::ROLE_MODULOS as $roleName => $keys) {

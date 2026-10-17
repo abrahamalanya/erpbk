@@ -105,7 +105,7 @@ Route::middleware(['auth:sanctum', EnsurePerfilAcceso::class, EnsureIdempotency:
     Route::post('usuarios/fotocheck/pdf', [FotocheckController::class, 'pdf'])->name('usuarios.fotocheck.pdf');
     Route::apiResource('roles', RoleController::class)->only(['index', 'show', 'update']);
     Route::apiResource('permisos', PermissionController::class)->only(['index']);
-    Route::apiResource('modulos', ModuloController::class)->only(['index']);
+    Route::apiResource('modulos', ModuloController::class);
     Route::get('gestion/permisos-temporales', [PermisoTemporalController::class, 'index'])->name('gestion.permisos-temporales.index');
     Route::post('gestion/permisos-temporales/{cliente}', [PermisoTemporalController::class, 'store'])->name('gestion.permisos-temporales.store');
     Route::delete('gestion/permisos-temporales/{permisoTemporal}', [PermisoTemporalController::class, 'destroy'])->name('gestion.permisos-temporales.destroy');

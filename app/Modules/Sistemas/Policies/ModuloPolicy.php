@@ -13,4 +13,9 @@ class ModuloPolicy
     {
         return $user->hasRole('sistemas') || $user->can('usuarios.crear') || $user->can('usuarios.editar');
     }
+
+    public function manage(User $user): bool
+    {
+        return $user->hasRole('sistemas');
+    }
 }

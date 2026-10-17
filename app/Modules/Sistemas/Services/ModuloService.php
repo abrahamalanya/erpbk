@@ -8,6 +8,8 @@ use App\Modules\Usuario\Models\User;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 /**
  * Módulos are the app's toggleable business areas (créditos prendarios,
@@ -114,7 +116,12 @@ final class ModuloService
      */
     public function asignar(User $user, ?array $modulos): void
     {
-        $user->update(['modulos' => $modulos]);
+        DB::transaction(function () use ($user, $modulos): void {
+            if ($modulos !== null) {
+                $this->idsParaAsignar($modulos);
+            }
+            $user->update(['modulos' => $modulos]);
+        });
     }
 
     /**
@@ -130,9 +137,54 @@ final class ModuloService
      */
     public function asignarARol(Role $role, array $modulos): void
     {
-        $ids = Modulo::query()->whereIn('key', $modulos)->pluck('id');
+        DB::transaction(fn () => $role->modulos()->sync($this->idsParaAsignar($modulos)));
+    }
 
-        $role->modulos()->sync($ids);
+    /** Locks the catalog while its relationships are assigned. Call inside a transaction.
+     * @param  list<string>  $keys
+     * @return list<int>
+     */
+    public function idsParaAsignar(array $keys): array
+    {
+        $keys = array_values(array_unique($keys));
+        $ids = Modulo::query()->whereIn('key', $keys)->orderBy('id')->lockForUpdate()->pluck('id')->all();
+        if (count($ids) !== count($keys)) {
+            throw ValidationException::withMessages(['modulos' => 'El catálogo cambió. Recarga y vuelve a seleccionar los módulos.']);
+        }
+
+        return $ids;
+    }
+
+    public function verificarRevision(Modulo $modulo, string $revision): void
+    {
+        abort_unless(hash_equals($modulo->revision, $revision), 409, 'El módulo cambió. Recarga sus datos antes de continuar.');
+    }
+
+    public function usos(Modulo $modulo): array
+    {
+        $perfiles = $modulo->perfilesAcceso()->orderBy('nombre')->get(['perfiles_acceso.id', 'nombre'])->map->only(['id', 'nombre'])->values();
+        $roles = $modulo->roles()->orderBy('name')->get(['roles.id', 'name'])->map->only(['id', 'name'])->values();
+        $usuarios = User::withoutGlobalScopes()->whereJsonContains('modulos', $modulo->key)->count();
+        $rutas = AccesoModulo::rutasPara($modulo->key);
+
+        return [
+            'perfiles' => $perfiles,
+            'roles' => $roles,
+            'selecciones_individuales' => $usuarios,
+            'rutas_api' => $rutas,
+            'puede_eliminar' => $perfiles->isEmpty() && $roles->isEmpty() && $usuarios === 0 && $rutas === [],
+        ];
+    }
+
+    public function eliminar(Modulo $modulo, string $revision): void
+    {
+        DB::transaction(function () use ($modulo, $revision): void {
+            $actual = Modulo::query()->lockForUpdate()->findOrFail($modulo->id);
+            $this->verificarRevision($actual, $revision);
+            abort_unless($this->usos($actual)['puede_eliminar'], 409, 'No se puede eliminar: el módulo está conectado al sistema o tiene perfiles, roles o selecciones individuales asociados.');
+
+            $actual->delete();
+        });
     }
 
     /**

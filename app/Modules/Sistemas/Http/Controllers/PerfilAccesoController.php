@@ -3,8 +3,8 @@
 namespace App\Modules\Sistemas\Http\Controllers;
 
 use App\Modules\Sistemas\Http\Requests\SavePerfilAccesoRequest;
-use App\Modules\Sistemas\Models\Modulo;
 use App\Modules\Sistemas\Models\PerfilAcceso;
+use App\Modules\Sistemas\Services\ModuloService;
 use App\Modules\Usuario\Models\User;
 use App\Nucleo\Http\Controllers\Controller;
 use App\Nucleo\Traits\ApiResponse;
@@ -15,6 +15,8 @@ use Illuminate\Support\Facades\Gate;
 class PerfilAccesoController extends Controller
 {
     use ApiResponse;
+
+    public function __construct(private readonly ModuloService $modulos) {}
 
     public function index(): JsonResponse
     {
@@ -35,7 +37,7 @@ class PerfilAccesoController extends Controller
         Gate::authorize('create', PerfilAcceso::class);
         $perfil = DB::transaction(function () use ($request): PerfilAcceso {
             $perfil = PerfilAcceso::query()->create($request->safe()->only(['nombre', 'descripcion', 'activo']));
-            $perfil->modulos()->sync(Modulo::query()->whereIn('key', $request->validated('modulos'))->pluck('id'));
+            $perfil->modulos()->sync($this->modulos->idsParaAsignar($request->validated('modulos')));
 
             return $perfil;
         });
@@ -51,7 +53,7 @@ class PerfilAccesoController extends Controller
             abort_if($request->filled('updated_at') && ! $perfil->updated_at->equalTo($request->date('updated_at')), 409, 'El perfil cambió. Recarga antes de guardar.');
             abort_if(! $request->boolean('activo') && User::withoutGlobalScopes()->where('perfil_acceso_id', $perfil->id)->exists(), 409, 'Reasigna los usuarios antes de desactivar el perfil.');
             $perfil->update($request->safe()->only(['nombre', 'descripcion', 'activo']));
-            $perfil->modulos()->sync(Modulo::query()->whereIn('key', $request->validated('modulos'))->pluck('id'));
+            $perfil->modulos()->sync($this->modulos->idsParaAsignar($request->validated('modulos')));
             $perfil->touch();
 
             return $perfil;
