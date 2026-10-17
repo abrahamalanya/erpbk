@@ -10,6 +10,8 @@ use App\Modules\Caja\Models\CajaCiclo;
 use App\Modules\Caja\Models\CajaMovimiento;
 use App\Modules\Sistemas\Models\Concepto;
 use App\Modules\Usuario\Models\User;
+use App\Nucleo\Exceptions\ConflictoDeEstadoException;
+use App\Nucleo\Exceptions\MotivoConflicto;
 use DomainException;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
@@ -44,14 +46,14 @@ final class CajaService
         $caja = $this->cajaDe($actor);
 
         if ($caja->cicloAbierto()->exists()) {
-            throw new DomainException('Ya tienes un ciclo de caja abierto.');
+            throw new ConflictoDeEstadoException('Ya tienes un ciclo de caja abierto.', MotivoConflicto::CAJA_ABIERTA);
         }
 
         $boveda = $this->hierarchy->bovedaFinanciadoraDe($actor);
         $cicloBoveda = $boveda->cicloAbierto()->first();
 
         if ($cicloBoveda && $cicloBoveda->fecha->toDateString() < now()->startOfDay()->toDateString()) {
-            throw new DomainException('No puedes aperturar tu caja: la bóveda que te financia sigue con un ciclo abierto de un día anterior.');
+            throw new ConflictoDeEstadoException('No puedes aperturar tu caja: la bóveda que te financia sigue con un ciclo abierto de un día anterior.', MotivoConflicto::CAJA_ABIERTA);
         }
 
         $this->bovedaService->asegurarAbierta($boveda, $actor);
@@ -78,7 +80,7 @@ final class CajaService
         $ciclo = $caja->cicloAbierto()->first();
 
         if (! $ciclo) {
-            throw new DomainException('No tienes un ciclo de caja abierto.');
+            throw new ConflictoDeEstadoException('No tienes un ciclo de caja abierto.', MotivoConflicto::CAJA_CERRADA);
         }
 
         if ($ciclo->billetajes()->where('estado', 'pendiente')->exists()) {
@@ -118,7 +120,7 @@ final class CajaService
         $ciclo = $caja->cicloAbierto()->first();
 
         if (! $ciclo) {
-            throw new DomainException('Debes aperturar tu caja antes de registrar un movimiento.');
+            throw new ConflictoDeEstadoException('Debes aperturar tu caja antes de registrar un movimiento.', MotivoConflicto::CAJA_CERRADA);
         }
 
         $concepto = Concepto::query()->findOrFail($conceptoId);
@@ -186,7 +188,7 @@ final class CajaService
         $ciclo = $caja->cicloAbierto()->first();
 
         if (! $ciclo) {
-            throw new DomainException('No tienes un ciclo de caja abierto.');
+            throw new ConflictoDeEstadoException('No tienes un ciclo de caja abierto.', MotivoConflicto::CAJA_CERRADA);
         }
 
         // 'concepto' is deliberately NOT eager-loaded here: CajaMovimiento has
@@ -292,7 +294,7 @@ final class CajaService
         $ciclo = $caja->cicloAbierto()->first();
 
         if (! $ciclo) {
-            throw new DomainException('Esta caja no tiene un ciclo abierto.');
+            throw new ConflictoDeEstadoException('Esta caja no tiene un ciclo abierto.', MotivoConflicto::CAJA_CERRADA);
         }
 
         $this->billetajeService->rechazarPendientesDe(

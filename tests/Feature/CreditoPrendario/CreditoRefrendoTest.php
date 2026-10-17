@@ -104,7 +104,8 @@ it('rejects refrendo on a crédito still pendiente', function () {
     Sanctum::actingAs($this->asesor, ['*']);
 
     $this->postJson("/api/creditos-prendarios/{$pendiente->id}/refrendar", ['monto_pagado' => 50, 'medio' => 'efectivo'])
-        ->assertUnprocessable();
+        ->assertStatus(409)
+        ->assertJsonPath('reason', 'credito_estado_invalido');
 });
 
 it('rejects refrendo with a monto_interes_pagado below the calculated prorated interest', function () {
@@ -167,7 +168,8 @@ it('rejects refrendo when monto_pagado covers the full total, suggesting Liquida
     Sanctum::actingAs($this->asesor, ['*']);
 
     $this->postJson("/api/creditos-prendarios/{$activo->id}/refrendar", ['monto_pagado' => 1100, 'medio' => 'efectivo'])
-        ->assertUnprocessable()
+        ->assertStatus(409)
+        ->assertJsonPath('reason', 'credito_estado_invalido')
         ->assertJsonPath('message', 'El monto pagado (1100) cubre el total del crédito (1100.00); selecciona Liquidar para cancelarlo.');
 });
 
@@ -192,4 +194,41 @@ it('abona a capital cuando el monto pagado supera el interés, generando un suce
     $cuotas = Credito::find($nuevoId)->cuotas;
     expect($cuotas)->toHaveCount(1)
         ->and((string) $cuotas->first()->monto_capital)->toBe('800.00');
+});
+
+it('devuelve 409 con motivo cuando el crédito ya no está activo (conflicto de estado)', function () {
+    ConfiguracionCredito::factory()->deEmpresa($this->empresa)->create([
+        'plazo_dias' => 30, 'dias_espera_mora' => 15, 'tasa_mora_diaria' => 1, 'max_refrendos' => null,
+    ]);
+
+    $credito = Credito::factory()->paraBien($this->bien)
+        ->activo()
+        ->create(['registrado_por' => $this->asesor->id]);
+
+    // El crédito se liquidó en otro dispositivo mientras el asesor estaba sin señal.
+    $credito->update(['estado' => 'liquidado']);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $this->postJson("/api/creditos-prendarios/{$credito->id}/refrendar", ['monto_pagado' => 100, 'medio' => 'efectivo'])
+        ->assertStatus(409)
+        ->assertJsonPath('reason', 'credito_estado_invalido')
+        ->assertJsonPath('message', 'Solo se puede refrendar un crédito activo o vencido.');
+});
+
+it('sigue devolviendo 422 (sin motivo) para errores de validación de datos', function () {
+    ConfiguracionCredito::factory()->deEmpresa($this->empresa)->create([
+        'plazo_dias' => 30, 'dias_espera_mora' => 15, 'tasa_mora_diaria' => 1, 'max_refrendos' => null,
+    ]);
+
+    $credito = Credito::factory()->paraBien($this->bien)
+        ->activo()
+        ->create(['registrado_por' => $this->asesor->id]);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    // Monto menor al interés + mora: es un dato malo, no un estado que cambió.
+    $this->postJson("/api/creditos-prendarios/{$credito->id}/refrendar", ['monto_pagado' => '1.00', 'medio' => 'efectivo'])
+        ->assertStatus(422)
+        ->assertJsonPath('reason', null);
 });

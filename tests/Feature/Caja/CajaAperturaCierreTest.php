@@ -32,7 +32,8 @@ it('blocks a second apertura while a ciclo is still open', function () {
     $this->postJson('/api/caja/aperturar')->assertCreated();
 
     $this->postJson('/api/caja/aperturar')
-        ->assertUnprocessable()
+        ->assertStatus(409)
+        ->assertJsonPath('reason', 'caja_abierta')
         ->assertJsonPath('message', 'Ya tienes un ciclo de caja abierto.');
 });
 
@@ -70,7 +71,8 @@ it('rejects cerrar when there is no open ciclo', function () {
     Sanctum::actingAs($asesor, ['*']);
 
     $this->postJson('/api/caja/cerrar', ['monto_contado' => 10])
-        ->assertUnprocessable()
+        ->assertStatus(409)
+        ->assertJsonPath('reason', 'caja_cerrada')
         ->assertJsonPath('message', 'No tienes un ciclo de caja abierto.');
 });
 

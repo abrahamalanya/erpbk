@@ -25,7 +25,8 @@ it('blocks aperturar-ing a caja while its funding boveda has an open ciclo dated
     $bovedaAgencia->cicloAbierto()->update(['fecha' => now()->subDay()->toDateString()]);
 
     $this->postJson('/api/caja/aperturar')
-        ->assertUnprocessable()
+        ->assertStatus(409)
+        ->assertJsonPath('reason', 'caja_abierta')
         ->assertJsonPath('message', 'No puedes aperturar tu caja: la bóveda que te financia sigue con un ciclo abierto de un día anterior.');
 });
 

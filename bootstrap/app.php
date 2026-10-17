@@ -1,5 +1,7 @@
 <?php
 
+use App\Nucleo\Exceptions\ConflictoDeEstadoException;
+use App\Nucleo\Exceptions\MotivoConflicto;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -20,6 +22,22 @@ return Application::configure(basePath: dirname(__DIR__))
         //
     })
     ->withExceptions(function (Exceptions $exceptions): void {
+        // Conflicto de estado: el servidor no aplica la operación porque su
+        // estado real la contradice (caja cerrada/abierta, crédito liquidado…).
+        // Va ANTES del manejador genérico de DomainException: como
+        // ConflictoDeEstadoException extiende DomainException, el orden decide
+        // cuál responde. El `reason` le dice a la app offline qué pasó.
+        $exceptions->render(function (ConflictoDeEstadoException $e, Request $request) {
+            if ($request->is('api/*')) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $e->getMessage(),
+                    'reason' => $e->reason,
+                    'data' => null,
+                ], 409);
+            }
+        });
+
         $exceptions->render(function (DomainException $e, Request $request) {
             if ($request->is('api/*')) {
                 return response()->json([

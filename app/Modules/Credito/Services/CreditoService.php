@@ -37,6 +37,8 @@ use App\Modules\Credito\Notifications\CreditoVendidoNotification;
 use App\Modules\Credito\Tipos\CreditoTipoManager;
 use App\Modules\Sistemas\Services\NotificacionService;
 use App\Modules\Usuario\Models\User;
+use App\Nucleo\Exceptions\ConflictoDeEstadoException;
+use App\Nucleo\Exceptions\MotivoConflicto;
 use Carbon\Carbon;
 use DomainException;
 use Illuminate\Database\Eloquent\Model;
@@ -975,7 +977,7 @@ final class CreditoService
         $this->asegurarSinCuotasPagadas($credito, 'refrendar');
 
         if (! in_array($credito->estado, ['activo', 'vencido'], true)) {
-            throw new DomainException('Solo se puede refrendar un crédito activo o vencido.');
+            throw new ConflictoDeEstadoException('Solo se puede refrendar un crédito activo o vencido.', MotivoConflicto::CREDITO_ESTADO_INVALIDO);
         }
 
         if ($credito->tipo_interes === 'compuesto') {
@@ -998,7 +1000,7 @@ final class CreditoService
         }
 
         if (bccomp($montoPagado, $total, 2) >= 0) {
-            throw new DomainException("El monto pagado ({$montoPagado}) cubre el total del crédito ({$total}); selecciona Liquidar para cancelarlo.");
+            throw new ConflictoDeEstadoException("El monto pagado ({$montoPagado}) cubre el total del crédito ({$total}); selecciona Liquidar para cancelarlo.", MotivoConflicto::CREDITO_ESTADO_INVALIDO);
         }
 
         $abonoCapital = bcsub($montoPagado, $interesConMora, 2);
@@ -1146,7 +1148,7 @@ final class CreditoService
         }
 
         if (bccomp($montoPagado, $total, 2) >= 0) {
-            throw new DomainException("El monto pagado ({$montoPagado}) cubre el total del crédito ({$total}); selecciona Liquidar para cancelarlo.");
+            throw new ConflictoDeEstadoException("El monto pagado ({$montoPagado}) cubre el total del crédito ({$total}); selecciona Liquidar para cancelarlo.", MotivoConflicto::CREDITO_ESTADO_INVALIDO);
         }
 
         $abonoCapital = bcsub($montoPagado, $interesConMora, 2);
@@ -1256,17 +1258,17 @@ final class CreditoService
         }
 
         if (! in_array($credito->estado, ['activo', 'vencido'], true)) {
-            throw new DomainException('Solo se puede pagar una cuota de un crédito activo o vencido.');
+            throw new ConflictoDeEstadoException('Solo se puede pagar una cuota de un crédito activo o vencido.', MotivoConflicto::CREDITO_ESTADO_INVALIDO);
         }
 
         $cuotasAPagar = $credito->cuotas()->orderBy('numero_cuota')->limit($numeroCuotas)->get();
 
         if ($cuotasAPagar->isEmpty()) {
-            throw new DomainException('Este crédito no tiene un cronograma de cuotas generado.');
+            throw new ConflictoDeEstadoException('Este crédito no tiene un cronograma de cuotas generado.', MotivoConflicto::CREDITO_ESTADO_INVALIDO);
         }
 
         if ($cuotasAPagar->count() < $numeroCuotas) {
-            throw new DomainException("Solo quedan {$cuotasAPagar->count()} cuota(s) pendiente(s), no se pueden pagar {$numeroCuotas}.");
+            throw new ConflictoDeEstadoException("Solo quedan {$cuotasAPagar->count()} cuota(s) pendiente(s), no se pueden pagar {$numeroCuotas}.", MotivoConflicto::CREDITO_SIN_CUOTAS);
         }
 
         $cuota = $cuotasAPagar->last();
@@ -1286,7 +1288,7 @@ final class CreditoService
         $nuevoNumeroCuotas = $credito->numero_cuotas - $numeroCuotas;
 
         if ($nuevoNumeroCuotas > 0 && bccomp($nuevoCapital, '0', 2) <= 0) {
-            throw new DomainException('El abono ingresado cancela todo el saldo pendiente; selecciona Liquidar para cancelar el crédito.');
+            throw new ConflictoDeEstadoException('El abono ingresado cancela todo el saldo pendiente; selecciona Liquidar para cancelar el crédito.', MotivoConflicto::CREDITO_ESTADO_INVALIDO);
         }
 
         $modeloGarantia = $this->tipos->paraCredito($credito)->garantiaModelo();
@@ -1495,18 +1497,18 @@ final class CreditoService
     private function cuotasPendientesParaPago(Credito $credito): array
     {
         if (! in_array($credito->estado, ['activo', 'vencido'], true)) {
-            throw new DomainException('Solo se puede pagar cuotas de un crédito activo o vencido.');
+            throw new ConflictoDeEstadoException('Solo se puede pagar cuotas de un crédito activo o vencido.', MotivoConflicto::CREDITO_ESTADO_INVALIDO);
         }
 
         $configuracion = $this->configuracion->resolverPara($credito->agencia, $credito->tipo_credito);
         $pendientes = $credito->cuotas()->pendientes()->orderBy('numero_cuota')->get();
 
         if ($pendientes->isEmpty()) {
-            throw new DomainException('Este crédito no tiene cuotas pendientes.');
+            throw new ConflictoDeEstadoException('Este crédito no tiene cuotas pendientes.', MotivoConflicto::CREDITO_SIN_CUOTAS);
         }
 
         if (! $this->admitePagoPorCuotas($credito)) {
-            throw new DomainException('Este crédito no admite pago por cuotas: necesita más de una cuota pendiente — usa refrendar, pagar cuota o liquidar.');
+            throw new ConflictoDeEstadoException('Este crédito no admite pago por cuotas: necesita más de una cuota pendiente — usa refrendar, pagar cuota o liquidar.', MotivoConflicto::CREDITO_SIN_CUOTAS);
         }
 
         return [$pendientes, $configuracion];
@@ -1521,7 +1523,7 @@ final class CreditoService
     private function asegurarSinCuotasPagadas(Credito $credito, string $operacion): void
     {
         if ($credito->cuotas()->pagadas()->exists()) {
-            throw new DomainException("No se puede {$operacion}: este crédito ya tiene cuotas pagadas — usa pagar cuotas o liquidar.");
+            throw new ConflictoDeEstadoException("No se puede {$operacion}: este crédito ya tiene cuotas pagadas — usa pagar cuotas o liquidar.", MotivoConflicto::CREDITO_ESTADO_INVALIDO);
         }
     }
 
@@ -1581,7 +1583,7 @@ final class CreditoService
         [$pendientes, $configuracion] = $this->cuotasPendientesParaPago($credito);
 
         if ($numeroCuotas > $pendientes->count()) {
-            throw new DomainException("Solo quedan {$pendientes->count()} cuota(s) pendiente(s), no se pueden pagar {$numeroCuotas}.");
+            throw new ConflictoDeEstadoException("Solo quedan {$pendientes->count()} cuota(s) pendiente(s), no se pueden pagar {$numeroCuotas}.", MotivoConflicto::CREDITO_SIN_CUOTAS);
         }
 
         $detalle = $pendientes->take($numeroCuotas)->map(function (CuotaCredito $cuota) use ($configuracion): array {
@@ -1861,7 +1863,7 @@ final class CreditoService
         ?string $motivoDescuento = null,
     ): Credito {
         if (! in_array($credito->estado, ['activo', 'vencido'], true)) {
-            throw new DomainException('Solo se puede liquidar un crédito activo o vencido.');
+            throw new ConflictoDeEstadoException('Solo se puede liquidar un crédito activo o vencido.', MotivoConflicto::CREDITO_ESTADO_INVALIDO);
         }
 
         $liquidacion = $this->calcularMontoLiquidacion($credito);
