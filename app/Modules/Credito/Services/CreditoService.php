@@ -363,15 +363,19 @@ final class CreditoService
 
     /**
      * Lets an admin override the interest rate for exceptional cases (e.g.
-     * an exclusive client on a custom rate) — only before the crédito is
-     * firmado, since fecha_desembolso/fecha_vencimiento and any disbursed
-     * cash are already locked in past that point.
+     * an exclusive client on a custom rate).
+     *
+     * - Mientras el crédito no se desembolsó (pendiente / aprobado): cualquier
+     *   admin con autoridad sobre él (de la agencia o general de la empresa)
+     *   puede editar la tasa.
+     * - Ya desembolsado (activo / vencido): solo el administrador general, y
+     *   solo mientras el crédito no tenga NINGÚN cobro registrado — una vez
+     *   que arranca la cobranza, cambiar la tasa descuadraría el cronograma y
+     *   lo ya cobrado.
      */
     public function actualizarInteres(Credito $credito, User $actor, string $interes): Credito
     {
-        if (! in_array($credito->estado, ['pendiente', 'aprobado'], true)) {
-            throw new DomainException('Solo se puede editar la tasa de interés mientras el crédito está pendiente o aprobado.');
-        }
+        $this->asegurarPuedeEditarInteres($credito, $actor);
 
         $credito->update(['interes' => $interes]);
 
@@ -380,6 +384,33 @@ final class CreditoService
         $this->notificaciones->enviar(collect([$credito->registradoPor]), new CreditoInteresActualizadoNotification($credito));
 
         return $credito;
+    }
+
+    /**
+     * Regla de autoridad para editar la tasa de interés — espejada en el
+     * frontend (`puedeEditarInteresCredito()` en creditoPrendarioHierarchy).
+     * Antes de desembolsar basta la autoridad admin normal (agencia o
+     * general); una vez desembolsado queda reservada al administrador general
+     * y solo mientras el crédito no tenga cobros (ver `editar()` en la Policy
+     * para el chequeo grueso de permiso/alcance).
+     */
+    private function asegurarPuedeEditarInteres(Credito $credito, User $actor): void
+    {
+        if (in_array($credito->estado, ['pendiente', 'aprobado'], true)) {
+            return;
+        }
+
+        if (! in_array($credito->estado, ['activo', 'vencido'], true)) {
+            throw new DomainException('Solo se puede editar la tasa de interés mientras el crédito está pendiente, aprobado, activo o vencido.');
+        }
+
+        if (! $actor->hasRole(['administrador_general', 'sistemas'])) {
+            throw new DomainException('Una vez desembolsado, solo el administrador general puede editar la tasa de interés.');
+        }
+
+        if ($credito->cobros()->exists()) {
+            throw new DomainException('No se puede editar la tasa de interés: el crédito ya tiene pagos registrados.');
+        }
     }
 
     /**

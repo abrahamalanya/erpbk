@@ -3,6 +3,7 @@
 use App\Modules\Caja\Models\Caja;
 use App\Modules\Caja\Models\CajaCiclo;
 use App\Modules\Cliente\Models\Cliente;
+use App\Modules\Cobranza\Models\Cobro;
 use App\Modules\Credito\Models\ConfiguracionCredito;
 use App\Modules\Credito\Models\Credito;
 use App\Modules\CreditoHipotecario\Models\Inmueble;
@@ -154,6 +155,76 @@ it('denies updating the interest rate once the crédito is activo', function () 
     Sanctum::actingAs($this->adminAgencia, ['*']);
     $this->postJson("/api/creditos-prendarios/{$creditoId}/actualizar-interes", ['interes' => 5])
         ->assertUnprocessable();
+});
+
+it('allows administrador_general to update the interest rate while activo, before any cobro', function () {
+    Storage::fake('public');
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $creditoId = $this->postJson('/api/creditos-prendarios', [
+        'bien_ids' => [$this->bien->id],
+        'monto_prestamo' => 500, 'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+
+    Sanctum::actingAs($this->adminAgencia, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/aprobar")->assertSuccessful();
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    foreach (Credito::find($creditoId)->documentos as $documento) {
+        $this->postJson("/api/creditos-prendarios/{$creditoId}/documentos/{$documento->id}/subir-firmado", [
+            'archivo' => UploadedFile::fake()->create('firmado.pdf', 100, 'application/pdf'),
+        ])->assertSuccessful();
+    }
+
+    Caja::query()->where('user_id', $this->asesor->id)->first()->cicloAbierto->update(['saldo_apertura' => 10000]);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar")->assertSuccessful();
+
+    $adminGeneral = User::factory()->forEmpresa($this->empresa)->create();
+    $adminGeneral->assignRole('administrador_general');
+
+    Sanctum::actingAs($adminGeneral, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/actualizar-interes", ['interes' => 7.5])
+        ->assertSuccessful()
+        ->assertJsonPath('data.interes', '7.50');
+});
+
+it('denies administrador_general from updating the interest rate once the crédito has a cobro', function () {
+    Storage::fake('public');
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $creditoId = $this->postJson('/api/creditos-prendarios', [
+        'bien_ids' => [$this->bien->id],
+        'monto_prestamo' => 500, 'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+
+    Sanctum::actingAs($this->adminAgencia, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/aprobar")->assertSuccessful();
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    foreach (Credito::find($creditoId)->documentos as $documento) {
+        $this->postJson("/api/creditos-prendarios/{$creditoId}/documentos/{$documento->id}/subir-firmado", [
+            'archivo' => UploadedFile::fake()->create('firmado.pdf', 100, 'application/pdf'),
+        ])->assertSuccessful();
+    }
+
+    Caja::query()->where('user_id', $this->asesor->id)->first()->cicloAbierto->update(['saldo_apertura' => 10000]);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar")->assertSuccessful();
+
+    Cobro::factory()->create([
+        'empresa_id' => $this->empresa->id,
+        'cliente_id' => $this->cliente->id,
+        'credito_id' => $creditoId,
+        'registrado_por' => $this->asesor->id,
+        'operacion' => 'refrendo',
+    ]);
+
+    $adminGeneral = User::factory()->forEmpresa($this->empresa)->create();
+    $adminGeneral->assignRole('administrador_general');
+
+    Sanctum::actingAs($adminGeneral, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/actualizar-interes", ['interes' => 7.5])
+        ->assertUnprocessable()
+        ->assertJsonPath('message', 'No se puede editar la tasa de interés: el crédito ya tiene pagos registrados.');
 });
 
 it('denies asesor from updating the interest rate', function () {

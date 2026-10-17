@@ -255,6 +255,9 @@ class CreditoController extends Controller
 
         if (in_array($credito->estado, ['activo', 'vencido'], true)) {
             $this->creditoService->adjuntarMontosSugeridos($credito);
+            // Señal para el frontend: un crédito ya desembolsado solo deja
+            // editar la tasa de interés mientras no tenga pagos registrados.
+            $credito->setAttribute('tiene_cobros', $credito->cobros()->exists());
         }
 
         if ($credito->estado === 'vencido') {
