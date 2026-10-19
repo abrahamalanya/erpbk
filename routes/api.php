@@ -26,6 +26,7 @@ use App\Modules\Facturacion\Http\Controllers\ReporteFacturacionController;
 use App\Modules\Facturacion\Http\Controllers\SerieComprobanteController;
 use App\Modules\Planilla\Http\Controllers\PlanillaController;
 use App\Modules\Planilla\Http\Controllers\PlanillaDescuentoController;
+use App\Modules\Qr\Http\Controllers\QrController;
 use App\Modules\Reportes\Http\Controllers\ReporteAtrasosController;
 use App\Modules\Reportes\Http\Controllers\ReporteCajasController;
 use App\Modules\Reportes\Http\Controllers\ReporteCobranzaController;
@@ -118,6 +119,8 @@ Route::middleware(['auth:sanctum', EnsurePerfilAcceso::class, EnsureIdempotency:
     Route::get('dashboard/resumen', [DashboardController::class, 'resumen'])->name('dashboard.resumen');
     Route::get('dashboard/linea-de-tiempo-atrasos', [DashboardController::class, 'lineaDeTiempoAtrasos'])->name('dashboard.linea-de-tiempo-atrasos');
     Route::get('dashboard/mapa-clientes', [DashboardController::class, 'mapaClientes'])->name('dashboard.mapa-clientes');
+
+    Route::get('qr/generar', [QrController::class, 'generar'])->name('qr.generar');
 
     Route::get('ubigeo/departamentos', [UbigeoController::class, 'departamentos'])->name('ubigeo.departamentos');
     Route::get('ubigeo/departamentos/{departamento}/provincias', [UbigeoController::class, 'provincias'])->name('ubigeo.provincias');
