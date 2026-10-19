@@ -368,13 +368,14 @@ final class DocumentoCreditoService
      */
     public function renderizarCronograma(Credito $credito): Response
     {
-        $credito->load(['cuotas', 'cliente', 'agencia', 'empresa']);
+        $credito->load(['cuotas', 'cliente', 'agencia', 'empresa', 'registradoPor']);
 
         $tipo = $this->tipos->paraCredito($credito);
 
         return $this->pdfGenerator->renderizarDesdeVista($tipo->vistaDocumento('cronograma'), [
             'credito' => $credito,
             'tentativo' => false,
+            'fotoDataUri' => fn (?string $path, int $maxAncho = 900): ?string => $this->fotoDataUri($path, $maxAncho),
         ]);
     }
 
@@ -388,7 +389,7 @@ final class DocumentoCreditoService
      */
     public function renderizarCronogramaTentativo(Credito $credito, array $preview): Response
     {
-        $credito->load(['cliente', 'agencia', 'empresa']);
+        $credito->load(['cliente', 'agencia', 'empresa', 'registradoPor']);
 
         /** @var Collection<int, CuotaCredito> $cuotas */
         $cuotas = collect($preview['cuotas'])->map(fn (array $fila): CuotaCredito => new CuotaCredito([
@@ -406,6 +407,7 @@ final class DocumentoCreditoService
         return $this->pdfGenerator->renderizarDesdeVista($tipo->vistaDocumento('cronograma'), [
             'credito' => $credito,
             'tentativo' => true,
+            'fotoDataUri' => fn (?string $path, int $maxAncho = 900): ?string => $this->fotoDataUri($path, $maxAncho),
         ]);
     }
 

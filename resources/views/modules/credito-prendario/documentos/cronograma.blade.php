@@ -4,7 +4,7 @@
     <meta charset="utf-8">
     <title>Cronograma de cuotas — Crédito #{{ $credito->id }}</title>
     <style>
-        @page { margin: 4cm 1cm 3cm 3cm; }
+        @page { margin: 0cm 1cm; }
         body { font-family: DejaVu Sans, sans-serif; }
     </style>
 </head>

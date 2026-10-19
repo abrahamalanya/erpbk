@@ -5,6 +5,8 @@ use App\Modules\Caja\Models\CajaCiclo;
 use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Credito\Models\ConfiguracionCredito;
 use App\Modules\Credito\Models\Credito;
+use App\Modules\Credito\Models\CuotaCredito;
+use App\Modules\Credito\Services\CreditoService;
 use App\Modules\CreditoPrendario\Models\Bien;
 use App\Modules\CreditoVehicular\Models\Vehiculo;
 use App\Modules\Empresa\Models\Agencia;
@@ -104,7 +106,7 @@ it('shows the chosen numero_cuotas in the tentative cronograma (screen preview a
     expect($credito->cuotas()->exists())->toBeFalse();
 
     // Preview (mismo helper que consume el endpoint /cronograma/ver antes del desembolso).
-    $preview = app(\App\Modules\Credito\Services\CreditoService::class)->previsualizarCronograma(
+    $preview = app(CreditoService::class)->previsualizarCronograma(
         (string) $credito->monto_prestamo,
         (string) $credito->interes,
         $credito->tipo_cuota,
@@ -114,8 +116,12 @@ it('shows the chosen numero_cuotas in the tentative cronograma (screen preview a
         ->and($preview['plazo_dias'])->toBe(150);
 
     // El PDF del cronograma se sirve y refleja las 5 filas.
-    $credito->setRelation('cuotas', collect($preview['cuotas'])->map(fn (array $f) => new \App\Modules\Credito\Models\CuotaCredito($f)));
-    $html = view('modules.credito-prendario.documentos.cronograma', ['credito' => $credito->load(['cliente', 'agencia', 'empresa']), 'tentativo' => true])->render();
+    $credito->setRelation('cuotas', collect($preview['cuotas'])->map(fn (array $f) => new CuotaCredito($f)));
+    $html = view('modules.credito-prendario.documentos.cronograma', [
+        'credito' => $credito->load(['cliente', 'agencia', 'empresa', 'registradoPor']),
+        'tentativo' => true,
+        'fotoDataUri' => fn (?string $path, int $maxAncho = 900): ?string => null,
+    ])->render();
     // 3 celdas .num por fila de cuota (capital, interés, cuota) -> 5 filas = 15+.
     expect(substr_count($html, 'class="num"'))->toBeGreaterThanOrEqual(15);
 
