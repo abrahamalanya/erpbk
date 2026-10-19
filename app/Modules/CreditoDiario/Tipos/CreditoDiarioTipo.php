@@ -55,8 +55,18 @@ final class CreditoDiarioTipo implements CreditoTipo
         return false;
     }
 
+    /**
+     * El cronograma de diario tiene su propia plantilla (columnas de
+     * abono/saldo por cuota en vez de capital/interés): ver
+     * resources/views/modules/credito-diario/documentos/cronograma.blade.php.
+     * El resto de documentos sigue reutilizando las vistas de prendario.
+     */
     public function vistaDocumento(string $tipoDocumento): string
     {
+        if ($tipoDocumento === 'cronograma') {
+            return 'modules.credito-diario.documentos.cronograma';
+        }
+
         return "modules.credito-prendario.documentos.{$tipoDocumento}";
     }
 
