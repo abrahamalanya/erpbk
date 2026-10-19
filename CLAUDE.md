@@ -1,3 +1,21 @@
+# Arquitectura del sistema UMAX (multi-proyecto)
+
+UMAX está compuesto por tres repositorios separados que comparten dominio de negocio. Una tarea puede requerir cambios en uno, dos o los tres:
+
+- **Backend** (este repo): `~/Herd/umax` — Laravel 12, servido por Laravel Herd en `umax.test`. API y lógica de negocio central; frontend y app dependen de él.
+- **Frontend web**: `~/Dev/abrahamalanya/umax-frontend` — SPA en React + Vite + MUI (Material UI). Consume la API de este backend.
+- **Aplicativo móvil**: `~/Dev/abrahamalanya/umax-app` — Expo/React Native. También consume la API de este backend. Tiene su propio `AGENTS.md` (referenciado desde su `CLAUDE.md`).
+
+## Flujo de trabajo multi-proyecto
+
+- Antes de implementar cualquier tarea, determina qué proyecto(s) están involucrados. Un cambio de solo-API o de lógica de negocio puede bastar en el backend; un cambio de UI puede requerir tocar frontend y/o app también.
+- Si una funcionalidad requiere cambios en varios proyectos, analiza e implementa lo necesario en cada uno para mantener la compatibilidad entre ellos (contratos de API, formatos de respuesta, nombres de campos, etc.).
+- No modifiques los tres proyectos por defecto en cada tarea — toca únicamente los que el requerimiento realmente necesita.
+- Para trabajar en un proyecto externo al directorio actual, accede explícitamente a su ruta y revisa su propio `CLAUDE.md`/`AGENTS.md` si existe, además de las convenciones de este archivo.
+- Antes de modificar archivos en cualquiera de los tres proyectos, revisa la implementación existente y el estado de Git (`git status`/`git log`) de los proyectos involucrados para no sobrescribir trabajo previo no commiteado.
+- Respeta la arquitectura, stack y convenciones propias de cada proyecto (Laravel/Pest en el backend, React+MUI en el frontend, Expo en la app) — no mezcles patrones de uno en otro.
+- Al terminar una tarea, informa qué proyecto(s) y archivo(s) modificaste, y qué verificaciones (tests, lint, build) realizaste en cada uno.
+
 <laravel-boost-guidelines>
 === foundation rules ===
 

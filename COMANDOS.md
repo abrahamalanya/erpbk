@@ -10,6 +10,14 @@
 ```bash
 php -S 0.0.0.0:8000 -t public
 adb reverse tcp:8000 tcp:8000
+
+# APLICATIVO LEVANTAR
+npx expo start
+
+# APLICATIVO PRODUCCION - POWERSHELL
+npx eas-cli@latest build --platform android --profile production
+
+npx eas-cli@latest credentials --platform android
 ```
 
 ## ⚠️ El servidor es PHP 8.2 — no regenerar el lock con PHP 8.4

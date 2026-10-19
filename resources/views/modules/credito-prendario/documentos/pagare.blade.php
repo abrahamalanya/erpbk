@@ -4,8 +4,8 @@
     <meta charset="utf-8">
     <title>Pagaré — Crédito #{{ $credito->id }}</title>
     <style>
-        @page { margin: 1cm; size: landscape; }
-        body { font-family: DejaVu Sans, sans-serif; font-size: 8.3px; color: #1a1a1a; line-height: 1.25; }
+        @page { margin: 1cm 1.5cm 1cm 1.5cm; size: landscape; }
+        body { font-family: DejaVu Sans, sans-serif; font-size: 9.5px; color: #1a1a1a; line-height: 1.25; }
         .pagare-copia h1 { font-size: 10.5px; text-align: center; margin: 0 0 6px; }
         .pagare-copia p { text-align: justify; margin: 3px 0; }
         table.dos-copias { width: 100%; border-collapse: collapse; }
@@ -13,7 +13,7 @@
         table.dos-copias > tr > td:first-child { border-right: 1px solid #999; }
         table.firmas { width: 100%; margin-top: 14px; }
         table.firmas td { width: 50%; text-align: center; vertical-align: bottom; font-size: 7.8px; }
-        .firma-imagen { max-height: 45px; max-width: 140px; }
+        .firma-imagen { max-height: 100px; max-width: 140px; }
         .firma-linea { margin-top: 4px; border-top: 1px solid #000; padding-top: 2px; }
         .firma-espacio { height: 42px; }
     </style>
@@ -50,8 +50,8 @@
 
     <table class="dos-copias">
         <tr>
-            <td>@include('modules.credito-prendario.documentos._pagare_cuerpo')</td>
-            <td>@include('modules.credito-prendario.documentos._pagare_cuerpo')</td>
+            <td style="padding-right: 1cm;">@include('modules.credito-prendario.documentos._pagare_cuerpo')</td>
+            <td style="padding-left: 2cm;">@include('modules.credito-prendario.documentos._pagare_cuerpo')</td>
         </tr>
     </table>
 </body>
