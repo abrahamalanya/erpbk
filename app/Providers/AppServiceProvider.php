@@ -15,6 +15,7 @@ use App\Modules\Facturacion\Models\Comprobante;
 use App\Modules\Simulador\Models\SimulacionCredito;
 use App\Modules\Sistemas\Models\PerfilAcceso;
 use App\Modules\Sistemas\Policies\PerfilAccesoPolicy;
+use App\Modules\Usuario\Models\User;
 use App\Nucleo\Scopes\PerfilComprobanteScope;
 use App\Nucleo\Scopes\PerfilCreditoScope;
 use App\Nucleo\Scopes\PerfilNotificacionScope;
@@ -47,6 +48,7 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         Gate::policy(PerfilAcceso::class, PerfilAccesoPolicy::class);
+        Gate::define('gestionar-qr', fn (User $user): bool => $user->hasAnyRole(['sistemas', 'administrador_general']));
 
         Comprobante::addGlobalScope(new PerfilComprobanteScope);
         SimulacionCredito::addGlobalScope(new PerfilCreditoScope);

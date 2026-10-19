@@ -2,6 +2,7 @@
 
 namespace App\Modules\Qr\Http\Requests;
 
+use Closure;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
 
@@ -18,7 +19,11 @@ class GenerarQrRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'url' => ['required', 'string', 'url', 'max:2048'],
+            'url' => ['bail', 'required', 'string', 'url:http,https', 'max:2048', function (string $attribute, mixed $value, Closure $fail): void {
+                if (strlen($value) > 2048) {
+                    $fail('La URL no debe superar 2048 bytes para generar el QR.');
+                }
+            }],
         ];
     }
 
@@ -30,6 +35,8 @@ class GenerarQrRequest extends FormRequest
         return [
             'url.required' => 'Ingresa una URL',
             'url.url' => 'La URL no es válida',
+            'url.string' => 'La URL debe ser un texto',
+            'url.max' => 'La URL no debe superar 2048 caracteres',
         ];
     }
 

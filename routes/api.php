@@ -120,7 +120,13 @@ Route::middleware(['auth:sanctum', EnsurePerfilAcceso::class, EnsureIdempotency:
     Route::get('dashboard/linea-de-tiempo-atrasos', [DashboardController::class, 'lineaDeTiempoAtrasos'])->name('dashboard.linea-de-tiempo-atrasos');
     Route::get('dashboard/mapa-clientes', [DashboardController::class, 'mapaClientes'])->name('dashboard.mapa-clientes');
 
-    Route::get('qr/generar', [QrController::class, 'generar'])->name('qr.generar');
+    Route::prefix('qr')->middleware('can:gestionar-qr')->group(function () {
+        Route::get('generar', [QrController::class, 'generar'])->name('qr.generar');
+        Route::get('/', [QrController::class, 'index'])->name('qr.index');
+        Route::post('/', [QrController::class, 'store'])->name('qr.store');
+        Route::get('{qrGenerado}/png', [QrController::class, 'png'])->whereNumber('qrGenerado')->name('qr.png');
+        Route::delete('{qrGenerado}', [QrController::class, 'destroy'])->whereNumber('qrGenerado')->name('qr.destroy');
+    });
 
     Route::get('ubigeo/departamentos', [UbigeoController::class, 'departamentos'])->name('ubigeo.departamentos');
     Route::get('ubigeo/departamentos/{departamento}/provincias', [UbigeoController::class, 'provincias'])->name('ubigeo.provincias');
