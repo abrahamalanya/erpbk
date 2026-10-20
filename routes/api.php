@@ -38,6 +38,7 @@ use App\Modules\Reportes\Http\Controllers\ReporteMovimientosController;
 use App\Modules\Reportes\Http\Controllers\ReportePlanillaController;
 use App\Modules\Ruta\Http\Controllers\RutaCobranzaController;
 use App\Modules\Simulador\Http\Controllers\SimuladorController;
+use App\Modules\Sistemas\Http\Controllers\ApkVersionController;
 use App\Modules\Sistemas\Http\Controllers\AuthController;
 use App\Modules\Sistemas\Http\Controllers\ConceptoController;
 use App\Modules\Sistemas\Http\Controllers\ConfiguracionSistemaController;
@@ -84,6 +85,13 @@ Route::prefix('tienda')->group(function () {
     Route::post('bienes/{bien}/interes', [TiendaController::class, 'interes'])->name('tienda.bienes.interes');
 });
 
+// ===== DESCARGA DE ACTUALIZACIONES APK (pública, protegida por firma) =====
+// Linking.openURL en el aplicativo no manda el Bearer token, así que la
+// descarga no puede ir por una ruta auth:sanctum — ver ApkVersionController::vigente().
+Route::get('apk-updates/{apkVersion}/archivo', [ApkVersionController::class, 'descargarFirmado'])
+    ->middleware('signed')
+    ->name('apk-updates.descargar');
+
 // ===== PROTECTED ROUTES (requieren autenticación) =====
 // EnsureIdempotency va después de auth:sanctum para poder acotar la clave al
 // usuario autenticado; solo actúa si la petición trae el header Idempotency-Key.
@@ -107,6 +115,17 @@ Route::middleware(['auth:sanctum', EnsurePerfilAcceso::class, EnsureIdempotency:
     Route::apiResource('roles', RoleController::class)->only(['index', 'show', 'update']);
     Route::apiResource('permisos', PermissionController::class)->only(['index']);
     Route::apiResource('modulos', ModuloController::class);
+
+    // Gestión de actualizaciones APK — exclusiva del rol sistemas (ver
+    // ApkVersionPolicy); 'vigente' es la única ruta aquí abierta a cualquier
+    // usuario autenticado (la app móvil la usa para saber si hay actualización).
+    Route::get('actualizaciones-apk/vigente', [ApkVersionController::class, 'vigente'])->name('actualizaciones-apk.vigente');
+    Route::get('actualizaciones-apk', [ApkVersionController::class, 'index'])->name('actualizaciones-apk.index');
+    Route::post('actualizaciones-apk', [ApkVersionController::class, 'store'])->name('actualizaciones-apk.store');
+    Route::post('actualizaciones-apk/{apkVersion}/publicar', [ApkVersionController::class, 'publicar'])->name('actualizaciones-apk.publicar');
+    Route::get('actualizaciones-apk/{apkVersion}/descargar', [ApkVersionController::class, 'descargar'])->name('actualizaciones-apk.descargar');
+    Route::delete('actualizaciones-apk/{apkVersion}', [ApkVersionController::class, 'destroy'])->name('actualizaciones-apk.destroy');
+
     Route::get('gestion/permisos-temporales', [PermisoTemporalController::class, 'index'])->name('gestion.permisos-temporales.index');
     Route::post('gestion/permisos-temporales/{cliente}', [PermisoTemporalController::class, 'store'])->name('gestion.permisos-temporales.store');
     Route::delete('gestion/permisos-temporales/{permisoTemporal}', [PermisoTemporalController::class, 'destroy'])->name('gestion.permisos-temporales.destroy');

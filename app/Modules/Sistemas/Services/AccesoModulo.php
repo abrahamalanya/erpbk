@@ -36,7 +36,7 @@ final class AccesoModulo
         $resource = $request->segment(2);
         $sub = $request->segment(3);
 
-        if (in_array($resource, ['auth', 'impersonaciones', 'notificaciones', 'ubigeo', 'modulos', 'perfiles-acceso', 'qr'], true)) {
+        if (in_array($resource, ['auth', 'impersonaciones', 'notificaciones', 'ubigeo', 'modulos', 'perfiles-acceso', 'qr', 'actualizaciones-apk'], true)) {
             return null;
         }
 
