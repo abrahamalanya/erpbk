@@ -29,7 +29,16 @@ class BilletajeController extends Controller
         $query = Billetaje::query()->with(['boveda', 'solicitadoPor', 'asesor', 'aprobadoPor', 'cliente', 'fotos']);
         $query = $this->hierarchy->billetajesVisibles($query, request()->user());
 
-        return $this->successResponse($query->latest()->paginate(15));
+        $resumen = (clone $query)->toBase()
+            ->selectRaw('COALESCE(SUM(monto), 0) as total, COUNT(*) as cantidad')->first();
+
+        return $this->successResponse([
+            ...$query->latest()->paginate(15)->toArray(),
+            'resumen' => [
+                'total' => bcadd((string) $resumen->total, '0', 2),
+                'cantidad' => (int) $resumen->cantidad,
+            ],
+        ]);
     }
 
     /**

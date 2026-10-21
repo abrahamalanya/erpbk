@@ -231,6 +231,36 @@ final class CajaService
      */
     public function listarMovimientos(User $actor, string $tipo, array $filtros = []): LengthAwarePaginator
     {
+        return $this->movimientosFiltrados($actor, $tipo, $filtros)
+            ->with(['fotos', 'registradoPor'])
+            ->when((bool) ($filtros['solo_desembolsos'] ?? false), fn (Builder $query) => $query->with([
+                'credito' => fn (BelongsTo $credito) => $credito
+                    ->select(['id', 'empresa_id', 'agencia_id', 'cliente_id', 'codigo', 'tipo_credito', 'fecha_desembolso'])
+                    ->with([
+                        'cliente' => fn (BelongsTo $cliente) => $cliente->select([
+                            'id', 'empresa_id', 'agencia_id', 'nombre', 'apellido', 'numero_documento',
+                        ]),
+                    ]),
+            ]))
+            ->latest('fecha_caja')
+            ->latest('id')
+            ->paginate(15);
+    }
+
+    /** @return array{total: string, cantidad: int} */
+    public function resumenMovimientos(User $actor, string $tipo, array $filtros = []): array
+    {
+        $resumen = $this->movimientosFiltrados($actor, $tipo, $filtros)
+            ->toBase()->selectRaw('COALESCE(SUM(monto), 0) as total, COUNT(*) as cantidad')->first();
+
+        return [
+            'total' => bcadd((string) $resumen->total, '0', 2),
+            'cantidad' => (int) $resumen->cantidad,
+        ];
+    }
+
+    private function movimientosFiltrados(User $actor, string $tipo, array $filtros): Builder
+    {
         $cajasVisibles = $this->hierarchy->cajasVisibles(Caja::query(), $actor)->select('id');
         $soloDesembolsos = (bool) ($filtros['solo_desembolsos'] ?? false);
         $excluirDesembolsos = (bool) ($filtros['excluir_desembolsos'] ?? false);
@@ -248,27 +278,7 @@ final class CajaService
                     ->orWhere('numero', 'like', "%{$boleta}%")
             ))
             ->when($filtros['desde'] ?? null, fn ($query, string $desde) => $query->whereDate('fecha_caja', '>=', $desde))
-            ->when($filtros['hasta'] ?? null, fn ($query, string $hasta) => $query->whereDate('fecha_caja', '<=', $hasta))
-            // 'concepto' relation deliberately not eager-loaded — see the
-            // comment on the same load in resumenCierre() above.
-            ->with(['fotos', 'registradoPor'])
-            ->when($soloDesembolsos, fn (Builder $query) => $query->with([
-                'credito' => fn (BelongsTo $credito) => $credito
-                    ->select(['id', 'empresa_id', 'agencia_id', 'cliente_id', 'codigo', 'tipo_credito', 'fecha_desembolso'])
-                    ->with([
-                        'cliente' => fn (BelongsTo $cliente) => $cliente->select([
-                            'id',
-                            'empresa_id',
-                            'agencia_id',
-                            'nombre',
-                            'apellido',
-                            'numero_documento',
-                        ]),
-                    ]),
-            ]))
-            ->latest('fecha_caja')
-            ->latest('id')
-            ->paginate(15);
+            ->when($filtros['hasta'] ?? null, fn ($query, string $hasta) => $query->whereDate('fecha_caja', '<=', $hasta));
     }
 
     /**

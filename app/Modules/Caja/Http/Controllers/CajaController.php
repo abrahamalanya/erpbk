@@ -114,7 +114,10 @@ class CajaController extends Controller
 
         $movimientos = $this->cajaService->listarMovimientos($request->user(), $request->validated('tipo'), $filtros);
 
-        return $this->successResponse($movimientos);
+        return $this->successResponse([
+            ...$movimientos->toArray(),
+            'resumen' => $this->cajaService->resumenMovimientos($request->user(), $request->validated('tipo'), $filtros),
+        ]);
     }
 
     /**

@@ -1,5 +1,6 @@
 <?php
 
+use App\Modules\Caja\Models\Caja;
 use App\Modules\Caja\Models\CajaMovimiento;
 use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Credito\Models\Credito;
@@ -25,6 +26,42 @@ beforeEach(function () {
 
     $this->conceptoIngreso = Concepto::factory()->paraEmpresa($this->empresa)->create(['tipo' => 'ingreso', 'nombre' => 'Ingreso vario']);
     $this->conceptoGasto = Concepto::factory()->paraEmpresa($this->empresa)->create(['tipo' => 'gasto', 'nombre' => 'Útiles de oficina']);
+});
+
+it('summarizes every filtered movement across pages without including other cajas or movement types', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+    $this->postJson('/api/caja/aperturar')->assertCreated();
+    $ciclo = Caja::query()->where('user_id', $this->asesor->id)->firstOrFail()->cicloAbierto;
+    $base = [
+        'empresa_id' => $this->empresa->id, 'registrado_por' => $this->asesor->id,
+        'concepto' => 'Movimiento de prueba', 'fecha_caja' => '2026-10-21',
+    ];
+    foreach (range(1, 17) as $index) {
+        $ciclo->movimientos()->create([...$base, 'tipo' => 'ingreso', 'monto' => '0.10', 'concepto_id' => $this->conceptoIngreso->id]);
+    }
+    $ciclo->movimientos()->create([...$base, 'tipo' => 'ingreso', 'monto' => '50.00', 'fecha_caja' => '2026-10-20']);
+    $ciclo->movimientos()->create([...$base, 'tipo' => 'egreso', 'monto' => '2.20']);
+    $otroAsesor = User::factory()->forAgencia($this->agencia)->create();
+    $otroAsesor->assignRole('asesor');
+    Sanctum::actingAs($otroAsesor, ['*']);
+    $this->postJson('/api/caja/aperturar')->assertCreated();
+    $otroCiclo = Caja::query()->where('user_id', $otroAsesor->id)->firstOrFail()->cicloAbierto;
+    $otroCiclo->movimientos()->create([...$base, 'tipo' => 'ingreso', 'monto' => '999.00']);
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $filters = http_build_query([
+        'tipo' => 'ingreso', 'concepto_id' => $this->conceptoIngreso->id,
+        'registrado_por' => $this->asesor->id, 'desde' => '2026-10-21', 'hasta' => '2026-10-21',
+    ]);
+    foreach ([1 => 15, 2 => 2] as $page => $count) {
+        $this->getJson("/api/caja/movimientos?{$filters}&page={$page}")
+            ->assertSuccessful()->assertJsonCount($count, 'data.data')
+            ->assertJsonPath('data.resumen.total', '1.70')->assertJsonPath('data.resumen.cantidad', 17);
+    }
+    $this->getJson('/api/caja/movimientos?tipo=egreso')
+        ->assertSuccessful()->assertJsonPath('data.resumen.total', '2.20')->assertJsonPath('data.resumen.cantidad', 1);
+    $this->getJson('/api/caja/movimientos?tipo=ingreso&desde=2030-01-01')
+        ->assertSuccessful()->assertJsonPath('data.resumen.total', '0.00')->assertJsonPath('data.resumen.cantidad', 0);
 });
 
 it('registers an ingreso without a comprobante', function () {

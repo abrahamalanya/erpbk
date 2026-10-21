@@ -22,6 +22,7 @@ npx eas-cli@latest credentials --platform android
 # RECONSTRUIR EL APP
 npx expo prebuild --clean --platform android
 npx expo run:android
+npx expo start --dev-client
 ```
 
 ## ⚠️ El servidor es PHP 8.2 — no regenerar el lock con PHP 8.4

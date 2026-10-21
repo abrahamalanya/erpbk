@@ -1,5 +1,6 @@
 <?php
 
+use App\Modules\Caja\Models\Billetaje;
 use App\Modules\Caja\Models\Boveda;
 use App\Modules\Caja\Models\Caja;
 use App\Modules\Empresa\Models\Agencia;
@@ -35,6 +36,54 @@ beforeEach(function () {
 
     Sanctum::actingAs($this->asesor, ['*']);
     $this->postJson('/api/caja/aperturar')->assertCreated();
+});
+
+it('summarizes all visible billetajes across states and pages while retaining recipient and tenant boundaries', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+    $ciclo = Caja::query()->where('user_id', $this->asesor->id)->firstOrFail()->cicloAbierto;
+    $boveda = Boveda::query()->findOrFail($this->bovedaAgenciaId);
+    $base = [
+        'caja_ciclo_id' => $ciclo->id, 'boveda_id' => $boveda->id,
+        'empresa_id' => $this->empresa->id, 'asesor_id' => $this->asesor->id,
+        'solicitado_por' => $this->administradorAgencia->id, 'estado' => 'pendiente',
+    ];
+    foreach (range(1, 17) as $index) {
+        Billetaje::query()->create([...$base, 'monto' => '1.10']);
+    }
+    foreach (['aprobado' => '2.20', 'rechazado' => '3.30'] as $estado => $monto) {
+        Billetaje::query()->create([...$base, 'estado' => $estado, 'monto' => $monto]);
+    }
+    $otroAsesor = User::factory()->forAgencia($this->agencia)->create();
+    Billetaje::query()->create([...$base, 'asesor_id' => $otroAsesor->id, 'monto' => '999.00']);
+    $otraEmpresa = Empresa::factory()->create();
+    $otraAgencia = Agencia::factory()->for($otraEmpresa)->create();
+    $asesorExterno = User::factory()->forAgencia($otraAgencia)->create();
+    $asesorExterno->assignRole('asesor');
+    Sanctum::actingAs($asesorExterno, ['*']);
+    $this->postJson('/api/caja/aperturar')->assertCreated();
+    $cicloExterno = Caja::query()->where('user_id', $asesorExterno->id)->firstOrFail()->cicloAbierto;
+    $bovedaExterna = Boveda::query()->where('agencia_id', $otraAgencia->id)->firstOrFail();
+    Billetaje::query()->create([
+        ...$base, 'caja_ciclo_id' => $cicloExterno->id, 'boveda_id' => $bovedaExterna->id,
+        'empresa_id' => $otraEmpresa->id, 'asesor_id' => $asesorExterno->id,
+        'solicitado_por' => $asesorExterno->id, 'monto' => '1000.00',
+    ]);
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    foreach ([1 => 15, 2 => 4] as $page => $count) {
+        $this->getJson("/api/billetajes?page={$page}")->assertSuccessful()
+            ->assertJsonCount($count, 'data.data')
+            ->assertJsonPath('data.resumen.total', '24.20')->assertJsonPath('data.resumen.cantidad', 19);
+    }
+    Sanctum::actingAs($this->administradorGeneral, ['*']);
+    $this->getJson('/api/billetajes')->assertSuccessful()
+        ->assertJsonPath('data.resumen.total', '1023.20')->assertJsonPath('data.resumen.cantidad', 20);
+});
+
+it('returns a zero summary for an empty billetajes list', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+    $this->getJson('/api/billetajes')->assertSuccessful()
+        ->assertJsonPath('data.resumen.total', '0.00')->assertJsonPath('data.resumen.cantidad', 0);
 });
 
 it('lets administrador_agencia send a billetaje to an asesor with an open caja', function () {
