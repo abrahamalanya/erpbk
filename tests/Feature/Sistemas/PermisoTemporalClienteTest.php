@@ -7,6 +7,7 @@ use App\Modules\Sistemas\Models\PermisoTemporal;
 use App\Modules\Usuario\Models\User;
 use Database\Seeders\PermissionSeeder;
 use Database\Seeders\RoleSeeder;
+use Illuminate\Support\Carbon;
 use Laravel\Sanctum\Sanctum;
 
 beforeEach(function () {
@@ -97,6 +98,28 @@ it('bloquea al asesor cuando la concesión expira y permite emitir otra después
     $this->putJson("/api/clientes/{$this->cliente->id}", ['whatsapp' => '777777777'])->assertForbidden();
 
     concederPermisoEnTest($this->cliente, $this->admin, 'Nueva concesión después de expirar')->assertCreated();
+});
+
+it('rechaza la edicion al llegar exactamente al vencimiento incluso con permiso de rol y sesion abierta', function () {
+    $this->freezeTime();
+    $grant = concederPermisoEnTest($this->cliente, $this->admin)->assertCreated()->json('data');
+    $this->asesor->givePermissionTo('clientes.editar');
+    Sanctum::actingAs($this->asesor, ['*']);
+    $this->putJson("/api/clientes/{$this->cliente->id}", ['whatsapp' => '999999999'])->assertSuccessful();
+
+    $this->travelTo(Carbon::parse($grant['expira_at']));
+    $this->putJson("/api/clientes/{$this->cliente->id}", ['whatsapp' => '111111111'])->assertForbidden();
+    $this->getJson('/api/auth/me')->assertSuccessful()->assertJsonPath('data.permisos_temporales_clientes', []);
+    expect($this->cliente->fresh()->whatsapp)->toBe('999999999');
+});
+
+it('una concesion no permite editar otro cliente del mismo asesor', function () {
+    $otroCliente = Cliente::factory()->asignadoA($this->asesor)->create();
+    concederPermisoEnTest($this->cliente, $this->admin)->assertCreated();
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $this->putJson("/api/clientes/{$otroCliente->id}", ['whatsapp' => '111111111'])->assertForbidden();
+    $this->putJson("/api/clientes/{$this->cliente->id}", ['whatsapp' => '999999999'])->assertSuccessful();
 });
 
 it('invalida para el asesor anterior y exige una nueva concesión si se reasigna el cliente', function () {

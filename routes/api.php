@@ -383,6 +383,8 @@ Route::middleware(['auth:sanctum', EnsurePerfilAcceso::class, EnsureIdempotency:
 
     Route::post('ubicaciones-asesores', [UbicacionAsesorController::class, 'store'])->middleware('throttle:30,1')->name('ubicaciones-asesores.store');
     Route::get('ubicaciones-asesores', [UbicacionAsesorController::class, 'index'])->name('ubicaciones-asesores.index');
+    Route::get('ubicaciones-asesores/asesores-visibles', [UbicacionAsesorController::class, 'asesoresVisibles'])->name('ubicaciones-asesores.asesores-visibles');
+    Route::get('ubicaciones-asesores/historial', [UbicacionAsesorController::class, 'historial'])->name('ubicaciones-asesores.historial');
 });
 
 // ===== HEALTH CHECK =====

@@ -2,11 +2,14 @@
 
 namespace App\Modules\Ubicacion\Http\Controllers;
 
+use App\Modules\Ubicacion\Http\Requests\HistorialUbicacionAsesorRequest;
 use App\Modules\Ubicacion\Http\Requests\StoreUbicacionAsesorRequest;
 use App\Modules\Ubicacion\Models\UbicacionAsesor;
 use App\Modules\Ubicacion\Services\UbicacionAsesorService;
+use App\Modules\Usuario\Models\User;
 use App\Nucleo\Http\Controllers\Controller;
 use App\Nucleo\Traits\ApiResponse;
+use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Gate;
 
@@ -45,5 +48,44 @@ class UbicacionAsesorController extends Controller
         Gate::authorize('viewAny', UbicacionAsesor::class);
 
         return $this->successResponse($this->ubicacionAsesorService->visiblesPara(request()->user()));
+    }
+
+    /**
+     * Asesores cuyo historial puede consultar el actor, para el selector
+     * del reporte — mismo alcance por rol que index().
+     */
+    public function asesoresVisibles(): JsonResponse
+    {
+        Gate::authorize('viewAny', UbicacionAsesor::class);
+
+        $asesores = $this->ubicacionAsesorService->asesoresVisiblesPara(request()->user())
+            ->map(fn (User $asesor): array => [
+                'id' => $asesor->id,
+                'nombre' => $asesor->nombre,
+                'apellido' => $asesor->apellido,
+            ]);
+
+        return $this->successResponse($asesores);
+    }
+
+    /**
+     * Historial de recorrido de un asesor en un rango de fechas, para el
+     * reporte web — mismo alcance por rol que index(); además exige que el
+     * asesor pedido esté dentro de ese alcance.
+     */
+    public function historial(HistorialUbicacionAsesorRequest $request): JsonResponse
+    {
+        Gate::authorize('viewAny', UbicacionAsesor::class);
+
+        $visibles = $this->ubicacionAsesorService->asesoresVisiblesPara($request->user());
+        $asesor = $visibles->firstWhere('id', $request->asesorId());
+
+        abort_unless($asesor, 403);
+
+        return $this->successResponse($this->ubicacionAsesorService->historialDe(
+            $asesor,
+            CarbonImmutable::parse($request->desde()),
+            CarbonImmutable::parse($request->hasta()),
+        ));
     }
 }
