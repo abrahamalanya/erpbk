@@ -25,8 +25,13 @@ final class ConfiguracionCreditoService
             return $override;
         }
 
+        return $this->resolverParaEmpresa($agencia->empresa_id, $tipoCredito);
+    }
+
+    public function resolverParaEmpresa(int $empresaId, string $tipoCredito): ConfiguracionCredito
+    {
         $default = ConfiguracionCredito::query()
-            ->where('empresa_id', $agencia->empresa_id)
+            ->where('empresa_id', $empresaId)
             ->where('tipo_credito', $tipoCredito)
             ->whereNull('agencia_id')
             ->first();

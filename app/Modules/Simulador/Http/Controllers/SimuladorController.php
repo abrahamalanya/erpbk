@@ -3,6 +3,7 @@
 namespace App\Modules\Simulador\Http\Controllers;
 
 use App\Modules\Credito\Services\CreditoHierarchyService;
+use App\Modules\Simulador\Http\Requests\CalcularSimulacionCreditoRequest;
 use App\Modules\Simulador\Http\Requests\StoreSimulacionCreditoRequest;
 use App\Modules\Simulador\Models\SimulacionCredito;
 use App\Modules\Simulador\Services\SimuladorService;
@@ -41,6 +42,20 @@ class SimuladorController extends Controller
         $simulacion = $this->simuladorService->simular($request->user(), $request->validated());
 
         return $this->successResponse($simulacion->load(['cliente', 'registradoPor']), 'Simulación registrada', 201);
+    }
+
+    public function calcular(CalcularSimulacionCreditoRequest $request): JsonResponse
+    {
+        Gate::authorize('create', SimulacionCredito::class);
+
+        return $this->successResponse($this->simuladorService->calcular($request->user(), $request->validated()));
+    }
+
+    public function configuracion(): JsonResponse
+    {
+        Gate::authorize('create', SimulacionCredito::class);
+
+        return $this->successResponse($this->simuladorService->configuracionPara(request()->user()));
     }
 
     public function show(SimulacionCredito $simulacion): JsonResponse

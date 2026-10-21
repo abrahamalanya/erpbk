@@ -24,6 +24,8 @@ class SimulacionCredito extends Model
      */
     protected $table = 'simulaciones_credito';
 
+    protected $appends = ['saldo_residual', 'total_interes', 'numero_cuotas_calculadas'];
+
     /**
      * The attributes that are mass assignable.
      *
@@ -44,6 +46,8 @@ class SimulacionCredito extends Model
         'fecha_base',
         'monto_total_pagar',
         'cronograma',
+        'modo_calculo',
+        'importe_cuota',
     ];
 
     /**
@@ -60,7 +64,23 @@ class SimulacionCredito extends Model
             'fecha_base' => 'date',
             'monto_total_pagar' => 'decimal:2',
             'cronograma' => 'array',
+            'importe_cuota' => 'decimal:2',
         ];
+    }
+
+    public function getSaldoResidualAttribute(): string
+    {
+        return array_reduce($this->cronograma ?? [], fn (string $saldo, array $cuota): string => bcsub($saldo, $cuota['monto_capital'], 2), (string) $this->monto_prestamo);
+    }
+
+    public function getTotalInteresAttribute(): string
+    {
+        return array_reduce($this->cronograma ?? [], fn (string $total, array $cuota): string => bcadd($total, $cuota['monto_interes'], 2), '0.00');
+    }
+
+    public function getNumeroCuotasCalculadasAttribute(): int
+    {
+        return count($this->cronograma ?? []);
     }
 
     public function empresa(): BelongsTo

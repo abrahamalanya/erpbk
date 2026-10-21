@@ -3,15 +3,10 @@
 namespace App\Modules\Simulador\Http\Requests;
 
 use App\Modules\Cliente\Models\Cliente;
-use App\Modules\Credito\Services\ConfiguracionCreditoService;
-use Closure;
-use DomainException;
 use Illuminate\Contracts\Validation\ValidationRule;
-use Illuminate\Foundation\Http\FormRequest;
-use Illuminate\Validation\Rule;
 use Illuminate\Validation\Validator;
 
-class StoreSimulacionCreditoRequest extends FormRequest
+class StoreSimulacionCreditoRequest extends CalcularSimulacionCreditoRequest
 {
     public function authorize(): bool
     {
@@ -23,35 +18,7 @@ class StoreSimulacionCreditoRequest extends FormRequest
      */
     public function rules(): array
     {
-        return [
-            'tipo_credito' => ['required', Rule::in(['prendario', 'vehicular', 'hipotecario', 'diario'])],
-            'cliente_id' => ['required', 'integer', 'exists:clientes,id'],
-            'monto_prestamo' => ['required', 'numeric', 'min:0.01'],
-            'interes' => ['nullable', 'numeric', 'min:0'],
-            'tipo_interes' => ['nullable', Rule::in(['simple', 'compuesto'])],
-            'tipo_cuota' => ['required', Rule::in(['diario', 'semanal', 'quincenal', 'mensual'])],
-            'numero_cuotas' => [
-                'nullable', 'integer', 'min:1',
-                function (string $attribute, mixed $value, Closure $fail): void {
-                    $agencia = $this->user()?->agencia;
-                    $tipoCredito = $this->input('tipo_credito');
-
-                    if ($agencia === null || ! is_string($tipoCredito)) {
-                        return;
-                    }
-
-                    try {
-                        $max = app(ConfiguracionCreditoService::class)->resolverPara($agencia, $tipoCredito)->max_cuotas;
-                    } catch (DomainException) {
-                        return;
-                    }
-
-                    if ((int) $value > $max) {
-                        $fail("El número de cuotas no puede superar {$max} para este tipo de crédito.");
-                    }
-                },
-            ],
-        ];
+        return [...parent::rules(), 'cliente_id' => ['nullable', 'integer', 'exists:clientes,id']];
     }
 
     /**
@@ -61,6 +28,9 @@ class StoreSimulacionCreditoRequest extends FormRequest
     public function withValidator(Validator $validator): void
     {
         $validator->after(function (Validator $validator): void {
+            if ($validator->errors()->isNotEmpty() || $this->input('cliente_id') === null) {
+                return;
+            }
             $cliente = Cliente::find($this->input('cliente_id'));
 
             if (! $cliente) {
@@ -91,9 +61,9 @@ class StoreSimulacionCreditoRequest extends FormRequest
     public function messages(): array
     {
         return [
+            ...parent::messages(),
             'tipo_credito.required' => 'El tipo de crédito es requerido',
             'tipo_credito.in' => 'El tipo de crédito no es válido',
-            'cliente_id.required' => 'El cliente es requerido',
             'cliente_id.exists' => 'El cliente indicado no existe',
             'monto_prestamo.required' => 'El monto del préstamo es requerido',
             'tipo_cuota.required' => 'El tipo de cuota es requerido',

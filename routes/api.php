@@ -318,6 +318,8 @@ Route::middleware(['auth:sanctum', EnsurePerfilAcceso::class, EnsureIdempotency:
     Route::patch('tienda-productos/{tipo}/{id}', [TiendaProductoController::class, 'update'])->name('tienda-productos.update')->whereIn('tipo', ['bien', 'vehiculo', 'inmueble'])->whereNumber('id');
     Route::post('tienda-productos/{tipo}/{id}/retirar', [TiendaProductoController::class, 'retirar'])->name('tienda-productos.retirar')->whereIn('tipo', ['bien', 'vehiculo', 'inmueble'])->whereNumber('id');
 
+    Route::get('simulaciones-credito/configuracion', [SimuladorController::class, 'configuracion'])->name('simulaciones-credito.configuracion');
+    Route::post('simulaciones-credito/calcular', [SimuladorController::class, 'calcular'])->name('simulaciones-credito.calcular');
     Route::apiResource('simulaciones-credito', SimuladorController::class)->only(['index', 'store', 'show', 'destroy'])->parameters(['simulaciones-credito' => 'simulacion']);
 
     Route::get('cobros', [CobroController::class, 'index'])->name('cobros.index');

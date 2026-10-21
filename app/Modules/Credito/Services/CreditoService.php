@@ -805,8 +805,7 @@ final class CreditoService
         $capitalPorCuota = bcdiv($monto, (string) $n, 2);
         $saldoCapital = $monto;
 
-        $factor = bcmul($monto, $interes, 10);
-        $interesNominal = bcdiv(bcmul($factor, (string) $diasPorCuota, 10), '3000', 2);
+        $interesNominal = $this->interesSimplePeriodo($monto, $interes, $diasPorCuota);
 
         $filas = [];
 
@@ -859,16 +858,20 @@ final class CreditoService
      * décima es un poco menor que la cuota "pura" del sistema francés, el
      * crédito no cierra exactamente en cero: queda un remanente de pocos
      * céntimos de capital sin cobrar tras la última cuota (mismo
-     * comportamiento que las planillas de referencia).
+     * comportamiento que las planillas de referencia). El simulador solicita
+     * explícitamente ajustarUltimaCuota para cancelar el saldo; los créditos
+     * reales conservan el comportamiento original por defecto.
      *
      * @return list<array{numero_cuota: int, dias: int, monto_capital: string, monto_interes: string, monto_total: string}>
      */
-    private function filasCronogramaCompuesto(Carbon $fechaBase, string $monto, string $interes, string $tipoCuota, int $n): array
+    private function filasCronogramaCompuesto(Carbon $fechaBase, string $monto, string $interes, string $tipoCuota, int $n, bool $ajustarUltimaCuota = false): array
     {
-        $r = bcdiv(bcmul($interes, (string) self::DIAS_POR_PERIODO[$tipoCuota], 10), '3000', 10);
+        $r = $this->tasaPorPeriodo($interes, $tipoCuota);
 
         $factor = bcpow(bcadd('1', $r, 10), (string) $n, 10);
-        $cuotaFija = $this->bcRoundDecima(bcdiv(bcmul($monto, $r, 10), bcsub('1', bcdiv('1', $factor, 10), 10), 10));
+        $cuotaFija = $ajustarUltimaCuota && bccomp($r, '0', 10) === 0
+            ? $this->bcRoundDecima(bcdiv($monto, (string) $n, 10))
+            : $this->bcRoundDecima(bcdiv(bcmul($monto, $r, 10), bcsub('1', bcdiv('1', $factor, 10), 10), 10));
 
         $saldoInsoluto = $monto;
         $filas = [];
@@ -876,15 +879,25 @@ final class CreditoService
         for ($i = 1; $i <= $n; $i++) {
             $fechaCuota = $this->fechaCuotaCompuesta($fechaBase, $tipoCuota, $i);
 
-            $interesCuota = bcadd(bcmul($saldoInsoluto, $r, 10), '0', 2);
+            if ($ajustarUltimaCuota && bccomp($saldoInsoluto, '0', 2) <= 0) {
+                throw new DomainException('El redondeo cancela el saldo antes del plazo indicado. Reduce el número de cuotas.');
+            }
+            $interesCuota = $this->interesSobreSaldo($saldoInsoluto, $r);
             $capitalCuota = bcsub($cuotaFija, $interesCuota, 2);
+            $totalCuota = $cuotaFija;
+            if ($ajustarUltimaCuota && $i === $n) {
+                $capitalCuota = $saldoInsoluto;
+                $totalCuota = bcadd($capitalCuota, $interesCuota, 2);
+            } elseif ($ajustarUltimaCuota && bccomp($capitalCuota, $saldoInsoluto, 2) >= 0) {
+                throw new DomainException('El redondeo cancela el saldo antes del plazo indicado. Reduce el número de cuotas.');
+            }
 
             $filas[] = [
                 'numero_cuota' => $i,
                 'dias' => (int) $fechaBase->diffInDays($fechaCuota),
                 'monto_capital' => $capitalCuota,
                 'monto_interes' => $interesCuota,
-                'monto_total' => $cuotaFija,
+                'monto_total' => $totalCuota,
             ];
 
             $saldoInsoluto = bcsub($saldoInsoluto, $capitalCuota, 2);
@@ -925,7 +938,7 @@ final class CreditoService
      *
      * @return array{fecha_base: string, plazo_dias: int, cuotas: list<array{numero_cuota: int, fecha_vencimiento: string, monto_capital: string, monto_interes: string, monto_total: string}>}
      */
-    public function previsualizarCronograma(string $monto, string $interes, string $tipoCuota, ?int $numeroCuotas = null, string $tipoInteres = 'simple', string $tipoCredito = 'prendario'): array
+    public function previsualizarCronograma(string $monto, string $interes, string $tipoCuota, ?int $numeroCuotas = null, string $tipoInteres = 'simple', string $tipoCredito = 'prendario', bool $ajustarUltimaCuota = false): array
     {
         if (! isset(self::CUOTAS_POR_TIPO[$tipoCuota])) {
             throw new DomainException("Tipo de cuota inválido: {$tipoCuota}");
@@ -937,7 +950,7 @@ final class CreditoService
         $base = now()->startOfDay();
 
         $filas = $tipoInteres === 'compuesto'
-            ? $this->filasCronogramaCompuesto($base, $monto, $interes, $tipoCuota, $n)
+            ? $this->filasCronogramaCompuesto($base, $monto, $interes, $tipoCuota, $n, $ajustarUltimaCuota)
             : $this->filasCronograma($monto, $interes, $n, $diasPorCuota, $plazoTotal);
 
         $cuotas = array_map(fn (array $fila): array => [
@@ -953,6 +966,69 @@ final class CreditoService
             'plazo_dias' => $plazoTotal,
             'cuotas' => $cuotas,
         ];
+    }
+
+    private function interesSimplePeriodo(string $monto, string $interes, int $dias): string
+    {
+        return bcdiv(bcmul(bcmul($monto, $interes, 10), (string) $dias, 10), '3000', 2);
+    }
+
+    private function tasaPorPeriodo(string $interes, string $tipoCuota): string
+    {
+        return bcdiv(bcmul($interes, (string) self::DIAS_POR_PERIODO[$tipoCuota], 10), '3000', 10);
+    }
+
+    private function interesSobreSaldo(string $saldo, string $tasaPeriodo): string
+    {
+        return bcadd(bcmul($saldo, $tasaPeriodo, 10), '0', 2);
+    }
+
+    /**
+     * Simulación por importe fijo exacto, con interés nominal existente y
+     * última cuota limitada al capital pendiente más su interés del periodo.
+     * No se utiliza para registrar ni desembolsar créditos reales.
+     */
+    public function previsualizarCronogramaPorImporte(string $monto, string $interes, string $tipoCuota, string $importeCuota, string $tipoInteres, string $tipoCredito, int $maxCuotas): array
+    {
+        if (! isset(self::DIAS_POR_PERIODO[$tipoCuota]) || $maxCuotas < 1 || bccomp($importeCuota, '0', 2) <= 0) {
+            throw new DomainException('Los parámetros de la simulación no son válidos.');
+        }
+        $base = now()->startOfDay();
+        $saldo = bcadd($monto, '0', 2);
+        $r = $this->tasaPorPeriodo($interes, $tipoCuota);
+        $interesSimple = $this->interesSimplePeriodo($monto, $interes, self::DIAS_POR_PERIODO[$tipoCuota]);
+        $cuotas = [];
+        for ($i = 1; $i <= $maxCuotas; $i++) {
+            $interesCuota = $tipoInteres === 'compuesto'
+                ? $this->interesSobreSaldo($saldo, $r)
+                : $interesSimple;
+            if (bccomp($importeCuota, $interesCuota, 2) <= 0) {
+                throw new DomainException('El importe de cuota debe superar los intereses del periodo para amortizar capital.');
+            }
+            $total = bcadd($saldo, $interesCuota, 2);
+            if (bccomp($total, $importeCuota, 2) > 0) {
+                $total = bcadd($importeCuota, '0', 2);
+            }
+            $capital = bcsub($total, $interesCuota, 2);
+            $saldo = bcsub($saldo, $capital, 2);
+            $fecha = $tipoInteres === 'compuesto'
+                ? $this->fechaCuotaCompuesta($base, $tipoCuota, $i)
+                : $base->copy()->addDays(self::DIAS_POR_PERIODO[$tipoCuota] * $i);
+            $cuotas[] = [
+                'numero_cuota' => $i, 'fecha_vencimiento' => $fecha->toDateString(),
+                'monto_capital' => $capital, 'monto_interes' => $interesCuota, 'monto_total' => $total,
+            ];
+            if (bccomp($saldo, '0', 2) === 0) {
+                if ($tipoInteres === 'simple') {
+                    $fecha = $base->copy()->addDays($this->plazoTotalPara($tipoCredito, $tipoCuota, $i));
+                    $cuotas[$i - 1]['fecha_vencimiento'] = $fecha->toDateString();
+                }
+
+                return ['fecha_base' => $base->toDateString(), 'plazo_dias' => (int) $base->diffInDays($fecha), 'cuotas' => $cuotas];
+            }
+        }
+
+        throw new DomainException("El importe indicado requiere más de {$maxCuotas} cuotas. Aumenta el importe de cuota.");
     }
 
     /**
