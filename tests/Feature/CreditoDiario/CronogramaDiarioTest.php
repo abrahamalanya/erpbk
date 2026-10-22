@@ -76,6 +76,7 @@ it('renders the diario cronograma with abono/saldo/firma columns instead of capi
         ])->assertSuccessful();
     }
 
+    subirEvidenciaDesembolsoDiario($this, $creditoId);
     $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar")->assertSuccessful();
 
     // Paga completa la primera cuota (abono = cuota, queda con fecha y saldo

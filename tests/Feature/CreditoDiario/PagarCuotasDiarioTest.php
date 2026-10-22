@@ -60,6 +60,7 @@ beforeEach(function () {
         ])->assertSuccessful();
     }
 
+    subirEvidenciaDesembolsoDiario($this, $creditoId);
     $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar")->assertSuccessful();
 
     $this->credito = Credito::find($creditoId);

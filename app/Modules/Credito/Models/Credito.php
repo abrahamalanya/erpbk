@@ -4,6 +4,7 @@ namespace App\Modules\Credito\Models;
 
 use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Cobranza\Models\Cobro;
+use App\Modules\CreditoDiario\Models\CreditoDiarioDesembolsoEvidencia;
 use App\Modules\CreditoDiario\Models\CreditoDiarioGarantia;
 use App\Modules\CreditoHipotecario\Models\Inmueble;
 use App\Modules\CreditoPrendario\Models\Bien;
@@ -22,6 +23,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 use Illuminate\Database\Eloquent\Relations\MorphToMany;
 
 class Credito extends Model
@@ -191,6 +193,12 @@ class Credito extends Model
     public function expedienteDocumentos(): HasMany
     {
         return $this->hasMany(CreditoExpedienteDocumento::class, 'credito_id')->orderBy('orden')->orderBy('id');
+    }
+
+    /** Evidencia de desembolso (video + GPS) — solo aplica a créditos diarios. */
+    public function desembolsoEvidencia(): HasOne
+    {
+        return $this->hasOne(CreditoDiarioDesembolsoEvidencia::class, 'credito_id');
     }
 
     public function registradoPor(): BelongsTo

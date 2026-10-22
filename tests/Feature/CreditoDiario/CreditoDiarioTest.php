@@ -92,6 +92,7 @@ it('generates no contrato/declaracion/fotos/sticker for a diario crédito at reg
     aprobarYFirmarDocumentosDiario($this, $creditoId);
 
     Sanctum::actingAs($this->asesor, ['*']);
+    subirEvidenciaDesembolsoDiario($this, $creditoId);
     $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar")->assertSuccessful();
 
     $tiposAlDesembolsar = Credito::find($creditoId)->documentos()->pluck('tipo')->all();
@@ -116,6 +117,7 @@ it('runs the full aprobar -> desembolsar -> cronograma lifecycle with tipo_cuota
     aprobarYFirmarDocumentosDiario($this, $creditoId);
 
     Sanctum::actingAs($this->asesor, ['*']);
+    subirEvidenciaDesembolsoDiario($this, $creditoId);
     $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar")->assertSuccessful();
 
     $credito = Credito::find($creditoId);
@@ -139,6 +141,7 @@ it('lets the asesor pick tipo_cuota semanal for a diario crédito, spanning the 
     aprobarYFirmarDocumentosDiario($this, $creditoId);
 
     Sanctum::actingAs($this->asesor, ['*']);
+    subirEvidenciaDesembolsoDiario($this, $creditoId);
     $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar")->assertSuccessful();
 
     $credito = Credito::find($creditoId);
@@ -174,6 +177,7 @@ it('does not adjust semanal to span the month when the asesor picks an explicit 
     aprobarYFirmarDocumentosDiario($this, $creditoId);
 
     Sanctum::actingAs($this->asesor, ['*']);
+    subirEvidenciaDesembolsoDiario($this, $creditoId);
     $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar")->assertSuccessful();
 
     $credito = Credito::find($creditoId);

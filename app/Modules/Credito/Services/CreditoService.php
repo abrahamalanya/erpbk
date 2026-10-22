@@ -645,6 +645,19 @@ final class CreditoService
     {
         $this->asegurarEstado($credito, 'aprobado');
 
+        // Un crédito diario no puede desembolsarse sin que el asesor haya
+        // registrado antes el video de evidencia + la ubicación GPS (ver
+        // CreditoDiarioDesembolsoEvidenciaController) — la UI ya oculta el
+        // botón de desembolso hasta entonces, pero esto es lo que impide
+        // saltarse el requisito llamando directo a la API.
+        if ($credito->tipo_credito === 'diario') {
+            $evidencia = $credito->desembolsoEvidencia;
+
+            if (! $evidencia || $evidencia->estado !== 'cargada' || ! $evidencia->video_path || $evidencia->latitud === null || $evidencia->longitud === null) {
+                throw new DomainException('Debes registrar el video de evidencia y la ubicación antes de desembolsar este crédito.');
+            }
+        }
+
         // Los escaneos firmados de contrato/declaración se suben DESPUÉS del
         // desembolso (confirmado con el usuario): aquí ya no se exige que
         // todos los documentos tengan firmado_at.
@@ -662,6 +675,14 @@ final class CreditoService
         }
 
         return DB::transaction(function () use ($credito, $actor, $ciclo, $esAdenda, $numeroCuotas, $interes, $fecha): Credito {
+            // Bloquea la fila del crédito y vuelve a validar su estado bajo el
+            // lock: dos desembolsos simultáneos del mismo crédito no deben
+            // generar dos movimientos de caja ni dos cronogramas — el segundo,
+            // al tomar su turno, ya ve el estado actualizado por el primero y
+            // falla aquí en vez de seguir de largo.
+            $credito = Credito::query()->whereKey($credito->id)->lockForUpdate()->first();
+            $this->asegurarEstado($credito, 'aprobado');
+
             // Se valida dentro de la transacción y con el ciclo bloqueado para
             // que dos desembolsos simultáneos no pasen ambos con el mismo saldo.
             if (! $esAdenda) {

@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Http\UploadedFile;
 use Tests\TestCase;
 
 /*
@@ -47,4 +48,21 @@ expect()->extend('toBeOne', function () {
 function something()
 {
     // ..
+}
+
+/**
+ * Sube la evidencia obligatoria (video + GPS) de un crédito diario, requisito
+ * previo a desembolsar() desde CreditoService — usado por todas las suites
+ * que desembolsan un crédito diario como parte de su setup. El actor
+ * autenticado al momento de llamar esta función debe ser el mismo que luego
+ * va a desembolsar (misma autorización: Gate 'desembolsar').
+ */
+function subirEvidenciaDesembolsoDiario(TestCase $test, int $creditoId): void
+{
+    $test->postJson("/api/creditos-prendarios/{$creditoId}/evidencia-desembolso", [
+        'video' => UploadedFile::fake()->create('evidencia.mp4', 1024, 'video/mp4'),
+        'latitud' => -8.379,
+        'longitud' => -74.553,
+        'precision_metros' => 8.5,
+    ])->assertSuccessful();
 }

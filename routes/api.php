@@ -11,6 +11,7 @@ use App\Modules\Credito\Http\Controllers\ConfiguracionCreditoController;
 use App\Modules\Credito\Http\Controllers\CreditoController;
 use App\Modules\Credito\Http\Controllers\CreditoExpedienteController;
 use App\Modules\CreditoDiario\Http\Controllers\CreditoDiarioController;
+use App\Modules\CreditoDiario\Http\Controllers\CreditoDiarioDesembolsoEvidenciaController;
 use App\Modules\CreditoHipotecario\Http\Controllers\CreditoHipotecarioController;
 use App\Modules\CreditoHipotecario\Http\Controllers\InmuebleController;
 use App\Modules\CreditoPrendario\Http\Controllers\BienController;
@@ -223,6 +224,8 @@ Route::middleware(['auth:sanctum', EnsurePerfilAcceso::class, EnsureIdempotency:
     Route::post('creditos-prendarios/{credito}/rechazar', [CreditoController::class, 'rechazar'])->name('creditos-prendarios.rechazar');
     Route::post('creditos-prendarios/{credito}/subsanar', [CreditoController::class, 'subsanar'])->name('creditos-prendarios.subsanar');
     Route::post('creditos-prendarios/{credito}/desembolsar', [CreditoController::class, 'desembolsar'])->name('creditos-prendarios.desembolsar');
+    Route::get('creditos-prendarios/{credito}/evidencia-desembolso', [CreditoDiarioDesembolsoEvidenciaController::class, 'show'])->name('creditos-prendarios.evidencia-desembolso.show');
+    Route::post('creditos-prendarios/{credito}/evidencia-desembolso', [CreditoDiarioDesembolsoEvidenciaController::class, 'store'])->name('creditos-prendarios.evidencia-desembolso.store');
     Route::post('creditos-prendarios/{credito}/refrendar', [CreditoController::class, 'refrendar'])->name('creditos-prendarios.refrendar');
     Route::post('creditos-prendarios/{credito}/pagar-cuota', [CreditoController::class, 'pagarCuota'])->name('creditos-prendarios.pagar-cuota');
     Route::post('creditos-prendarios/{credito}/pagar-cuotas-preview', [CreditoController::class, 'pagarCuotasPreview'])->name('creditos-prendarios.pagar-cuotas-preview');
