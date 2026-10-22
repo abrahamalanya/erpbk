@@ -31,8 +31,8 @@ return new class extends Migration
             $table->decimal('longitud', 10, 7);
             $table->decimal('precision_metros', 8, 2)->nullable();
 
-            $table->timestamp('capturado_en');
-            $table->timestamp('recibido_en');
+            $table->dateTime('capturado_en');
+            $table->dateTime('recibido_en');
             $table->timestamp('confirmado_en')->nullable();
             $table->string('estado')->default('pendiente'); // pendiente | cargada | fallida
 

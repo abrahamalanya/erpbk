@@ -13,7 +13,10 @@ use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Usuario\Models\User;
 use Database\Seeders\PermissionSeeder;
 use Database\Seeders\RoleSeeder;
+use Illuminate\Database\MySqlConnection;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
 use Tests\TestCase;
@@ -41,6 +44,24 @@ beforeEach(function () {
     $this->adminAgencia->assignRole('administrador_agencia');
 
     $this->cliente = Cliente::factory()->forAgencia($this->agencia)->create();
+});
+
+it('compila las fechas obligatorias sin defaults implícitos de timestamp para MySQL estricto', function () {
+    $migration = require database_path('migrations/2026_10_21_130000_create_credito_diario_desembolso_evidencias_table.php');
+    Schema::shouldReceive('create')->once()->withArgs(function (string $table, Closure $definition): bool {
+        expect($table)->toBe('credito_diario_desembolso_evidencias');
+        $connection = new MySqlConnection(fn () => throw new RuntimeException('Esta prueba no debe conectar a MySQL.'), 'testing');
+        $connection->useDefaultSchemaGrammar();
+        $blueprint = new Blueprint($connection, $table);
+        $blueprint->create();
+        $definition($blueprint);
+        $sql = implode('; ', $blueprint->toSql());
+        expect($sql)->toContain('`capturado_en` datetime not null', '`recibido_en` datetime not null')
+            ->not->toContain('`capturado_en` timestamp', '`recibido_en` timestamp', '0000-00-00');
+
+        return true;
+    });
+    $migration->up();
 });
 
 /** Registra, aprueba y firma un crédito diario — queda listo para desembolsar, sin evidencia. */
