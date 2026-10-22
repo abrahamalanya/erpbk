@@ -49,6 +49,87 @@ function apkDePrueba(bool $esApk = true, bool $firmado = true): UploadedFile
     return UploadedFile::fake()->createWithContent('app.apk', $contenido);
 }
 
+/** Escribe un bloque length-prefixed (uint32 LE): 4 bytes de longitud + $bytes. */
+function lp(string $bytes): string
+{
+    return pack('V', strlen($bytes)).$bytes;
+}
+
+/**
+ * Construye un ZIP con un directorio central inflado (muchas entradas, para
+ * que supere los 64KB — el caso real que hace fallar la ventana fija vieja)
+ * y le inserta, justo antes del directorio central, un APK Signing Block v2
+ * real y completo (con un certificado X.509 de prueba generado con openssl),
+ * parchando el offset de EOCD para que apunte al directorio central ya
+ * desplazado. Devuelve [UploadedFile, huella SHA-256 esperada del certificado].
+ *
+ * @return array{0: UploadedFile, 1: string}
+ */
+function apkFirmadoV2DePrueba(): array
+{
+    $tmp = tempnam(sys_get_temp_dir(), 'apk_v2_test_');
+    $zip = new ZipArchive;
+    $zip->open($tmp, ZipArchive::OVERWRITE);
+
+    $zip->addFromString('AndroidManifest.xml', 'manifest-binario-de-prueba');
+    $zip->addFromString('classes.dex', 'dex-de-prueba');
+
+    // Infla el directorio central bastante más allá de 64KB — exactamente lo
+    // que un APK real de React Native/Expo tiene de sobra (recursos, .so por
+    // ABI, etc.) y lo que hacía fallar la búsqueda con ventana fija vieja.
+    for ($i = 0; $i < 1500; $i++) {
+        $zip->addFromString("assets/recurso_de_prueba_{$i}.bin", '');
+    }
+
+    $zip->close();
+    $crudo = file_get_contents($tmp);
+    unlink($tmp);
+
+    // El ZIP recién cerrado por ZipArchive no tiene comentario de archivo,
+    // así que el EOCD mide exactamente 22 bytes al final.
+    $eocdPos = strlen($crudo) - 22;
+    expect(substr($crudo, $eocdPos, 4))->toBe("\x50\x4b\x05\x06");
+    $cdOffsetOriginal = unpack('V', substr($crudo, $eocdPos + 16, 4))[1];
+
+    $seccionLocal = substr($crudo, 0, $cdOffsetOriginal);
+    $seccionCdYEocd = substr($crudo, $cdOffsetOriginal);
+
+    // Certificado X.509 de prueba real (autofirmado), para poder comparar su
+    // huella SHA-256 contra la que debería extraer ApkInspectorService.
+    // `config`: en Windows, openssl_csr_new()/openssl_csr_sign() no resuelven
+    // un openssl.cnf por su cuenta sin OPENSSL_CONF — se le pasa explícito.
+    $opensslConfig = [];
+    $cnfCandidato = getenv('OPENSSL_CONF') ?: (getenv('USERPROFILE').'\\.config\\herd\\bin\\php84\\extras\\ssl\\openssl.cnf');
+    if (file_exists($cnfCandidato)) {
+        $opensslConfig = ['config' => $cnfCandidato];
+    }
+
+    $clave = openssl_pkey_new(['private_key_bits' => 2048, 'private_key_type' => OPENSSL_KEYTYPE_RSA] + $opensslConfig);
+    $csr = openssl_csr_new(['commonName' => 'UMAX Test Signer'], $clave, $opensslConfig);
+    $certificado = openssl_csr_sign($csr, null, $clave, 365, $opensslConfig);
+    openssl_x509_export($certificado, $pem);
+    $huellaEsperada = openssl_x509_fingerprint($pem, 'sha256');
+    $der = base64_decode(preg_replace('/-----[^-]+-----|\s+/', '', $pem));
+
+    $digestsLp = lp('');
+    $certificadosLp = lp(lp($der));
+    $signedDataLp = lp($digestsLp.$certificadosLp);
+    $signerLp = lp($signedDataLp.lp('').lp(''));
+    $valorV2 = lp($signerLp);
+
+    $idValuePair = pack('P', 4 + strlen($valorV2)).pack('V', 0x7109871A).$valorV2;
+    $tamanoBloque = strlen($idValuePair) + 24;
+    $bloqueFirma = pack('P', $tamanoBloque).$idValuePair.pack('P', $tamanoBloque).'APK Sig Block 42';
+
+    $nuevoCdOffset = $cdOffsetOriginal + strlen($bloqueFirma);
+    $nuevoEocdPos = strlen($seccionCdYEocd) - 22;
+    $seccionCdYEocd = substr_replace($seccionCdYEocd, pack('V', $nuevoCdOffset), $nuevoEocdPos + 16, 4);
+
+    $apkFinal = $seccionLocal.$bloqueFirma.$seccionCdYEocd;
+
+    return [UploadedFile::fake()->createWithContent('app.apk', $apkFinal), $huellaEsperada];
+}
+
 it('impide a quien no es sistemas administrar las versiones de APK', function () {
     Sanctum::actingAs($this->asesor);
 
@@ -126,6 +207,21 @@ it('rechaza un APK sin firma', function () {
     $this->postJson('/api/actualizaciones-apk', [
         'apk' => apkDePrueba(firmado: false), 'version' => '1.0.0', 'build_number' => 1, 'application_id' => APPLICATION_ID,
     ])->assertUnprocessable();
+});
+
+it('detecta como firmado un APK real con bloque de firma v2 fuera de la ventana de 64KB, y extrae la huella del certificado', function () {
+    Sanctum::actingAs($this->sistemas);
+
+    [$archivo, $huellaEsperada] = apkFirmadoV2DePrueba();
+
+    $response = $this->postJson('/api/actualizaciones-apk', [
+        'apk' => $archivo, 'version' => '1.0.0', 'build_number' => 1, 'application_id' => APPLICATION_ID,
+    ])->assertCreated();
+
+    expect($response->json('data.certificado_sha256'))->toBe($huellaEsperada);
+
+    $version = ApkVersion::query()->where('build_number', 1)->firstOrFail();
+    expect($version->certificado_sha256)->toBe($huellaEsperada);
 });
 
 it('publicar despublica la versión vigente anterior', function () {

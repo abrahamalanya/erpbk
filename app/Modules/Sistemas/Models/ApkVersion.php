@@ -22,6 +22,7 @@ class ApkVersion extends Model
         'file_name',
         'file_size',
         'sha256',
+        'certificado_sha256',
         'publicada',
         'publicada_at',
         'subido_por',

@@ -47,6 +47,7 @@ final class ApkVersionService
             'file_name' => $archivo->getClientOriginalName(),
             'file_size' => $archivo->getSize(),
             'sha256' => $hash,
+            'certificado_sha256' => $inspeccion['certificado_sha256'],
             'subido_por' => $actor->id,
         ]);
     }
