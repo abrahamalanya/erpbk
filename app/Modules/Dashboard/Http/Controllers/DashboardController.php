@@ -66,6 +66,26 @@ class DashboardController extends Controller
     }
 
     /**
+     * Cobranza vs. desembolso del día agrupados (por agencia, asesor, tipo de
+     * crédito, o agencia y tipo a la vez) para el gráfico comparativo del
+     * panel inicial. Mismos filtros y mismo alcance de rol que resumen().
+     */
+    public function graficoCobranzaDesembolso(DashboardInicialRequest $request): JsonResponse
+    {
+        $actor = $request->user();
+
+        abort_unless($actor->can('dashboard.ver'), 403);
+
+        return $this->successResponse($this->dashboard->graficoCobranzaDesembolso(
+            $actor,
+            $request->agenciaId(),
+            $request->asesorId(),
+            $request->tipoCredito(),
+            $request->agruparPor(),
+        ));
+    }
+
+    /**
      * Clientes con dirección georreferenciada (casa), para el mapa del panel
      * principal — mismo alcance de visibilidad que el listado de clientes
      * (clientes.ver + ClienteHierarchyService::visibleQuery). Cada uno lleva

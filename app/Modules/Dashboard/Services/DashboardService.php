@@ -12,6 +12,7 @@ use App\Modules\Usuario\Models\User;
 use App\Modules\Venta\Models\PagoVenta;
 use App\Modules\Venta\Models\Venta;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Collection;
 
 /**
  * Totales del día para el panel inicial: cuánto entró por cobranzas y cuánto
@@ -55,6 +56,25 @@ final class DashboardService
      */
     public const TIPOS = [...self::TIPOS_CREDITO, self::TIPO_VENTAS];
 
+    /** Modos de agrupación del gráfico Cobranza vs. Desembolso. */
+    public const AGRUPACION_AGENCIA = 'agencia';
+
+    public const AGRUPACION_ASESOR = 'asesor';
+
+    public const AGRUPACION_TIPO_CREDITO = 'tipo_credito';
+
+    public const AGRUPACION_AGENCIA_TIPO_CREDITO = 'agencia_tipo_credito';
+
+    /**
+     * @var list<string>
+     */
+    public const AGRUPACIONES = [
+        self::AGRUPACION_AGENCIA,
+        self::AGRUPACION_ASESOR,
+        self::AGRUPACION_TIPO_CREDITO,
+        self::AGRUPACION_AGENCIA_TIPO_CREDITO,
+    ];
+
     public function __construct(
         private readonly CreditoHierarchyService $creditos,
         private readonly CajaBovedaHierarchyService $cajas,
@@ -82,6 +102,312 @@ final class DashboardService
             'egresos' => $this->totalEgresos($actor, $agenciaId, $asesorId, $hoy),
             'vencidos' => $this->totalVencidos($actor, $agenciaId, $asesorId, $tipoCredito),
         ];
+    }
+
+    /**
+     * Cobranza vs. desembolso del día, agrupados para compararlos entre
+     * agencias, asesores o tipos de crédito a la vez — a diferencia de
+     * resumenDelDia(), que da un solo total para el ámbito ya filtrado.
+     * Mismos filtros y misma jerarquía de visibilidad que el resumen.
+     *
+     * @return array<string, mixed>
+     */
+    public function graficoCobranzaDesembolso(
+        User $actor,
+        ?int $agenciaId,
+        ?int $asesorId,
+        ?string $tipoCredito,
+        string $agruparPor,
+    ): array {
+        $hoy = now()->toDateString();
+
+        $cobranza = $this->registrosCobranza($actor, $agenciaId, $asesorId, $tipoCredito, $hoy);
+        $desembolso = $this->registrosDesembolso($actor, $agenciaId, $asesorId, $tipoCredito, $hoy);
+
+        $filas = match ($agruparPor) {
+            self::AGRUPACION_ASESOR => $this->agruparPorAsesor($cobranza, $desembolso),
+            self::AGRUPACION_TIPO_CREDITO => $this->agruparPorTipo($cobranza, $desembolso),
+            self::AGRUPACION_AGENCIA_TIPO_CREDITO => $this->agruparPorAgenciaYTipo($cobranza, $desembolso),
+            default => $this->agruparPorAgencia($cobranza, $desembolso),
+        };
+
+        return [
+            'fecha' => $hoy,
+            'agrupado_por' => $agruparPor,
+            'filas' => $filas,
+        ];
+    }
+
+    /**
+     * Igual que totalCobranzas() pero devuelve las filas con sus columnas de
+     * agrupación (agencia, tipo, asesor) en vez de un total ya sumado — es la
+     * materia prima de graficoCobranzaDesembolso(). Mismo scoping, mismos
+     * filtros, mismo "hoy".
+     *
+     * @return Collection<int, array{agencia_id: ?int, agencia_nombre: string, asesor_id: ?int, asesor_nombre: string, tipo: string, monto: float}>
+     */
+    private function registrosCobranza(User $actor, ?int $agenciaId, ?int $asesorId, ?string $tipo, string $hoy): Collection
+    {
+        $filas = collect();
+
+        if ($tipo !== self::TIPO_VENTAS) {
+            $cobros = Cobro::query()
+                ->where('estado', 'registrado')
+                ->whereDate('created_at', $hoy)
+                ->whereHas('credito', function (Builder $q) use ($actor, $agenciaId, $tipo): void {
+                    $this->creditos->visibleQuery($q, $actor);
+
+                    if ($agenciaId) {
+                        $q->where('agencia_id', $agenciaId);
+                    }
+
+                    if ($tipo) {
+                        $q->where('tipo_credito', $tipo);
+                    }
+                })
+                ->with(['credito.agencia:id,nombre', 'registradoPor:id,nombre,apellido']);
+
+            if ($asesorId) {
+                $cobros->where('registrado_por', $asesorId);
+            }
+
+            $filas = $filas->merge($cobros->get()->map(fn (Cobro $c): array => $this->fila(
+                $c->credito->agencia_id,
+                $c->credito->agencia?->nombre ?? '—',
+                $c->registrado_por,
+                $c->registradoPor,
+                $c->credito->tipo_credito,
+                (float) $c->monto_pagado,
+            )));
+        }
+
+        if (($tipo === null || $tipo === self::TIPO_VENTAS) && app(ModuloService::class)->perfilPermite($actor, 'ventas')) {
+            $pagos = PagoVenta::query()
+                ->whereNull('anulado_at')
+                ->whereDate('created_at', $hoy)
+                ->whereHas('venta', function (Builder $q) use ($actor, $agenciaId): void {
+                    $this->acotarVentas($q, $actor);
+
+                    if ($agenciaId) {
+                        $q->where('agencia_id', $agenciaId);
+                    }
+                })
+                ->with(['venta.agencia:id,nombre', 'registradoPor:id,nombre,apellido']);
+
+            if ($asesorId) {
+                $pagos->where('registrado_por', $asesorId);
+            }
+
+            $filas = $filas->merge($pagos->get()->map(fn (PagoVenta $p): array => $this->fila(
+                $p->venta->agencia_id,
+                $p->venta->agencia?->nombre ?? '—',
+                $p->registrado_por,
+                $p->registradoPor,
+                self::TIPO_VENTAS,
+                (float) $p->monto,
+            )));
+        }
+
+        return $filas;
+    }
+
+    /**
+     * Igual que totalDesembolsos() pero con las columnas de agrupación. Las
+     * ventas de tienda no se desembolsan (ver totalDesembolsos()), así que
+     * acá tampoco aportan filas.
+     *
+     * @return Collection<int, array{agencia_id: ?int, agencia_nombre: string, asesor_id: ?int, asesor_nombre: string, tipo: string, monto: float}>
+     */
+    private function registrosDesembolso(User $actor, ?int $agenciaId, ?int $asesorId, ?string $tipo, string $hoy): Collection
+    {
+        if ($tipo === self::TIPO_VENTAS) {
+            return collect();
+        }
+
+        $query = CajaMovimiento::query()
+            ->desembolsos()
+            ->whereDate('created_at', $hoy)
+            ->whereHas('credito', function (Builder $q) use ($actor, $agenciaId, $tipo): void {
+                $this->creditos->visibleQuery($q, $actor);
+
+                if ($agenciaId) {
+                    $q->where('agencia_id', $agenciaId);
+                }
+
+                if ($tipo) {
+                    $q->where('tipo_credito', $tipo);
+                }
+            })
+            ->with(['credito.agencia:id,nombre', 'registradoPor:id,nombre,apellido']);
+
+        if ($asesorId) {
+            $query->where('registrado_por', $asesorId);
+        }
+
+        return $query->get()->map(fn (CajaMovimiento $m): array => $this->fila(
+            $m->credito->agencia_id,
+            $m->credito->agencia?->nombre ?? '—',
+            $m->registrado_por,
+            $m->registradoPor,
+            $m->credito->tipo_credito,
+            (float) $m->monto,
+        ));
+    }
+
+    /**
+     * @return array{agencia_id: ?int, agencia_nombre: string, asesor_id: ?int, asesor_nombre: string, tipo: string, monto: float}
+     */
+    private function fila(?int $agenciaId, string $agenciaNombre, ?int $asesorId, ?User $asesor, string $tipo, float $monto): array
+    {
+        return [
+            'agencia_id' => $agenciaId,
+            'agencia_nombre' => $agenciaNombre,
+            'asesor_id' => $asesorId,
+            'asesor_nombre' => $asesor ? trim("{$asesor->nombre} {$asesor->apellido}") : '—',
+            'tipo' => $tipo,
+            'monto' => $monto,
+        ];
+    }
+
+    /**
+     * @param  Collection<int, array<string, mixed>>  $filas
+     * @return array{total: float, cantidad: int}
+     */
+    private function totalDe(Collection $filas): array
+    {
+        return ['total' => round((float) $filas->sum('monto'), 2), 'cantidad' => $filas->count()];
+    }
+
+    /**
+     * Por agencia: solo las que tuvieron cobranza o desembolso — a propósito
+     * no se rellenan con cero las agencias sin movimiento (mismo criterio que
+     * ReporteCobranzaMensualService::totalesPorAsesor()), porque a diferencia
+     * de los tipos de crédito (un enum fijo que cualquier rol ya ve en su
+     * propio selector), qué agencias existen es información con alcance por
+     * rol: listarlas en cero filtraría por inferencia agencias que un
+     * administrador_agencia o un asesor no deberían poder ver.
+     *
+     * @param  Collection<int, array<string, mixed>>  $cobranza
+     * @param  Collection<int, array<string, mixed>>  $desembolso
+     * @return list<array{agencia_id: int, agencia_nombre: string, cobranza: array{total: float, cantidad: int}, desembolso: array{total: float, cantidad: int}}>
+     */
+    private function agruparPorAgencia(Collection $cobranza, Collection $desembolso): array
+    {
+        $claves = $cobranza->pluck('agencia_id')->merge($desembolso->pluck('agencia_id'))
+            ->filter()->unique()->values();
+
+        $porAgenciaCobranza = $cobranza->groupBy('agencia_id');
+        $porAgenciaDesembolso = $desembolso->groupBy('agencia_id');
+
+        return $claves
+            ->map(function (int $agenciaId) use ($porAgenciaCobranza, $porAgenciaDesembolso): array {
+                $grupoC = $porAgenciaCobranza->get($agenciaId, collect());
+                $grupoD = $porAgenciaDesembolso->get($agenciaId, collect());
+
+                return [
+                    'agencia_id' => $agenciaId,
+                    'agencia_nombre' => $grupoC->first()['agencia_nombre'] ?? $grupoD->first()['agencia_nombre'] ?? '—',
+                    'cobranza' => $this->totalDe($grupoC),
+                    'desembolso' => $this->totalDe($grupoD),
+                ];
+            })
+            ->sortBy('agencia_nombre')
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Por asesor (quien registró el cobro/desembolso): mismo criterio de "sin
+     * relleno de ceros" que agruparPorAgencia(), y por la misma razón.
+     *
+     * @param  Collection<int, array<string, mixed>>  $cobranza
+     * @param  Collection<int, array<string, mixed>>  $desembolso
+     * @return list<array{asesor_id: int, asesor_nombre: string, cobranza: array{total: float, cantidad: int}, desembolso: array{total: float, cantidad: int}}>
+     */
+    private function agruparPorAsesor(Collection $cobranza, Collection $desembolso): array
+    {
+        $claves = $cobranza->pluck('asesor_id')->merge($desembolso->pluck('asesor_id'))
+            ->filter()->unique()->values();
+
+        $porAsesorCobranza = $cobranza->groupBy('asesor_id');
+        $porAsesorDesembolso = $desembolso->groupBy('asesor_id');
+
+        return $claves
+            ->map(function (int $asesorId) use ($porAsesorCobranza, $porAsesorDesembolso): array {
+                $grupoC = $porAsesorCobranza->get($asesorId, collect());
+                $grupoD = $porAsesorDesembolso->get($asesorId, collect());
+
+                return [
+                    'asesor_id' => $asesorId,
+                    'asesor_nombre' => $grupoC->first()['asesor_nombre'] ?? $grupoD->first()['asesor_nombre'] ?? '—',
+                    'cobranza' => $this->totalDe($grupoC),
+                    'desembolso' => $this->totalDe($grupoD),
+                ];
+            })
+            ->sortBy('asesor_nombre')
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Por tipo de crédito: a diferencia de agencia/asesor, acá SÍ se rellenan
+     * las TIPOS (incluida 'ventas') con cero cuando no hubo movimiento — es un
+     * enum fijo y público (el mismo que ya ofrece el selector "Tipo" a
+     * cualquier rol), así que completarlo no filtra nada y permite comparar
+     * siempre las mismas categorías.
+     *
+     * @param  Collection<int, array<string, mixed>>  $cobranza
+     * @param  Collection<int, array<string, mixed>>  $desembolso
+     * @return list<array{tipo_credito: string, cobranza: array{total: float, cantidad: int}, desembolso: array{total: float, cantidad: int}}>
+     */
+    private function agruparPorTipo(Collection $cobranza, Collection $desembolso): array
+    {
+        $porTipoCobranza = $cobranza->groupBy('tipo');
+        $porTipoDesembolso = $desembolso->groupBy('tipo');
+
+        return collect(self::TIPOS)
+            ->map(fn (string $tipo): array => [
+                'tipo_credito' => $tipo,
+                'cobranza' => $this->totalDe($porTipoCobranza->get($tipo, collect())),
+                'desembolso' => $this->totalDe($porTipoDesembolso->get($tipo, collect())),
+            ])
+            ->all();
+    }
+
+    /**
+     * Desglose por agencia y tipo de crédito: agencias sin relleno de cero
+     * (mismo criterio que agruparPorAgencia()), con sus TIPOS siempre
+     * completos dentro (mismo criterio que agruparPorTipo()). El total de
+     * `cobranza`/`desembolso` de cada agencia es la suma de sus `tipos`.
+     *
+     * @param  Collection<int, array<string, mixed>>  $cobranza
+     * @param  Collection<int, array<string, mixed>>  $desembolso
+     * @return list<array{agencia_id: int, agencia_nombre: string, cobranza: array{total: float, cantidad: int}, desembolso: array{total: float, cantidad: int}, tipos: list<array<string, mixed>>}>
+     */
+    private function agruparPorAgenciaYTipo(Collection $cobranza, Collection $desembolso): array
+    {
+        $claves = $cobranza->pluck('agencia_id')->merge($desembolso->pluck('agencia_id'))
+            ->filter()->unique()->values();
+
+        $porAgenciaCobranza = $cobranza->groupBy('agencia_id');
+        $porAgenciaDesembolso = $desembolso->groupBy('agencia_id');
+
+        return $claves
+            ->map(function (int $agenciaId) use ($porAgenciaCobranza, $porAgenciaDesembolso): array {
+                $grupoC = $porAgenciaCobranza->get($agenciaId, collect());
+                $grupoD = $porAgenciaDesembolso->get($agenciaId, collect());
+
+                return [
+                    'agencia_id' => $agenciaId,
+                    'agencia_nombre' => $grupoC->first()['agencia_nombre'] ?? $grupoD->first()['agencia_nombre'] ?? '—',
+                    'cobranza' => $this->totalDe($grupoC),
+                    'desembolso' => $this->totalDe($grupoD),
+                    'tipos' => $this->agruparPorTipo($grupoC, $grupoD),
+                ];
+            })
+            ->sortBy('agencia_nombre')
+            ->values()
+            ->all();
     }
 
     /**

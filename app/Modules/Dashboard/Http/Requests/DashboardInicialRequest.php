@@ -27,6 +27,7 @@ class DashboardInicialRequest extends FormRequest
             'agencia_id' => ['nullable', 'integer', 'exists:agencias,id'],
             'asesor_id' => ['nullable', 'integer', 'exists:users,id'],
             'tipo_credito' => ['nullable', 'string', Rule::in(DashboardService::TIPOS)],
+            'agrupar_por' => ['nullable', 'string', Rule::in(DashboardService::AGRUPACIONES)],
         ];
     }
 
@@ -39,6 +40,7 @@ class DashboardInicialRequest extends FormRequest
             'agencia_id.exists' => 'La agencia indicada no existe',
             'asesor_id.exists' => 'El asesor indicado no existe',
             'tipo_credito.in' => 'El tipo de crédito no es válido',
+            'agrupar_por.in' => 'La agrupación indicada no es válida',
         ];
     }
 
@@ -59,5 +61,14 @@ class DashboardInicialRequest extends FormRequest
     public function tipoCredito(): ?string
     {
         return $this->filled('tipo_credito') ? (string) $this->string('tipo_credito') : null;
+    }
+
+    /**
+     * Modo de agrupación del gráfico Cobranza vs. Desembolso. `agencia` por
+     * defecto: es el que ya conocían los usuarios antes de poder elegir.
+     */
+    public function agruparPor(): string
+    {
+        return $this->filled('agrupar_por') ? (string) $this->string('agrupar_por') : DashboardService::AGRUPACION_AGENCIA;
     }
 }
