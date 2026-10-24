@@ -16,6 +16,12 @@ use Illuminate\Support\Facades\Log;
  * coordenadas de los clientes casi no cambian, y así abrir el mapa no gasta
  * cupo del servicio (~2,000 rutas/día en el plan gratuito).
  *
+ * El endpoint es `api.heigit.org` — `api.openrouteservice.org` quedó
+ * deprecado desde el 28/04/2026 y, desde el 27/08/2026, solo tiene el 10%
+ * de la cuota del plan (el resto se movió al dominio nuevo); se anunció su
+ * cierre total para los primeros días de noviembre de 2026. La clave de
+ * API es la misma en ambos dominios, no hace falta regenerarla.
+ *
  * Si no hay clave configurada o el servicio falla (sin internet, cupo
  * agotado, un cliente lejos de cualquier calle), ese tramo vuelve a la línea
  * recta y la respuesta queda marcada como `aproximado`: el mapa nunca se
@@ -23,7 +29,7 @@ use Illuminate\Support\Facades\Log;
  */
 final class TrazadoRutaService
 {
-    private const ENDPOINT = 'https://api.openrouteservice.org/v2/directions/driving-car/geojson';
+    private const ENDPOINT = 'https://api.heigit.org/openrouteservice/v2/directions/driving-car/geojson';
 
     /**
      * Máximo de paradas por consulta que acepta OpenRouteService.

@@ -7,6 +7,7 @@ use App\Modules\Credito\Models\CuotaCredito;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Ruta\Services\TrazadoRutaService;
+use App\Modules\Ubicacion\Models\UbicacionAsesor;
 use App\Modules\Usuario\Models\User;
 use Database\Seeders\PermissionSeeder;
 use Database\Seeders\RoleSeeder;
@@ -72,7 +73,7 @@ it('returns the street route between the paradas of the ruta, in visit order', f
     tr_clienteEnMora($this->asesor, $this->agencia, -8.3850, -74.5500, 5);
     tr_clienteEnMora($this->asesor, $this->agencia, null, null, 1);
 
-    Http::fake(['api.openrouteservice.org/*' => Http::response(respuestaOrs([
+    Http::fake(['api.heigit.org/*' => Http::response(respuestaOrs([
         [-74.5539, -8.3791], [-74.5520, -8.3800], [-74.5500, -8.3850],
     ]))]);
 
@@ -90,8 +91,43 @@ it('returns the street route between the paradas of the ruta, in visit order', f
         && $request['coordinates'] === [[-74.5539, -8.3791], [-74.55, -8.385]]);
 });
 
+it('starts the trazado at the asesor current GPS location when desde_ubicacion_actual is sent', function () {
+    tr_clienteEnMora($this->asesor, $this->agencia, -8.3850, -74.5500, 5);
+    tr_clienteEnMora($this->asesor, $this->agencia, -8.3900, -74.5450, 1);
+
+    UbicacionAsesor::query()->create([
+        'user_id' => $this->asesor->id, 'latitud' => -8.3791, 'longitud' => -74.5539,
+        'capturado_en' => now(), 'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id,
+    ]);
+
+    Http::fake(['api.heigit.org/*' => Http::response(respuestaOrs([
+        [-74.5539, -8.3791], [-74.5500, -8.3850], [-74.5450, -8.3900],
+    ]))]);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $this->getJson('/api/rutas-cobranza/trazado?desde_ubicacion_actual=1')->assertSuccessful();
+
+    // La ubicación en vivo del asesor va primero, antes que la parada más atrasada.
+    Http::assertSent(fn (Request $request): bool => $request['coordinates'][0] === [-74.5539, -8.3791]
+        && count($request['coordinates']) === 3);
+});
+
+it('ignores desde_ubicacion_actual when the asesor never sent a GPS ping', function () {
+    tr_clienteEnMora($this->asesor, $this->agencia, -8.3850, -74.5500, 5);
+    tr_clienteEnMora($this->asesor, $this->agencia, -8.3900, -74.5450, 1);
+
+    Http::fake(['api.heigit.org/*' => Http::response(respuestaOrs([
+        [-74.5500, -8.3850], [-74.5450, -8.3900],
+    ]))]);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $this->getJson('/api/rutas-cobranza/trazado?desde_ubicacion_actual=1')->assertSuccessful();
+
+    Http::assertSent(fn (Request $request): bool => count($request['coordinates']) === 2);
+});
+
 it('caches the route so reopening the map does not call the service again', function () {
-    Http::fake(['api.openrouteservice.org/*' => Http::response(respuestaOrs([[-74.55, -8.38], [-74.56, -8.39]]))]);
+    Http::fake(['api.heigit.org/*' => Http::response(respuestaOrs([[-74.55, -8.38], [-74.56, -8.39]]))]);
     $servicio = app(TrazadoRutaService::class);
 
     $servicio->trazar([[-8.38, -74.55], [-8.39, -74.56]]);
@@ -101,7 +137,7 @@ it('caches the route so reopening the map does not call the service again', func
 });
 
 it('falls back to straight lines, marked aproximado, when the service fails or has no key', function () {
-    Http::fake(['api.openrouteservice.org/*' => Http::response(['error' => ['code' => 2010, 'message' => 'Could not find routable point']], 404)]);
+    Http::fake(['api.heigit.org/*' => Http::response(['error' => ['code' => 2010, 'message' => 'Could not find routable point']], 404)]);
     $paradas = [[-8.38, -74.55], [-8.39, -74.56]];
 
     $fallo = app(TrazadoRutaService::class)->trazar($paradas);

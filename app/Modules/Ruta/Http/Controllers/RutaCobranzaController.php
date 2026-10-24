@@ -10,6 +10,7 @@ use App\Modules\Ruta\Http\Requests\QuitarClienteRutaCobranzaRequest;
 use App\Modules\Ruta\Http\Requests\ReordenarRutaCobranzaRequest;
 use App\Modules\Ruta\Services\RutaCobranzaService;
 use App\Modules\Ruta\Services\TrazadoRutaService;
+use App\Modules\Ubicacion\Models\UbicacionAsesor;
 use App\Modules\Usuario\Models\User;
 use App\Nucleo\Http\Controllers\Controller;
 use App\Nucleo\Traits\ApiResponse;
@@ -46,16 +47,34 @@ class RutaCobranzaController extends Controller
      * coordenadas) en su orden de visita, para dibujarlo en el mapa. Mismos
      * filtros y alcance que show(); va aparte para que reordenar la lista no
      * espere al servicio de rutas.
+     *
+     * Con `desde_ubicacion_actual` (mapa unificado) el trazado arranca en la
+     * última ubicación GPS conocida del asesor, no en su primera parada —
+     * así se ve el camino hacia la próxima parada, no solo el orden entre
+     * paradas. Sin ese parámetro (RutaMapa/RutaMapaLive, planificación del
+     * día) el comportamiento es el de siempre. Si el asesor nunca envió un
+     * ping, no hay ubicación que anteponer y el trazado queda igual que sin
+     * el parámetro.
      */
     public function trazado(MostrarRutaCobranzaRequest $request, TrazadoRutaService $trazadoRuta): JsonResponse
     {
         Gate::authorize('viewAny', Credito::class);
 
-        $paradas = $this->rutaCobranzaService->rutaDe($this->resolverAsesor(), $request->validated('tipo_credito'), $request->user())
+        $asesor = $this->resolverAsesor();
+
+        $paradas = $this->rutaCobranzaService->rutaDe($asesor, $request->validated('tipo_credito'), $request->user())
             ->filter(fn (array $parada): bool => $parada['latitud_cobranza'] !== null && $parada['longitud_cobranza'] !== null)
             ->map(fn (array $parada): array => [$parada['latitud_cobranza'], $parada['longitud_cobranza']])
             ->values()
             ->all();
+
+        if ($request->desdeUbicacionActual()) {
+            $ubicacionActual = UbicacionAsesor::query()->where('user_id', $asesor->id)->first();
+
+            if ($ubicacionActual) {
+                array_unshift($paradas, [(float) $ubicacionActual->latitud, (float) $ubicacionActual->longitud]);
+            }
+        }
 
         return $this->successResponse($trazadoRuta->trazar($paradas));
     }
