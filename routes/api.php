@@ -139,6 +139,9 @@ Route::middleware(['auth:sanctum', EnsurePerfilAcceso::class, EnsureIdempotency:
     Route::get('dashboard/resumen', [DashboardController::class, 'resumen'])->name('dashboard.resumen');
     Route::get('dashboard/linea-de-tiempo-atrasos', [DashboardController::class, 'lineaDeTiempoAtrasos'])->name('dashboard.linea-de-tiempo-atrasos');
     Route::get('dashboard/grafico-cobranza-desembolso', [DashboardController::class, 'graficoCobranzaDesembolso'])->name('dashboard.grafico-cobranza-desembolso');
+    Route::get('dashboard/cartera-activa-por-tipo', [DashboardController::class, 'carteraActivaPorTipo'])->name('dashboard.cartera-activa-por-tipo');
+    Route::get('dashboard/produccion-por-asesor', [DashboardController::class, 'produccionPorAsesor'])->name('dashboard.produccion-por-asesor');
+    Route::get('dashboard/avance-cobranza-hoy', [DashboardController::class, 'avanceCobranzaHoy'])->name('dashboard.avance-cobranza-hoy');
     Route::get('dashboard/mapa-clientes', [DashboardController::class, 'mapaClientes'])->name('dashboard.mapa-clientes');
 
     Route::prefix('qr')->middleware('can:gestionar-qr')->group(function () {

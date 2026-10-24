@@ -2,9 +2,6 @@
 
 use App\Modules\Caja\Models\CajaMovimiento;
 use App\Modules\Cliente\Models\Cliente;
-use App\Modules\Credito\Models\Credito;
-use App\Modules\Credito\Models\CuotaCredito;
-use App\Modules\CreditoPrendario\Models\Bien;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Usuario\Models\User;
@@ -38,29 +35,8 @@ beforeEach(function () {
     $this->ciclo = cicloDe($this->asesor, $this->empresa, $this->agencia);
 });
 
-/**
- * Crédito vencido con una sola cuota de saldo conocido (monto_total -
- * monto_abonado), para probar el total de "vencidos" del dashboard sin
- * depender del cronograma real. El filtro asesor_id de "vencidos" mira
- * cliente.asesor_id (igual que CreditoController::index()), no
- * credito.registrado_por — asignar el asesor al $cliente *antes* de llamar
- * a esta función, con `Cliente::factory()->asignadoA($asesor)`.
- */
-function creditoVencidoDe(Cliente $cliente, string $montoTotal, string $montoAbonado, string $tipo = 'prendario'): Credito
-{
-    $bien = Bien::factory()->paraCliente($cliente)->create();
-
-    $credito = Credito::factory()->paraBien($bien)->vencido()->create(['tipo_credito' => $tipo]);
-
-    CuotaCredito::factory()->paraCredito($credito)->create([
-        'numero_cuota' => 1,
-        'fecha_vencimiento' => now()->subDays(5)->toDateString(),
-        'monto_total' => $montoTotal,
-        'monto_abonado' => $montoAbonado,
-    ]);
-
-    return $credito;
-}
+// creditoVencidoDe() vive en tests/Pest.php (compartida con
+// DashboardCarteraActivaPorTipoTest, que también necesita créditos activos).
 
 it('sums the cobranzas and desembolsos of the day', function () {
     $cliente = clienteEn($this->agencia);

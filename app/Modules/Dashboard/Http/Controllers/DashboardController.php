@@ -5,6 +5,7 @@ namespace App\Modules\Dashboard\Http\Controllers;
 use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Cliente\Services\ClienteHierarchyService;
 use App\Modules\Dashboard\Http\Requests\DashboardInicialRequest;
+use App\Modules\Dashboard\Http\Requests\DashboardProduccionRequest;
 use App\Modules\Dashboard\Services\DashboardAtrasosService;
 use App\Modules\Dashboard\Services\DashboardService;
 use App\Nucleo\Http\Controllers\Controller;
@@ -82,6 +83,69 @@ class DashboardController extends Controller
             $request->asesorId(),
             $request->tipoCredito(),
             $request->agruparPor(),
+        ));
+    }
+
+    /**
+     * Composición de la cartera activa (créditos activo + vencido) por tipo
+     * de crédito, para el widget de concentración de riesgo del panel
+     * inicial. Mismos filtros de agencia/asesor/tipo que el resto del
+     * dashboard; el filtro de asesor mira cliente.asesor_id, no quién
+     * registró la operación (ver DashboardService::creditosDeCartera()).
+     */
+    public function carteraActivaPorTipo(DashboardInicialRequest $request): JsonResponse
+    {
+        $actor = $request->user();
+
+        abort_unless($actor->can('dashboard.ver'), 403);
+
+        return $this->successResponse($this->dashboard->carteraActivaPorTipo(
+            $actor,
+            $request->agenciaId(),
+            $request->asesorId(),
+            $request->tipoCredito(),
+        ));
+    }
+
+    /**
+     * Créditos generados (= efectivamente desembolsados) por asesor y tipo
+     * de crédito, en un período — para el gráfico de producción del panel
+     * inicial. A diferencia del resto de Inicio, lleva su propio filtro de
+     * fecha (desde/hasta, default mes en curso); agencia/asesor/tipo son los
+     * mismos del resto del dashboard.
+     */
+    public function produccionPorAsesor(DashboardProduccionRequest $request): JsonResponse
+    {
+        $actor = $request->user();
+
+        abort_unless($actor->can('dashboard.ver'), 403);
+
+        return $this->successResponse($this->dashboard->produccionPorAsesor(
+            $actor,
+            $request->desde(),
+            $request->hasta(),
+            $request->agenciaId(),
+            $request->asesorId(),
+            $request->tipoCredito(),
+        ));
+    }
+
+    /**
+     * Avance de cobranza de HOY por asesor (programado/cobrado/pendiente/%),
+     * reutilizando el mismo criterio de propiedad de cartera que la Ruta de
+     * Cobranza (cliente.asesor_id). Filtros de agencia/asesor como el resto
+     * del dashboard; no lleva tipo de crédito ni período, siempre es hoy.
+     */
+    public function avanceCobranzaHoy(DashboardInicialRequest $request): JsonResponse
+    {
+        $actor = $request->user();
+
+        abort_unless($actor->can('dashboard.ver'), 403);
+
+        return $this->successResponse($this->dashboard->avanceCobranzaHoy(
+            $actor,
+            $request->agenciaId(),
+            $request->asesorId(),
         ));
     }
 

@@ -6,6 +6,7 @@ use App\Modules\Caja\Models\CajaMovimiento;
 use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Cobranza\Models\Cobro;
 use App\Modules\Credito\Models\Credito;
+use App\Modules\Credito\Models\CuotaCredito;
 use App\Modules\CreditoPrendario\Models\Bien;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
@@ -245,4 +246,51 @@ function desembolsoHoy(Credito $credito, User $registradoPor, string $monto = '5
 function egresoManualHoy(User $user, string $monto = '777.00'): CajaMovimiento
 {
     return movimientoHoy($user, 'egreso', $monto);
+}
+
+/**
+ * Crédito en un estado de cartera (activo/vencido) con una sola cuota de
+ * saldo conocido (monto_total - monto_abonado), para probar los totales de
+ * cartera del dashboard (Vencidos, Cartera activa por tipo) sin depender del
+ * cronograma real. El filtro asesor_id de esos totales mira cliente.asesor_id
+ * (igual que CreditoController::index()), no credito.registrado_por —
+ * asignar el asesor al $cliente *antes* de llamar a esta función, con
+ * `Cliente::factory()->asignadoA($asesor)`.
+ */
+function creditoCarteraDe(Cliente $cliente, string $estado, string $montoTotal, string $montoAbonado, string $tipo = 'prendario'): Credito
+{
+    $bien = Bien::factory()->paraCliente($cliente)->create();
+
+    $credito = Credito::factory()->paraBien($bien)->create(['estado' => $estado, 'tipo_credito' => $tipo]);
+
+    CuotaCredito::factory()->paraCredito($credito)->create([
+        'numero_cuota' => 1,
+        'fecha_vencimiento' => now()->subDays(5)->toDateString(),
+        'monto_total' => $montoTotal,
+        'monto_abonado' => $montoAbonado,
+    ]);
+
+    return $credito;
+}
+
+/** Atajo de creditoCarteraDe() para créditos vencidos — el caso ya cubierto antes de que existiera "Cartera activa por tipo". */
+function creditoVencidoDe(Cliente $cliente, string $montoTotal, string $montoAbonado, string $tipo = 'prendario'): Credito
+{
+    return creditoCarteraDe($cliente, 'vencido', $montoTotal, $montoAbonado, $tipo);
+}
+
+/**
+ * Busca, dentro de una lista de filas con clave `tipo_credito` (el desglose
+ * por tipo que devuelven DashboardCarteraActivaPorTipoTest y
+ * DashboardProduccionPorAsesorTest), la fila de un tipo concreto.
+ */
+function filaTipo(array $filas, string $tipo): array
+{
+    foreach ($filas as $fila) {
+        if ($fila['tipo_credito'] === $tipo) {
+            return $fila;
+        }
+    }
+
+    throw new RuntimeException("No hay fila para el tipo {$tipo}");
 }

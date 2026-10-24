@@ -3,6 +3,7 @@
 namespace App\Modules\Ruta\Services;
 
 use App\Modules\Cliente\Models\Cliente;
+use App\Modules\Cobranza\Models\Cobro;
 use App\Modules\Credito\Models\Credito;
 use App\Modules\Credito\Models\CuotaCredito;
 use App\Modules\Ruta\Models\RutaClienteOrden;
@@ -19,9 +20,9 @@ final class RutaCobranzaService
 
     /**
      * Clientes de $propietario (cliente.asesor_id) con al menos un crédito
-     * activo/vencido que tiene una cuota vencida u hoy — mismo criterio que
-     * ReporteCobranzaService::cobranzaDiaria(), pero agrupado por CLIENTE en
-     * vez de por crédito: la ruta visita direcciones, no créditos, así que
+     * activo/vencido que tiene una cuota vencida u hoy, pagada o pendiente.
+     * Se agrupa por CLIENTE en vez de por crédito: la ruta visita direcciones,
+     * no créditos, así que
      * un cliente con 2 créditos vencidos es una sola parada.
      *
      * Un supervisor no tiene cartera propia: su ruta son las paradas que él
@@ -30,9 +31,10 @@ final class RutaCobranzaService
      * ruta aunque sean de otro asesor — mientras ese asesor siga a su alcance
      * (ver clientesAjenosVisibles()).
      *
-     * Solo cuentan las cuotas todavía pendientes: una cuota vencida que ya se
-     * cobró (sobre todo con el pago por cuotas) no debe seguir apareciendo
-     * en la ruta. Con `$tipoCredito` la ruta se limita a los créditos de ese
+     * Una cuota vencida u hoy incorpora el crédito a la ruta aunque se pague:
+     * la parada permanece mientras el crédito esté activo/vencido. Los días
+     * de atraso se calculan solo con cuotas pendientes. Con `$tipoCredito`
+     * la ruta se limita a los créditos de ese
      * tipo — la ruta se recorre por tipo (diario, prendario, hipotecario,
      * vehicular) — y los conteos y días de atraso salen solo de ellos.
      *
@@ -44,9 +46,7 @@ final class RutaCobranzaService
 
         $ajenos = $this->clientesAjenosVisibles($propietario, $tipoCredito);
 
-        $creditos = Credito::query()
-            ->whereIn('estado', ['activo', 'vencido'])
-            ->when($tipoCredito !== null, fn (Builder $q) => $q->where('tipo_credito', $tipoCredito))
+        $creditos = $this->creditosPlanificados($propietario, $tipoCredito)
             ->whereHas('cliente', function (Builder $cliente) use ($propietario, $ajenos): void {
                 $cliente->where('asesor_id', $propietario->id);
 
@@ -54,7 +54,6 @@ final class RutaCobranzaService
                     $cliente->orWhereIn('id', $ajenos);
                 }
             })
-            ->whereHas('cuotas', fn (Builder $q) => $q->pendientes()->whereDate('fecha_vencimiento', '<=', $hoy))
             ->with(['cliente.fotos'])
             ->get()
             ->load(['cuotas' => fn ($q) => $q->pendientes()->whereDate('fecha_vencimiento', '<=', $hoy)->orderBy('fecha_vencimiento')]);
@@ -72,7 +71,7 @@ final class RutaCobranzaService
             ->groupBy('cliente_id')
             ->map(function (Collection $creditosDelCliente) use ($idsConCuotaPagada): array {
                 $diasAtraso = $creditosDelCliente->map(
-                    fn (Credito $c) => (int) $c->cuotas->first()->fecha_vencimiento->diffInDays(now()->startOfDay())
+                    fn (Credito $c) => $c->cuotas->isEmpty() ? 0 : (int) $c->cuotas->first()->fecha_vencimiento->diffInDays(now()->startOfDay())
                 );
 
                 return [
@@ -126,6 +125,18 @@ final class RutaCobranzaService
             return collect();
         }
 
+        // created_at se escribe en la zona horaria de la aplicación, igual
+        // que los registros de cobro. No usar la fecha UTC del JSON/dispositivo.
+        $inicio = now(config('app.timezone'))->startOfDay();
+        $cobradosHoy = Cobro::query()
+            ->whereIn('cliente_id', $clientesEnMora->pluck('cliente.id'))
+            ->where('estado', 'registrado')
+            ->whereColumn('monto_pagado', '>', 'vuelto')
+            ->where('created_at', '>=', $inicio)
+            ->where('created_at', '<', $inicio->copy()->addDay())
+            ->when($tipoCredito !== null, fn (Builder $q) => $q->whereHas('credito', fn (Builder $c) => $c->where('tipo_credito', $tipoCredito)))
+            ->pluck('cliente_id');
+
         $ruta = $tipoCredito ?? self::RUTA_GENERAL;
 
         $ordenes = RutaClienteOrden::query()
@@ -164,6 +175,7 @@ final class RutaCobranzaService
                 'orden' => $ordenes->get($fila['cliente']->id)->orden,
                 'cliente_id' => $fila['cliente']->id,
                 'nombre' => $fila['cliente']->nombre,
+                'cobrado_hoy' => $cobradosHoy->contains($fila['cliente']->id),
                 'apellido' => $fila['cliente']->apellido,
                 'numero_documento' => $fila['cliente']->numero_documento,
                 'foto_cliente_url' => $fila['cliente']->foto_cliente_url,
@@ -232,8 +244,8 @@ final class RutaCobranzaService
      * que se agrega es una fila más para $propietario.
      *
      * Solo un supervisor arma ruta propia. El cliente tiene que estar
-     * realmente en mora de ese tipo: si ya no tiene cuotas vencidas
-     * pendientes no hay nada que visitar. Si la parada ya estaba en su ruta no
+     * tener un crédito activo/vencido incorporado a la ruta de ese tipo,
+     * incluso después de cobrar. Si la parada ya estaba en su ruta no
      * se duplica ni se mueve de posición (así el botón puede reenviarse sin
      * efectos raros).
      */
@@ -251,7 +263,7 @@ final class RutaCobranzaService
             throw new DomainException('Ese cliente no pertenece a ninguno de tus asesores.');
         }
 
-        if (! $this->tieneCuotasVencidasPendientes($cliente, $tipoCredito)) {
+        if (! $this->tieneCreditoEnRuta($cliente, $tipoCredito)) {
             throw new DomainException('El cliente no tiene cuotas vencidas pendientes en esa ruta.');
         }
 
@@ -307,20 +319,30 @@ final class RutaCobranzaService
     }
 
     /**
-     * Si $cliente tiene cuotas vencidas (o que vencen hoy) todavía pendientes
+     * Si $cliente tiene cuotas vencidas (o que vencen hoy)
      * en créditos activos/vencidos del tipo pedido — el mismo criterio que
      * arma la ruta, para que no se pueda copiar una parada que no existe.
      */
-    private function tieneCuotasVencidasPendientes(Cliente $cliente, ?string $tipoCredito): bool
+    private function tieneCreditoEnRuta(Cliente $cliente, ?string $tipoCredito): bool
     {
-        $hoy = now()->startOfDay()->toDateString();
-
-        return Credito::query()
+        return $this->creditosPlanificados($cliente->asesor, $tipoCredito)
             ->where('cliente_id', $cliente->id)
+            ->exists();
+    }
+
+    private function creditosPlanificados(User $propietario, ?string $tipoCredito): Builder
+    {
+        $planificados = $this->clientesEnRutaDe($propietario, $tipoCredito);
+        $hoy = now()->toDateString();
+
+        // El orden persistido también conserva la parada cuando pagar una
+        // cuota compuesta crea un sucesor activo con vencimientos futuros.
+        return Credito::query()
             ->whereIn('estado', ['activo', 'vencido'])
             ->when($tipoCredito !== null, fn (Builder $q) => $q->where('tipo_credito', $tipoCredito))
-            ->whereHas('cuotas', fn (Builder $q) => $q->pendientes()->whereDate('fecha_vencimiento', '<=', $hoy))
-            ->exists();
+            ->where(fn (Builder $q) => $q
+                ->whereIn('cliente_id', $planificados)
+                ->orWhereHas('cuotas', fn (Builder $cuotas) => $cuotas->whereDate('fecha_vencimiento', '<=', $hoy)));
     }
 
     /**

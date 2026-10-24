@@ -6,7 +6,9 @@ use App\Modules\Caja\Models\CajaMovimiento;
 use App\Modules\Caja\Services\CajaBovedaHierarchyService;
 use App\Modules\Cobranza\Models\Cobro;
 use App\Modules\Credito\Models\Credito;
+use App\Modules\Credito\Models\CuotaCredito;
 use App\Modules\Credito\Services\CreditoHierarchyService;
+use App\Modules\Ruta\Services\RutaCobranzaService;
 use App\Modules\Sistemas\Services\ModuloService;
 use App\Modules\Usuario\Models\User;
 use App\Modules\Venta\Models\PagoVenta;
@@ -78,6 +80,7 @@ final class DashboardService
     public function __construct(
         private readonly CreditoHierarchyService $creditos,
         private readonly CajaBovedaHierarchyService $cajas,
+        private readonly RutaCobranzaService $rutaCobranza,
     ) {}
 
     /**
@@ -122,7 +125,7 @@ final class DashboardService
         $hoy = now()->toDateString();
 
         $cobranza = $this->registrosCobranza($actor, $agenciaId, $asesorId, $tipoCredito, $hoy);
-        $desembolso = $this->registrosDesembolso($actor, $agenciaId, $asesorId, $tipoCredito, $hoy);
+        $desembolso = $this->registrosDesembolso($actor, $agenciaId, $asesorId, $tipoCredito, $hoy, $hoy);
 
         $filas = match ($agruparPor) {
             self::AGRUPACION_ASESOR => $this->agruparPorAsesor($cobranza, $desembolso),
@@ -212,13 +215,15 @@ final class DashboardService
     }
 
     /**
-     * Igual que totalDesembolsos() pero con las columnas de agrupación. Las
-     * ventas de tienda no se desembolsan (ver totalDesembolsos()), así que
-     * acá tampoco aportan filas.
+     * Igual que totalDesembolsos() pero con las columnas de agrupación, y
+     * sobre un RANGO de fechas en vez de un solo día — graficoCobranzaDesembolso()
+     * llama con $desde = $hasta = hoy; produccionPorAsesor() con un período
+     * elegido. Las ventas de tienda no se desembolsan (ver
+     * totalDesembolsos()), así que acá tampoco aportan filas.
      *
      * @return Collection<int, array{agencia_id: ?int, agencia_nombre: string, asesor_id: ?int, asesor_nombre: string, tipo: string, monto: float}>
      */
-    private function registrosDesembolso(User $actor, ?int $agenciaId, ?int $asesorId, ?string $tipo, string $hoy): Collection
+    private function registrosDesembolso(User $actor, ?int $agenciaId, ?int $asesorId, ?string $tipo, string $desde, string $hasta): Collection
     {
         if ($tipo === self::TIPO_VENTAS) {
             return collect();
@@ -226,7 +231,8 @@ final class DashboardService
 
         $query = CajaMovimiento::query()
             ->desembolsos()
-            ->whereDate('created_at', $hoy)
+            ->whereDate('created_at', '>=', $desde)
+            ->whereDate('created_at', '<=', $hasta)
             ->whereHas('credito', function (Builder $q) use ($actor, $agenciaId, $tipo): void {
                 $this->creditos->visibleQuery($q, $actor);
 
@@ -411,6 +417,96 @@ final class DashboardService
     }
 
     /**
+     * Créditos generados por asesor y tipo, en un período — "generado"
+     * significa efectivamente DESEMBOLSADO (reutiliza registrosDesembolso(),
+     * la misma fuente que ya define "Desembolso" en
+     * graficoCobranzaDesembolso()), no solicitado ni aprobado: una solicitud
+     * que nunca llegó a desembolsarse no aporta aquí. La atribución al
+     * asesor es quien PROCESÓ el desembolso (CajaMovimiento.registrado_por,
+     * igual que agruparPorAsesor() de ese mismo gráfico) y no
+     * credito.registrado_por (quién originó la solicitud) — en el flujo
+     * normal son la misma persona (desembolsar exige que el actor tenga su
+     * propia caja con saldo), pero podrían diferir en una adenda o un
+     * refinanciamiento; se mantiene esta atribución para no tener dos
+     * definiciones de "asesor del desembolso" en el mismo dashboard.
+     *
+     * Igual que agruparPorAsesor()/agruparPorAgenciaYTipo(): los 4 tipos
+     * siempre se devuelven dentro de cada asesor (relleno con cero), pero un
+     * asesor sin producción en el período no aparece. Ordenado por total
+     * generado descendente.
+     *
+     * @return array<string, mixed>
+     */
+    public function produccionPorAsesor(
+        User $actor,
+        string $desde,
+        string $hasta,
+        ?int $agenciaId,
+        ?int $asesorId,
+        ?string $tipoCredito,
+    ): array {
+        $registros = $this->registrosDesembolso($actor, $agenciaId, $asesorId, $tipoCredito, $desde, $hasta);
+
+        return [
+            'desde' => $desde,
+            'hasta' => $hasta,
+            'filas' => $this->agruparPorAsesorYTipo($registros),
+        ];
+    }
+
+    /**
+     * @param  Collection<int, array<string, mixed>>  $registros
+     * @return list<array{asesor_id: int, asesor_nombre: string, total: float, cantidad: int, tipos: list<array<string, mixed>>}>
+     */
+    private function agruparPorAsesorYTipo(Collection $registros): array
+    {
+        $claves = $registros->pluck('asesor_id')->filter()->unique()->values();
+        $porAsesor = $registros->groupBy('asesor_id');
+
+        return $claves
+            ->map(function (int $asesorId) use ($porAsesor): array {
+                $grupo = $porAsesor->get($asesorId, collect());
+
+                return [
+                    'asesor_id' => $asesorId,
+                    'asesor_nombre' => $grupo->first()['asesor_nombre'],
+                    'total' => round((float) $grupo->sum('monto'), 2),
+                    'cantidad' => $grupo->count(),
+                    'tipos' => $this->rellenarPorTipo($grupo),
+                ];
+            })
+            ->sortByDesc('total')
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Los 4 TIPOS_CREDITO siempre presentes (relleno con cero) — mismo
+     * criterio que agruparPorTipo(), pero con una sola magnitud (monto) en
+     * vez del par cobranza/desembolso: produccionPorAsesor() no tiene nada
+     * que comparar contra el monto generado.
+     *
+     * @param  Collection<int, array<string, mixed>>  $registros
+     * @return list<array{tipo_credito: string, monto: float, cantidad: int}>
+     */
+    private function rellenarPorTipo(Collection $registros): array
+    {
+        $porTipo = $registros->groupBy('tipo');
+
+        return collect(self::TIPOS_CREDITO)
+            ->map(function (string $tipo) use ($porTipo): array {
+                $grupo = $porTipo->get($tipo, collect());
+
+                return [
+                    'tipo_credito' => $tipo,
+                    'monto' => round((float) $grupo->sum('monto'), 2),
+                    'cantidad' => $grupo->count(),
+                ];
+            })
+            ->all();
+    }
+
+    /**
      * @return array{total: float, cantidad: int}
      */
     private function totalCobranzas(User $actor, ?int $agenciaId, ?int $asesorId, ?string $tipo, string $hoy): array
@@ -560,8 +656,59 @@ final class DashboardService
      */
     private function totalVencidos(User $actor, ?int $agenciaId, ?int $asesorId, ?string $tipo): array
     {
+        $creditos = $this->creditosDeCartera(['vencido'], $actor, $agenciaId, $asesorId, $tipo);
+
+        $total = $creditos->sum(fn (Credito $credito): float => $this->saldoPendienteDe($credito));
+
+        return ['total' => round($total, 2), 'cantidad' => $creditos->count()];
+    }
+
+    /**
+     * Composición de la cartera activa (créditos `activo` + `vencido`, es
+     * decir toda la cartera viva, no solo la mora que ya cubre "Vencidos")
+     * por tipo de crédito — para ver concentración de riesgo por línea de
+     * negocio. Las ventas de tienda no entran: no son un crédito con cuotas,
+     * así que no tienen saldo pendiente de esta forma. Los 4 tipos siempre
+     * se devuelven (rellenados con cero si no hay cartera de ese tipo), igual
+     * que el resto de desgloses por tipo de este servicio.
+     *
+     * @return array<string, mixed>
+     */
+    public function carteraActivaPorTipo(User $actor, ?int $agenciaId, ?int $asesorId, ?string $tipoCredito): array
+    {
+        $creditos = $this->creditosDeCartera(['activo', 'vencido'], $actor, $agenciaId, $asesorId, $tipoCredito);
+
+        $porTipo = $creditos->groupBy('tipo_credito');
+
+        $filas = collect(self::TIPOS_CREDITO)
+            ->map(function (string $tipo) use ($porTipo): array {
+                $grupo = $porTipo->get($tipo, collect());
+
+                return [
+                    'tipo_credito' => $tipo,
+                    'saldo' => round((float) $grupo->sum(fn (Credito $c): float => $this->saldoPendienteDe($c)), 2),
+                    'cantidad' => $grupo->count(),
+                ];
+            })
+            ->all();
+
+        return ['filas' => $filas];
+    }
+
+    /**
+     * Créditos de cartera (viva) visibles para el actor, con sus cuotas
+     * cargadas — query base compartida por totalVencidos() y
+     * carteraActivaPorTipo(). El filtro de asesor mira cliente.asesor_id (a
+     * quién pertenece el cliente), no credito.registrado_por (quién registró
+     * la operación): es cartera, no cobranza/desembolso.
+     *
+     * @param  list<string>  $estados
+     * @return Collection<int, Credito>
+     */
+    private function creditosDeCartera(array $estados, User $actor, ?int $agenciaId, ?int $asesorId, ?string $tipo): Collection
+    {
         $query = Credito::query()
-            ->where('estado', 'vencido')
+            ->whereIn('estado', $estados)
             ->with('cuotas');
 
         $query = $this->creditos->visibleQuery($query, $actor);
@@ -578,14 +725,119 @@ final class DashboardService
             $query->whereHas('cliente', fn (Builder $q) => $q->where('asesor_id', $asesorId));
         }
 
-        $creditos = $query->get();
+        return $query->get();
+    }
 
-        $total = $creditos->sum(fn (Credito $credito): float => max(
+    /**
+     * Saldo pendiente de un crédito: lo que falta de sus cuotas programadas,
+     * nunca negativo (un crédito sobrepagado no resta cartera).
+     */
+    private function saldoPendienteDe(Credito $credito): float
+    {
+        return max(
             (float) $credito->cuotas->sum('monto_total') - (float) $credito->cuotas->sum('monto_abonado'),
             0.0,
-        ));
+        );
+    }
 
-        return ['total' => round($total, 2), 'cantidad' => $creditos->count()];
+    /**
+     * Avance de cobranza de HOY por asesor: cuánto debía cobrar (todas las
+     * cuotas pendientes con vencimiento hasta hoy, no solo las que vencen
+     * exactamente hoy — mismo criterio de "pendiente" que usa
+     * RutaCobranzaService::clientesEnMoraDe() para armar la ruta: cuotas sin
+     * pagada_at con fecha_vencimiento <= hoy), cuánto ha cobrado y cuánto le
+     * falta. Pensado para identificar rápido a quién le falta cobrar,
+     * incluyendo lo atrasado de días previos — no solo el cobro del día.
+     *
+     * "Cobrado" lee cuotas.monto_abonado (mismo campo que ya usan
+     * totalVencidos()/carteraActivaPorTipo() para "lo pagado"), no una suma
+     * de Cobro.created_at = hoy: atribuir cada Cobro a la cuota exacta que
+     * paga requeriría la relación CobroCuotaAbono, que no siempre está
+     * poblada (p. ej. pago de una sola cuota), y duplicaría esa lógica. Esto
+     * también maneja bien el pago adelantado: una cuota que hoy recién vence
+     * pero ya se abonó antes sale como cobrada, tal como pide el negocio.
+     *
+     * El dueño de la obligación es cliente.asesor_id (igual que
+     * RutaCobranzaService), no credito.registrado_por — por eso el alcance
+     * acá NO es CreditoHierarchyService::visibleQuery sino la lista de
+     * asesores que el actor puede ver
+     * (RutaCobranzaService::asesoresVisibles()), igual que la propia Ruta.
+     * Esa lista queda vacía a propósito para un actor con rol asesor (está
+     * pensada para el selector de OTRA pantalla, donde un asesor ve
+     * directamente su propia ruta sin selector) — acá sí necesita verse a sí
+     * mismo, así que ese caso se resuelve aparte.
+     *
+     * A diferencia de los demás desgloses por asesor de este servicio (que
+     * no rellenan con cero a quien no tuvo movimiento), este SÍ lista a
+     * todos los asesores visibles, incluidos los que no tienen nada
+     * programado hoy: es un roster de cumplimiento, no una categoría
+     * dinámica.
+     *
+     * @return array<string, mixed>
+     */
+    public function avanceCobranzaHoy(User $actor, ?int $agenciaId, ?int $asesorId): array
+    {
+        $hoy = now()->toDateString();
+
+        $asesores = ($actor->hasRole('asesor')
+            ? $actor->newCollection([$actor])
+            : $this->rutaCobranza->asesoresVisibles($actor))
+            ->load('agencia:id,nombre');
+
+        if ($asesorId) {
+            $asesores = $asesores->where('id', $asesorId)->values();
+        }
+
+        if ($agenciaId) {
+            $asesores = $asesores->where('agencia_id', $agenciaId)->values();
+        }
+
+        $asesorIds = $asesores->pluck('id');
+
+        $cuotas = CuotaCredito::query()
+            ->pendientes()
+            ->whereDate('fecha_vencimiento', '<=', $hoy)
+            ->whereHas('credito', function (Builder $q) use ($asesorIds, $agenciaId): void {
+                $q->whereIn('estado', ['activo', 'vencido'])
+                    ->whereHas('cliente', fn (Builder $c) => $c->whereIn('asesor_id', $asesorIds));
+
+                if ($agenciaId) {
+                    $q->where('agencia_id', $agenciaId);
+                }
+            })
+            ->with('credito.cliente:id,asesor_id')
+            ->get();
+
+        $porAsesor = $cuotas->groupBy(fn (CuotaCredito $c): ?int => $c->credito->cliente->asesor_id);
+
+        $filas = $asesores
+            ->map(function (User $asesor) use ($porAsesor): array {
+                $cuotasDelAsesor = $porAsesor->get($asesor->id, collect());
+
+                $programado = round((float) $cuotasDelAsesor->sum('monto_total'), 2);
+                $cobrado = round((float) $cuotasDelAsesor->sum(
+                    fn (CuotaCredito $c): float => min((float) $c->monto_abonado, (float) $c->monto_total)
+                ), 2);
+                $pendiente = round(max($programado - $cobrado, 0.0), 2);
+
+                return [
+                    'asesor_id' => $asesor->id,
+                    'asesor_nombre' => trim("{$asesor->nombre} {$asesor->apellido}"),
+                    'agencia_id' => $asesor->agencia_id,
+                    'agencia_nombre' => $asesor->agencia?->nombre,
+                    'programado' => $programado,
+                    'cobrado' => $cobrado,
+                    'pendiente' => $pendiente,
+                    'porcentaje' => $programado > 0 ? round(min($cobrado / $programado * 100, 100), 1) : null,
+                ];
+            })
+            // Avance ascendente (quien menos avanzó primero); sin cobranza
+            // programada queda al final, no mezclado con el 0% real.
+            ->sortBy(fn (array $f): float => $f['porcentaje'] ?? 101)
+            ->values()
+            ->all();
+
+        return ['fecha' => $hoy, 'filas' => $filas];
     }
 
     /**

@@ -1,6 +1,9 @@
 <?php
 
+use App\Modules\Caja\Models\Caja;
+use App\Modules\Caja\Models\CajaCiclo;
 use App\Modules\Cliente\Models\Cliente;
+use App\Modules\Cobranza\Models\Cobro;
 use App\Modules\Credito\Models\ConfiguracionCredito;
 use App\Modules\Credito\Models\Credito;
 use App\Modules\Credito\Models\CuotaCredito;
@@ -9,6 +12,8 @@ use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Usuario\Models\User;
 use Database\Seeders\PermissionSeeder;
 use Database\Seeders\RoleSeeder;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
 
 beforeEach(function () {
@@ -397,7 +402,7 @@ it('rejects removing a cliente of the supervisor own cartera', function () {
         ->assertJsonPath('message', 'Los clientes de tu cartera ya están en tu ruta, no se pueden quitar.');
 });
 
-it('drops a cloned cliente from the supervisor ruta once its overdue cuotas were paid', function () {
+it('keeps a cloned cliente with an active credit after its overdue cuotas were paid', function () {
     $supervisor = supervisorDeRutaParaTest($this->agencia, $this->asesor);
     $cliente = Cliente::factory()->asignadoA($this->asesor)->create();
     $credito = creditoEnMoraParaRuta($this->empresa, $this->agencia, $cliente, $this->asesor, 5);
@@ -410,7 +415,7 @@ it('drops a cloned cliente from the supervisor ruta once its overdue cuotas were
         ->whereDate('fecha_vencimiento', '<=', now()->toDateString())
         ->update(['pagada_at' => now()]);
 
-    expect($this->getJson('/api/rutas-cobranza')->json('data'))->toBe([]);
+    expect($this->getJson('/api/rutas-cobranza')->json('data'))->toHaveCount(1);
 });
 
 it('drops a cloned parada when the cliente leaves the cartera of the asesor', function () {
@@ -577,7 +582,7 @@ it('rejects an unknown tipo de crédito', function () {
     $this->postJson('/api/rutas-cobranza/reordenar', ['tipo_credito' => 'otro', 'cliente_ids' => [1]])->assertUnprocessable();
 });
 
-it('no longer lists a cliente whose overdue cuotas were already paid', function () {
+it('keeps a cliente whose overdue cuotas were paid while the credit is active', function () {
     $cliente = Cliente::factory()->asignadoA($this->asesor)->create();
     $credito = creditoEnMoraParaRuta($this->empresa, $this->agencia, $cliente, $this->asesor, 3);
 
@@ -588,5 +593,95 @@ it('no longer lists a cliente whose overdue cuotas were already paid', function 
         ->whereDate('fecha_vencimiento', '<=', now()->toDateString())
         ->update(['pagada_at' => now()]);
 
-    expect($this->getJson('/api/rutas-cobranza')->json('data'))->toBe([]);
+    expect($this->getJson('/api/rutas-cobranza')->json('data'))->toHaveCount(1);
+});
+
+it('persists a real collection in the route until the entire credit is settled', function (bool $parcial) {
+    Storage::fake('public');
+    $this->travelTo(now()->setTime(12, 0));
+    $cliente = Cliente::factory()->asignadoA($this->asesor)->create();
+    $credito = creditoEnMoraParaRuta($this->empresa, $this->agencia, $cliente, $this->asesor, 1);
+    $caja = Caja::factory()->create([
+        'user_id' => $this->asesor->id, 'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id,
+    ]);
+    CajaCiclo::query()->create([
+        'caja_id' => $caja->id, 'empresa_id' => $this->empresa->id, 'fecha' => now()->toDateString(),
+        'estado' => 'abierta', 'saldo_apertura' => 10000, 'abierta_at' => now(),
+    ]);
+    Sanctum::actingAs($this->asesor, ['*']);
+    $this->getJson('/api/rutas-cobranza')->assertSuccessful()->assertJsonPath('data.0.cobrado_hoy', false);
+
+    $this->postJson("/api/creditos-prendarios/{$credito->id}/pagar-cuotas", [
+        'numero_cuotas' => $parcial ? null : 1, 'monto_pagado' => $parcial ? 5 : 11, 'medio' => 'efectivo',
+    ])->assertCreated();
+    expect($credito->fresh()->estado)->toBe('activo')
+        ->and($credito->cuotas()->pendientes()->count())->toBe($parcial ? 30 : 29);
+    // Consultas nuevas: refresco y reapertura no dependen de memoria del cliente.
+    foreach (range(1, 2) as $_) {
+        $this->getJson('/api/rutas-cobranza')->assertSuccessful()->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.cliente_id', $cliente->id)->assertJsonPath('data.0.cobrado_hoy', true);
+    }
+    $cobro = Cobro::where('credito_id', $credito->id)->firstOrFail();
+    $this->postJson("/api/cobros/{$cobro->id}/anular", ['motivo' => 'Pago duplicado'])->assertSuccessful();
+    $this->getJson('/api/rutas-cobranza')->assertSuccessful()->assertJsonPath('data.0.cobrado_hoy', false);
+
+    $this->postJson("/api/creditos-prendarios/{$credito->id}/pagar-cuotas", [
+        'numero_cuotas' => 30, 'monto_pagado' => 330, 'medio' => 'efectivo',
+    ])->assertCreated();
+    expect($credito->fresh()->estado)->toBe('liquidado');
+    $this->getJson('/api/rutas-cobranza')->assertSuccessful()->assertJsonCount(0, 'data');
+})->with([false, true]);
+
+it('uses the server local day and only valid positive collections of the requested credit type', function (string $fecha, string $estado, int $monto, bool $verde) {
+    config(['app.timezone' => 'America/Lima']);
+    $this->travelTo(Carbon::parse('2026-10-23 00:30:00', 'America/Lima'));
+    $cliente = Cliente::factory()->asignadoA($this->asesor)->create();
+    $credito = creditoEnMoraParaRuta($this->empresa, $this->agencia, $cliente, $this->asesor, 1);
+    Cobro::factory()->create([
+        'empresa_id' => $this->empresa->id, 'cliente_id' => $cliente->id, 'credito_id' => $credito->id,
+        'registrado_por' => $this->asesor->id, 'estado' => $estado, 'monto_pagado' => $monto,
+        'created_at' => $fecha,
+    ]);
+    Sanctum::actingAs($this->asesor, ['*']);
+    $this->getJson('/api/rutas-cobranza?tipo_credito=diario')->assertSuccessful()
+        ->assertJsonPath('data.0.cobrado_hoy', $verde);
+    $this->getJson('/api/rutas-cobranza?tipo_credito=prendario')->assertJsonCount(0, 'data');
+})->with([
+    ['2026-10-22 23:59:59', 'registrado', 5, false],
+    ['2026-10-23 00:00:00', 'registrado', 5, true],
+    ['2026-10-23 23:59:59', 'registrado', 5, true],
+    ['2026-10-24 00:00:00', 'registrado', 5, false],
+    ['2026-10-23 00:10:00', 'anulado', 5, false],
+    ['2026-10-23 00:10:00', 'registrado', 0, false],
+]);
+
+it('keeps the planned stop with a future successor and derives its color from all valid collections', function () {
+    $this->travelTo(now()->setTime(12, 0));
+    $cliente = Cliente::factory()->asignadoA($this->asesor)->create();
+    $original = hipotecarioEnMoraParaRuta($this->empresa, $this->agencia, $cliente, $this->asesor, 0);
+    Sanctum::actingAs($this->asesor, ['*']);
+    $url = '/api/rutas-cobranza?tipo_credito=hipotecario';
+    $this->getJson($url)->assertJsonCount(1, 'data');
+
+    $original->update(['estado' => 'cuota_pagada']);
+    $sucesor = Credito::factory()->hipotecario()->create([
+        'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id,
+        'cliente_id' => $cliente->id, 'registrado_por' => $this->asesor->id,
+        'estado' => 'activo', 'pago_cuota_de_credito_id' => $original->id,
+    ]);
+    CuotaCredito::factory()->paraCredito($sucesor)->create(['fecha_vencimiento' => now()->addMonth()]);
+    $cobro = Cobro::factory()->create([
+        'empresa_id' => $this->empresa->id, 'cliente_id' => $cliente->id, 'credito_id' => $original->id,
+        'credito_sucesor_id' => $sucesor->id, 'registrado_por' => $this->asesor->id,
+        'estado' => 'registrado', 'monto_pagado' => 100,
+    ]);
+    $anulado = $cobro->replicate();
+    $anulado->estado = 'anulado';
+    $anulado->save();
+    $this->getJson($url)->assertJsonCount(1, 'data')->assertJsonPath('data.0.cobrado_hoy', true)
+        ->assertJsonPath('data.0.creditos.0.id', $sucesor->id)->assertJsonPath('data.0.dias_atraso_max', 0);
+    $this->travel(1)->days();
+    $this->getJson($url)->assertJsonCount(1, 'data')->assertJsonPath('data.0.cobrado_hoy', false);
+    $sucesor->update(['estado' => 'liquidado_pendiente']);
+    $this->getJson($url)->assertJsonCount(0, 'data');
 });
