@@ -143,6 +143,7 @@ Route::middleware(['auth:sanctum', EnsurePerfilAcceso::class, EnsureIdempotency:
     Route::get('dashboard/produccion-por-asesor', [DashboardController::class, 'produccionPorAsesor'])->name('dashboard.produccion-por-asesor');
     Route::get('dashboard/avance-cobranza-hoy', [DashboardController::class, 'avanceCobranzaHoy'])->name('dashboard.avance-cobranza-hoy');
     Route::get('dashboard/mapa-clientes', [DashboardController::class, 'mapaClientes'])->name('dashboard.mapa-clientes');
+    Route::get('dashboard/mapa-unificado', [DashboardController::class, 'mapaUnificado'])->name('dashboard.mapa-unificado');
 
     Route::prefix('qr')->middleware('can:gestionar-qr')->group(function () {
         Route::get('generar', [QrController::class, 'generar'])->name('qr.generar');

@@ -2,6 +2,7 @@
 
 namespace App\Modules\Ubicacion\Models;
 
+use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Usuario\Models\User;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -42,5 +43,10 @@ class UbicacionAsesor extends Model
     public function asesor(): BelongsTo
     {
         return $this->belongsTo(User::class, 'user_id');
+    }
+
+    public function agencia(): BelongsTo
+    {
+        return $this->belongsTo(Agencia::class);
     }
 }

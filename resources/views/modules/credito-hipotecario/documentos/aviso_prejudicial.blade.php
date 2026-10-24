@@ -15,7 +15,8 @@
         table.cuotas th { background: #eee; }
         .num { text-align: right; }
         .firma { margin-top: 55px; text-align: center; width: 60%; }
-        .firma-linea { border-top: 1px solid #000; padding-top: 3px; margin-top: 42px; }
+        .firma-imagen { max-height: 100px; max-width: 140px; }
+        .firma-linea { border-top: 1px solid #000; padding-top: 3px; margin-top: 5px; }
     </style>
 </head>
 <body>
@@ -99,6 +100,9 @@
     <p>Atentamente,</p>
 
     <div class="firma">
+        @if ($credito->empresa->firma_path)
+            <img class="firma-imagen" src="{{ $fotoDataUri($credito->empresa->firma_path, 600) }}">
+        @endif
         <div class="firma-linea">
             <strong>{{ mb_strtoupper(filled($emp->apoderado_legal) ? $emp->apoderado_legal : $emp->representante_legal) }}</strong><br>
             Apoderado Legal<br>

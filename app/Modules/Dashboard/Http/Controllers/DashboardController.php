@@ -4,10 +4,14 @@ namespace App\Modules\Dashboard\Http\Controllers;
 
 use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Cliente\Services\ClienteHierarchyService;
+use App\Modules\Credito\Models\Credito;
 use App\Modules\Dashboard\Http\Requests\DashboardInicialRequest;
 use App\Modules\Dashboard\Http\Requests\DashboardProduccionRequest;
+use App\Modules\Dashboard\Http\Requests\MapaUnificadoRequest;
 use App\Modules\Dashboard\Services\DashboardAtrasosService;
 use App\Modules\Dashboard\Services\DashboardService;
+use App\Modules\Dashboard\Services\MapaUnificadoService;
+use App\Modules\Ubicacion\Models\UbicacionAsesor;
 use App\Nucleo\Http\Controllers\Controller;
 use App\Nucleo\Traits\ApiResponse;
 use Illuminate\Database\Eloquent\Builder;
@@ -22,6 +26,7 @@ class DashboardController extends Controller
         private readonly ClienteHierarchyService $hierarchy,
         private readonly DashboardService $dashboard,
         private readonly DashboardAtrasosService $atrasos,
+        private readonly MapaUnificadoService $mapaUnificado,
     ) {}
 
     /**
@@ -195,5 +200,26 @@ class DashboardController extends Controller
         });
 
         return $this->successResponse($clientes->values());
+    }
+
+    /**
+     * Mapa unificado: ubicación en vivo de los asesores visibles + su ruta
+     * de cobranza de hoy, con el semáforo de visita de cada cliente
+     * (pendiente/amarillo/verde — ver MapaUnificadoService). Exige los dos
+     * permisos que ya protegen por separado el mapa de ruta y el de
+     * asesores en vivo: nunca muestra más de lo que esos dos ya mostraban.
+     * `agencia_id`/`asesor_id` solo acotan el alcance del actor, nunca lo
+     * amplían.
+     */
+    public function mapaUnificado(MapaUnificadoRequest $request): JsonResponse
+    {
+        Gate::authorize('viewAny', Credito::class);
+        Gate::authorize('viewAny', UbicacionAsesor::class);
+
+        return $this->successResponse($this->mapaUnificado->paraActor(
+            $request->user(),
+            $request->agenciaId(),
+            $request->asesorId(),
+        ));
     }
 }

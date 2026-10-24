@@ -6,6 +6,7 @@ use App\Modules\Ubicacion\Events\UbicacionAsesorActualizada;
 use App\Modules\Ubicacion\Models\UbicacionAsesor;
 use App\Modules\Ubicacion\Models\UbicacionAsesorHistorial;
 use App\Modules\Usuario\Models\User;
+use App\Nucleo\Support\Geo;
 use Carbon\CarbonImmutable;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
@@ -67,14 +68,16 @@ final class UbicacionAsesorService
     }
 
     /**
-     * Últimas ubicaciones visibles para $actor, para pintar el mapa —
-     * mismo alcance por rol que RutaCobranzaService::asesoresVisibles().
+     * Últimas ubicaciones visibles para $actor, para pintar el mapa — mismo
+     * alcance por rol que RutaCobranzaService::asesoresVisibles(). Con
+     * $agenciaId/$asesorId se acota aún más ese alcance (nunca lo amplía):
+     * son los filtros opcionales del mapa unificado.
      *
      * @return Collection<int, array<string, mixed>>
      */
-    public function visiblesPara(User $actor): Collection
+    public function visiblesPara(User $actor, ?int $agenciaId = null, ?int $asesorId = null): Collection
     {
-        $query = UbicacionAsesor::query()->with('asesor');
+        $query = UbicacionAsesor::query()->with(['asesor', 'agencia']);
 
         if ($actor->hasRole('administrador_agencia')) {
             $query->where('agencia_id', $actor->agencia_id);
@@ -86,10 +89,20 @@ final class UbicacionAsesorService
             $query->where('empresa_id', $actor->empresa_id);
         }
 
+        if ($agenciaId !== null) {
+            $query->where('agencia_id', $agenciaId);
+        }
+
+        if ($asesorId !== null) {
+            $query->where('user_id', $asesorId);
+        }
+
         return $query->get()->map(fn (UbicacionAsesor $ubicacion): array => [
             'asesor_id' => $ubicacion->user_id,
             'nombre' => $ubicacion->asesor->nombre,
             'apellido' => $ubicacion->asesor->apellido,
+            'agencia_id' => $ubicacion->agencia_id,
+            'agencia_nombre' => $ubicacion->agencia?->nombre,
             'latitud' => $ubicacion->latitud,
             'longitud' => $ubicacion->longitud,
             'precision_metros' => $ubicacion->precision_metros,
@@ -167,7 +180,7 @@ final class UbicacionAsesorService
 
         $puntos->values()->sliding(2)->each(function (Collection $par) use (&$total): void {
             [$a, $b] = $par->values()->all();
-            $total += $this->haversineMetros($a->latitud, $a->longitud, $b->latitud, $b->longitud);
+            $total += Geo::distanciaMetros($a->latitud, $a->longitud, $b->latitud, $b->longitud);
         });
 
         return round($total, 2);
@@ -199,22 +212,5 @@ final class UbicacionAsesorService
         });
 
         return $pausas;
-    }
-
-    /**
-     * Distancia en metros entre dos coordenadas (fórmula de Haversine,
-     * radio terrestre medio 6,371,000 m).
-     */
-    private function haversineMetros(float $lat1, float $lon1, float $lat2, float $lon2): float
-    {
-        $radioTierra = 6371000;
-
-        $dLat = deg2rad($lat2 - $lat1);
-        $dLon = deg2rad($lon2 - $lon1);
-
-        $a = sin($dLat / 2) ** 2
-            + cos(deg2rad($lat1)) * cos(deg2rad($lat2)) * sin($dLon / 2) ** 2;
-
-        return $radioTierra * 2 * atan2(sqrt($a), sqrt(1 - $a));
     }
 }

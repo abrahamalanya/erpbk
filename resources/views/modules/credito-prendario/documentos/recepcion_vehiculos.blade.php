@@ -15,6 +15,7 @@
         table.veh th { background: #eee; text-align: left; width: 26%; }
         table.firmas { width: 100%; margin-top: 26px; }
         table.firmas td { width: 50%; text-align: center; vertical-align: bottom; }
+        .firma-imagen { max-height: 100px; max-width: 140px; }
         .firma-espacio { height: 42px; }
         .firma-linea { margin-top: 6px; border-top: 1px solid #000; padding-top: 3px; }
         .check { font-weight: bold; }
@@ -82,7 +83,11 @@
                 <div class="firma-linea">{{ $clienteNombre }}<br>{{ $tipoDoc }} N&deg;: {{ $credito->cliente->numero_documento }}<br><small>Entrega conforme</small></div>
             </td>
             <td>
-                <div class="firma-espacio"></div>
+                @if ($credito->empresa->firma_path)
+                    <img class="firma-imagen" src="{{ $fotoDataUri($credito->empresa->firma_path, 600) }}">
+                @else
+                    <div class="firma-espacio"></div>
+                @endif
                 <div class="firma-linea">{{ strtoupper($empresaNombre) }}<br>@if ($credito->empresa->ruc) RUC: {{ $credito->empresa->ruc }}<br>@endif<small>Recibe conforme</small></div>
             </td>
         </tr>

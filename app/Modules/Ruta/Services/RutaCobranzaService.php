@@ -97,6 +97,23 @@ final class RutaCobranzaService
     }
 
     /**
+     * Clientes de $propietario relevantes para la ruta de cobranza de hoy,
+     * de cualquier tipo de crédito — exactamente los que entrarían a su
+     * ruta general (rutaDe($propietario, null)), pero sin recalcular
+     * créditos/fotos/orden: lo usa VisitaClienteService en cada ping GPS
+     * para saber contra qué clientes evaluar la cercanía, sin repetir la
+     * regla de "qué es mora".
+     *
+     * @return Collection<int, Cliente>
+     */
+    public function clientesEnRutaHoy(User $propietario): Collection
+    {
+        return $this->clientesEnMoraDe($propietario, null)
+            ->map(fn (array $fila): Cliente => $fila['cliente'])
+            ->values();
+    }
+
+    /**
      * Ruta ordenada de $propietario para hoy: sus clientes en mora, en el
      * orden que el propio asesor definió (persistente entre días — ver
      * clientes_ruta_orden). Un cliente que entra en mora por primera vez se

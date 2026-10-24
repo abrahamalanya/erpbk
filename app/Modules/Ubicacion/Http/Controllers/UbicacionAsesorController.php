@@ -2,6 +2,7 @@
 
 namespace App\Modules\Ubicacion\Http\Controllers;
 
+use App\Modules\Ruta\Services\VisitaClienteService;
 use App\Modules\Ubicacion\Http\Requests\HistorialUbicacionAsesorRequest;
 use App\Modules\Ubicacion\Http\Requests\StoreUbicacionAsesorRequest;
 use App\Modules\Ubicacion\Models\UbicacionAsesor;
@@ -22,17 +23,24 @@ class UbicacionAsesorController extends Controller
 {
     use ApiResponse;
 
-    public function __construct(private readonly UbicacionAsesorService $ubicacionAsesorService) {}
+    public function __construct(
+        private readonly UbicacionAsesorService $ubicacionAsesorService,
+        private readonly VisitaClienteService $visitaClienteService,
+    ) {}
 
     /**
      * Un asesor registra su propia ubicación — no requiere que otro rol
-     * se lo autorice, igual que RutaCobranzaController::reordenar().
+     * se lo autorice, igual que RutaCobranzaController::reordenar(). Cada
+     * ping válido también evalúa la permanencia cerca de los clientes de su
+     * ruta de hoy (ver VisitaClienteService), que es lo que alimenta el
+     * estado "amarillo" del mapa unificado.
      */
     public function store(StoreUbicacionAsesorRequest $request): JsonResponse
     {
         abort_unless($request->user()->hasRole('asesor'), 403);
 
         $ubicacion = $this->ubicacionAsesorService->registrar($request->user(), $request->validated());
+        $this->visitaClienteService->procesarPing($request->user(), $ubicacion);
 
         return $this->successResponse([
             'id' => $ubicacion->id,
