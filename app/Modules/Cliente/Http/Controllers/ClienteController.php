@@ -217,6 +217,7 @@ class ClienteController extends Controller
             'referencia_negocio' => $data['referencia_negocio'] ?? null,
             'latitud_negocio' => $data['latitud_negocio'] ?? null,
             'longitud_negocio' => $data['longitud_negocio'] ?? null,
+            'lugar_cobranza' => $data['lugar_cobranza'] ?? 'casa',
             'estado' => 'activo',
         ]);
 

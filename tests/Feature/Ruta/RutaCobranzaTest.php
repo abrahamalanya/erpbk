@@ -86,6 +86,41 @@ it('lists the ruta of clientes en mora, one row per cliente even with 2 crédito
     expect($response->json('data.0.cliente_id'))->toBe($clienteB->id);
 });
 
+it('resolves latitud_cobranza/longitud_cobranza from the negocio when lugar_cobranza is negocio', function () {
+    $cliente = Cliente::factory()->asignadoA($this->asesor)->create([
+        'lugar_cobranza' => 'negocio',
+        'direccion_negocio' => 'Av. Negocio 123',
+        'latitud_negocio' => -8.1, 'longitud_negocio' => -74.1,
+        'latitud' => -9.9, 'longitud' => -75.9,
+    ]);
+    creditoEnMoraParaRuta($this->empresa, $this->agencia, $cliente, $this->asesor, 2);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $fila = collect($this->getJson('/api/rutas-cobranza')->assertSuccessful()->json('data'))
+        ->firstWhere('cliente_id', $cliente->id);
+
+    expect($fila['lugar_cobranza'])->toBe('negocio')
+        ->and($fila['direccion_cobranza'])->toBe('Av. Negocio 123')
+        ->and($fila['latitud_cobranza'])->toBe(-8.1)
+        ->and($fila['longitud_cobranza'])->toBe(-74.1);
+});
+
+it('does not fall back to casa when the chosen negocio has no coordinates', function () {
+    $cliente = Cliente::factory()->asignadoA($this->asesor)->create([
+        'lugar_cobranza' => 'negocio',
+        'latitud_negocio' => null, 'longitud_negocio' => null,
+        'latitud' => -9.9, 'longitud' => -75.9,
+    ]);
+    creditoEnMoraParaRuta($this->empresa, $this->agencia, $cliente, $this->asesor, 2);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $fila = collect($this->getJson('/api/rutas-cobranza')->assertSuccessful()->json('data'))
+        ->firstWhere('cliente_id', $cliente->id);
+
+    expect($fila['latitud_cobranza'])->toBeNull()
+        ->and($fila['longitud_cobranza'])->toBeNull();
+});
+
 it('persists a custom reorder and keeps it on the next request', function () {
     $clienteA = Cliente::factory()->asignadoA($this->asesor)->create();
     $clienteB = Cliente::factory()->asignadoA($this->asesor)->create();

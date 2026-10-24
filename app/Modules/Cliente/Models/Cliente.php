@@ -58,6 +58,7 @@ class Cliente extends Model
         'foto_suministro_path',
         'foto_recibo_luz_path',
         'estado',
+        'lugar_cobranza',
     ];
 
     /**
@@ -155,6 +156,34 @@ class Cliente extends Model
     public function ubigeoDistritoNegocio(): BelongsTo
     {
         return $this->belongsTo(UbigeoDistrito::class, 'ubigeo_distrito_negocio_id');
+    }
+
+    /**
+     * Dirección/referencia/coordenadas del lugar elegido para cobrar (`lugar_cobranza`:
+     * casa o negocio). Si ese lugar no tiene coordenadas registradas, latitud/longitud
+     * vienen en null — nunca cae a las del otro lugar. La Ruta de Cobranza y el mapa
+     * del Inicio resuelven la ubicación a usar a través de este método en vez de leer
+     * directamente las columnas de casa/negocio, para no duplicar la regla.
+     *
+     * @return array{direccion: ?string, referencia: ?string, latitud: ?float, longitud: ?float}
+     */
+    public function ubicacionCobranza(): array
+    {
+        if ($this->lugar_cobranza === 'negocio') {
+            return [
+                'direccion' => $this->direccion_negocio,
+                'referencia' => $this->referencia_negocio,
+                'latitud' => $this->latitud_negocio !== null ? (float) $this->latitud_negocio : null,
+                'longitud' => $this->longitud_negocio !== null ? (float) $this->longitud_negocio : null,
+            ];
+        }
+
+        return [
+            'direccion' => $this->direccion,
+            'referencia' => $this->referencia,
+            'latitud' => $this->latitud !== null ? (float) $this->latitud : null,
+            'longitud' => $this->longitud !== null ? (float) $this->longitud : null,
+        ];
     }
 
     /**

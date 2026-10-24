@@ -146,3 +146,51 @@ it('allows sistemas to create a cliente for any empresa/agencia when both are pr
         'empresa_id' => $empresa->id, 'agencia_id' => $agencia->id,
     ])->assertCreated();
 });
+
+it('defaults lugar_cobranza to casa when not provided', function () {
+    $empresa = Empresa::factory()->create();
+    $agencia = Agencia::factory()->for($empresa)->create();
+    $peinadora = User::factory()->forAgencia($agencia)->create();
+    $peinadora->assignRole('peinadora');
+    Sanctum::actingAs($peinadora, ['*']);
+
+    $response = $this->postJson('/api/clientes', [
+        'nombre' => 'Juan', 'apellido' => 'Perez', 'tipo_documento' => 'dni', 'numero_documento' => '77777777',
+    ])->assertCreated();
+
+    expect($response->json('data.lugar_cobranza'))->toBe('casa');
+});
+
+it('saves lugar_cobranza negocio when provided, and update() can switch it back', function () {
+    $empresa = Empresa::factory()->create();
+    $agencia = Agencia::factory()->for($empresa)->create();
+    $peinadora = User::factory()->forAgencia($agencia)->create();
+    $peinadora->assignRole('peinadora');
+    Sanctum::actingAs($peinadora, ['*']);
+
+    $response = $this->postJson('/api/clientes', [
+        'nombre' => 'Juan', 'apellido' => 'Perez', 'tipo_documento' => 'dni', 'numero_documento' => '88888888',
+        'lugar_cobranza' => 'negocio',
+    ])->assertCreated();
+
+    expect($response->json('data.lugar_cobranza'))->toBe('negocio');
+
+    $clienteId = $response->json('data.id');
+
+    $update = $this->putJson("/api/clientes/{$clienteId}", ['lugar_cobranza' => 'casa'])->assertSuccessful();
+
+    expect($update->json('data.lugar_cobranza'))->toBe('casa');
+});
+
+it('rejects an invalid lugar_cobranza', function () {
+    $empresa = Empresa::factory()->create();
+    $agencia = Agencia::factory()->for($empresa)->create();
+    $peinadora = User::factory()->forAgencia($agencia)->create();
+    $peinadora->assignRole('peinadora');
+    Sanctum::actingAs($peinadora, ['*']);
+
+    $this->postJson('/api/clientes', [
+        'nombre' => 'Juan', 'apellido' => 'Perez', 'tipo_documento' => 'dni', 'numero_documento' => '99999999',
+        'lugar_cobranza' => 'oficina',
+    ])->assertUnprocessable()->assertJsonValidationErrors(['lugar_cobranza']);
+});

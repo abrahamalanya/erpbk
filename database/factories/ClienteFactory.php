@@ -45,6 +45,7 @@ class ClienteFactory extends Factory
             'latitud_negocio' => fake()->latitude(-12, -3),
             'longitud_negocio' => fake()->longitude(-79, -68),
             'estado' => 'activo',
+            'lugar_cobranza' => 'casa',
         ];
     }
 

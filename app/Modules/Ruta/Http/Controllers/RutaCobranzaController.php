@@ -52,8 +52,8 @@ class RutaCobranzaController extends Controller
         Gate::authorize('viewAny', Credito::class);
 
         $paradas = $this->rutaCobranzaService->rutaDe($this->resolverAsesor(), $request->validated('tipo_credito'), $request->user())
-            ->filter(fn (array $parada): bool => $parada['latitud'] !== null && $parada['longitud'] !== null)
-            ->map(fn (array $parada): array => [$parada['latitud'], $parada['longitud']])
+            ->filter(fn (array $parada): bool => $parada['latitud_cobranza'] !== null && $parada['longitud_cobranza'] !== null)
+            ->map(fn (array $parada): array => [$parada['latitud_cobranza'], $parada['longitud_cobranza']])
             ->values()
             ->all();
 

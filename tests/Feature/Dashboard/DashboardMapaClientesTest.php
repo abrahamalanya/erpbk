@@ -92,6 +92,37 @@ it('only shows the asesor their own clientes on the map', function () {
     expect($data)->toHaveCount(1);
 });
 
+it('uses the negocio coordinates when lugar_cobranza is negocio', function () {
+    Cliente::factory()->forAgencia($this->agencia)->asignadoA($this->asesor)->create([
+        'lugar_cobranza' => 'negocio',
+        'direccion_negocio' => 'Av. Negocio 123',
+        'latitud_negocio' => -8.1, 'longitud_negocio' => -74.1,
+        'latitud' => -9.9, 'longitud' => -75.9,
+    ]);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $data = $this->getJson('/api/dashboard/mapa-clientes')->assertSuccessful()->json('data');
+
+    expect($data)->toHaveCount(1)
+        ->and($data[0]['lugar_cobranza'])->toBe('negocio')
+        ->and($data[0]['direccion'])->toBe('Av. Negocio 123')
+        ->and($data[0]['latitud'])->toBe(-8.1)
+        ->and($data[0]['longitud'])->toBe(-74.1);
+});
+
+it('excludes a cliente whose lugar_cobranza is negocio but has no coordinates there, even with casa coordinates', function () {
+    Cliente::factory()->forAgencia($this->agencia)->asignadoA($this->asesor)->create([
+        'lugar_cobranza' => 'negocio',
+        'latitud_negocio' => null, 'longitud_negocio' => null,
+        'latitud' => -9.9, 'longitud' => -75.9,
+    ]);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $data = $this->getJson('/api/dashboard/mapa-clientes')->assertSuccessful()->json('data');
+
+    expect($data)->toHaveCount(0);
+});
+
 it('denies a user without clientes.ver from viewing the map', function () {
     $sinRol = User::factory()->forAgencia($this->agencia)->create();
 

@@ -10,6 +10,7 @@ use App\Modules\Dashboard\Services\DashboardAtrasosService;
 use App\Modules\Dashboard\Services\DashboardService;
 use App\Nucleo\Http\Controllers\Controller;
 use App\Nucleo\Traits\ApiResponse;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Gate;
 
@@ -150,12 +151,14 @@ class DashboardController extends Controller
     }
 
     /**
-     * Clientes con dirección georreferenciada (casa), para el mapa del panel
-     * principal — mismo alcance de visibilidad que el listado de clientes
-     * (clientes.ver + ClienteHierarchyService::visibleQuery). Cada uno lleva
-     * si tiene o no un crédito activo/vencido y, de tenerlo, la fecha de
-     * vencimiento del más urgente (el de vencimiento más próximo), para el
-     * popup del marcador.
+     * Clientes con su lugar de cobranza georreferenciado (casa o negocio,
+     * según `lugar_cobranza`), para el mapa del panel principal — mismo
+     * alcance de visibilidad que el listado de clientes (clientes.ver +
+     * ClienteHierarchyService::visibleQuery). Un cliente cuyo lugar elegido
+     * no tiene coordenadas queda fuera del mapa: nunca cae a la otra
+     * ubicación. Cada uno lleva si tiene o no un crédito activo/vencido y,
+     * de tenerlo, la fecha de vencimiento del más urgente (el de
+     * vencimiento más próximo), para el popup del marcador.
      */
     public function mapaClientes(): JsonResponse
     {
@@ -163,14 +166,17 @@ class DashboardController extends Controller
 
         $query = Cliente::query()
             ->where('estado', 'activo')
-            ->whereNotNull('latitud')
-            ->whereNotNull('longitud')
+            ->where(function (Builder $q): void {
+                $q->where(fn (Builder $qq) => $qq->where('lugar_cobranza', 'negocio')->whereNotNull('latitud_negocio')->whereNotNull('longitud_negocio'))
+                    ->orWhere(fn (Builder $qq) => $qq->where('lugar_cobranza', '!=', 'negocio')->whereNotNull('latitud')->whereNotNull('longitud'));
+            })
             ->with(['creditos' => fn ($q) => $q->whereIn('estado', ['activo', 'vencido'])->orderBy('fecha_vencimiento')]);
 
         $query = $this->hierarchy->visibleQuery($query, request()->user());
 
         $clientes = $query->get()->map(function (Cliente $cliente): array {
             $creditoActivo = $cliente->creditos->first();
+            $ubicacionCobranza = $cliente->ubicacionCobranza();
 
             return [
                 'id' => $cliente->id,
@@ -178,10 +184,11 @@ class DashboardController extends Controller
                 'apellido' => $cliente->apellido,
                 'tipo_documento' => $cliente->tipo_documento,
                 'numero_documento' => $cliente->numero_documento,
-                'direccion' => $cliente->direccion,
-                'referencia' => $cliente->referencia,
-                'latitud' => (float) $cliente->latitud,
-                'longitud' => (float) $cliente->longitud,
+                'direccion' => $ubicacionCobranza['direccion'],
+                'referencia' => $ubicacionCobranza['referencia'],
+                'latitud' => $ubicacionCobranza['latitud'],
+                'longitud' => $ubicacionCobranza['longitud'],
+                'lugar_cobranza' => $cliente->lugar_cobranza,
                 'tiene_credito_activo' => $creditoActivo !== null,
                 'fecha_vencimiento_credito' => $creditoActivo?->fecha_vencimiento?->toDateString(),
             ];

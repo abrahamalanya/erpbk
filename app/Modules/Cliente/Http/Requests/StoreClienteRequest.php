@@ -63,6 +63,7 @@ class StoreClienteRequest extends FormRequest
             'referencia_negocio' => ['nullable', 'string', 'max:500'],
             'latitud_negocio' => ['nullable', 'numeric', 'between:-90,90'],
             'longitud_negocio' => ['nullable', 'numeric', 'between:-180,180'],
+            'lugar_cobranza' => ['nullable', Rule::in(['casa', 'negocio'])],
             'empresa_id' => [
                 Rule::requiredIf(fn (): bool => $actor->hasRole('sistemas')),
                 'nullable', 'integer', 'exists:empresas,id',

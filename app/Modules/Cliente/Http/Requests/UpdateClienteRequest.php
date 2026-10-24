@@ -59,6 +59,7 @@ class UpdateClienteRequest extends FormRequest
             'referencia_negocio' => ['nullable', 'string', 'max:500'],
             'latitud_negocio' => ['nullable', 'numeric', 'between:-90,90'],
             'longitud_negocio' => ['nullable', 'numeric', 'between:-180,180'],
+            'lugar_cobranza' => ['nullable', Rule::in(['casa', 'negocio'])],
             'estado' => ['sometimes', Rule::in(['activo', 'inactivo'])],
             'foto_cliente' => ['nullable', 'image', 'max:8192', 'mimes:jpg,jpeg,png'],
             'foto_dni' => ['nullable', 'image', 'max:8192', 'mimes:jpg,jpeg,png'],

@@ -171,31 +171,42 @@ final class RutaCobranzaService
             : $this->clientesEnRutaDe($actor, $tipoCredito);
 
         return $clientesEnMora
-            ->map(fn (array $fila): array => [
-                'orden' => $ordenes->get($fila['cliente']->id)->orden,
-                'cliente_id' => $fila['cliente']->id,
-                'nombre' => $fila['cliente']->nombre,
-                'cobrado_hoy' => $cobradosHoy->contains($fila['cliente']->id),
-                'apellido' => $fila['cliente']->apellido,
-                'numero_documento' => $fila['cliente']->numero_documento,
-                'foto_cliente_url' => $fila['cliente']->foto_cliente_url,
-                'telefono' => $fila['cliente']->whatsapp,
-                'direccion' => $fila['cliente']->direccion,
-                'referencia' => $fila['cliente']->referencia,
-                'latitud' => $fila['cliente']->latitud !== null ? (float) $fila['cliente']->latitud : null,
-                'longitud' => $fila['cliente']->longitud !== null ? (float) $fila['cliente']->longitud : null,
-                'direccion_negocio' => $fila['cliente']->direccion_negocio,
-                'latitud_negocio' => $fila['cliente']->latitud_negocio !== null ? (float) $fila['cliente']->latitud_negocio : null,
-                'longitud_negocio' => $fila['cliente']->longitud_negocio !== null ? (float) $fila['cliente']->longitud_negocio : null,
-                'fotos' => $fila['cliente']->fotos,
-                'dias_atraso_max' => $fila['dias_atraso_max'],
-                'creditos_vencidos' => $fila['creditos_vencidos'],
-                'credito_codigos' => $fila['credito_codigos'],
-                'creditos' => $fila['creditos'],
-                'asesor_id' => $fila['cliente']->asesor_id,
-                'clonado' => $fila['cliente']->asesor_id !== $propietario->id,
-                'en_mi_ruta' => $enMiRuta->contains($fila['cliente']->id),
-            ])
+            ->map(function (array $fila) use ($ordenes, $cobradosHoy, $enMiRuta, $propietario): array {
+                $ubicacionCobranza = $fila['cliente']->ubicacionCobranza();
+
+                return [
+                    'orden' => $ordenes->get($fila['cliente']->id)->orden,
+                    'cliente_id' => $fila['cliente']->id,
+                    'nombre' => $fila['cliente']->nombre,
+                    'cobrado_hoy' => $cobradosHoy->contains($fila['cliente']->id),
+                    'apellido' => $fila['cliente']->apellido,
+                    'numero_documento' => $fila['cliente']->numero_documento,
+                    'foto_cliente_url' => $fila['cliente']->foto_cliente_url,
+                    'telefono' => $fila['cliente']->whatsapp,
+                    'direccion' => $fila['cliente']->direccion,
+                    'referencia' => $fila['cliente']->referencia,
+                    'latitud' => $fila['cliente']->latitud !== null ? (float) $fila['cliente']->latitud : null,
+                    'longitud' => $fila['cliente']->longitud !== null ? (float) $fila['cliente']->longitud : null,
+                    'direccion_negocio' => $fila['cliente']->direccion_negocio,
+                    'latitud_negocio' => $fila['cliente']->latitud_negocio !== null ? (float) $fila['cliente']->latitud_negocio : null,
+                    'longitud_negocio' => $fila['cliente']->longitud_negocio !== null ? (float) $fila['cliente']->longitud_negocio : null,
+                    // Ubicación resuelta según lugar_cobranza — la que usan el
+                    // mapa de ruta y el trazado, sin caer al otro lugar si falta.
+                    'lugar_cobranza' => $fila['cliente']->lugar_cobranza,
+                    'direccion_cobranza' => $ubicacionCobranza['direccion'],
+                    'referencia_cobranza' => $ubicacionCobranza['referencia'],
+                    'latitud_cobranza' => $ubicacionCobranza['latitud'],
+                    'longitud_cobranza' => $ubicacionCobranza['longitud'],
+                    'fotos' => $fila['cliente']->fotos,
+                    'dias_atraso_max' => $fila['dias_atraso_max'],
+                    'creditos_vencidos' => $fila['creditos_vencidos'],
+                    'credito_codigos' => $fila['credito_codigos'],
+                    'creditos' => $fila['creditos'],
+                    'asesor_id' => $fila['cliente']->asesor_id,
+                    'clonado' => $fila['cliente']->asesor_id !== $propietario->id,
+                    'en_mi_ruta' => $enMiRuta->contains($fila['cliente']->id),
+                ];
+            })
             ->sortBy('orden')
             ->values();
     }
