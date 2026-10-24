@@ -68,6 +68,29 @@ it('shows every authorized asesor and their ruta when no filter is given', funct
         ->and($response->json('data.clientes.0.estado_visual'))->toBe('pendiente');
 });
 
+it('shows an asesor and their ruta even when they never sent a GPS ping', function () {
+    $sinPing = User::factory()->forAgencia($this->agencia)->create();
+    $sinPing->assignRole('asesor');
+
+    $cliente = Cliente::factory()->forAgencia($this->agencia)->asignadoA($sinPing)->create();
+    creditoEnMoraParaMapa($this->empresa, $this->agencia, $cliente, $sinPing);
+
+    $admin = User::factory()->forAgencia($this->agencia)->create();
+    $admin->assignRole('administrador_agencia');
+    Sanctum::actingAs($admin, ['*']);
+
+    $response = $this->getJson('/api/dashboard/mapa-unificado')->assertSuccessful();
+
+    $filaAsesor = collect($response->json('data.asesores'))->firstWhere('asesor_id', $sinPing->id);
+    $filaCliente = collect($response->json('data.clientes'))->firstWhere('cliente_id', $cliente->id);
+
+    expect($filaAsesor)->not->toBeNull()
+        ->and($filaAsesor['latitud'])->toBeNull()
+        ->and($filaAsesor['desactualizado'])->toBeTrue()
+        ->and($filaCliente)->not->toBeNull()
+        ->and($filaCliente['estado_visual'])->toBe('pendiente');
+});
+
 it('narrows to one agencia when agencia_id is given', function () {
     $cliente = Cliente::factory()->forAgencia($this->agencia)->asignadoA($this->asesor)->create();
     creditoEnMoraParaMapa($this->empresa, $this->agencia, $cliente, $this->asesor);

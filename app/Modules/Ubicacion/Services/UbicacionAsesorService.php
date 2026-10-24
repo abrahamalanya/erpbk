@@ -114,11 +114,14 @@ final class UbicacionAsesorService
      * Asesores cuyo historial puede consultar $actor en el reporte — mismo
      * alcance por rol que visiblesPara(), pero devolviendo usuarios (no
      * ubicaciones) para poblar el selector aunque el asesor no haya enviado
-     * ningún ping todavía.
+     * ningún ping todavía. El mapa unificado usa este método (no
+     * visiblesPara()) como lista base de asesores, justamente para no
+     * depender de que ya exista un ping: $agenciaId/$asesorId acotan ese
+     * alcance, nunca lo amplían.
      *
      * @return Collection<int, User>
      */
-    public function asesoresVisiblesPara(User $actor): Collection
+    public function asesoresVisiblesPara(User $actor, ?int $agenciaId = null, ?int $asesorId = null): Collection
     {
         $query = User::role('asesor');
 
@@ -130,6 +133,14 @@ final class UbicacionAsesorService
             return collect();
         } elseif (! $actor->hasRole('sistemas')) {
             $query->where('empresa_id', $actor->empresa_id);
+        }
+
+        if ($agenciaId !== null) {
+            $query->where('agencia_id', $agenciaId);
+        }
+
+        if ($asesorId !== null) {
+            $query->where('id', $asesorId);
         }
 
         return $query->orderBy('nombre')->get();

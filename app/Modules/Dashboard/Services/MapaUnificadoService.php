@@ -4,6 +4,7 @@ namespace App\Modules\Dashboard\Services;
 
 use App\Modules\Ruta\Services\RutaCobranzaService;
 use App\Modules\Ruta\Services\VisitaClienteService;
+use App\Modules\Ubicacion\Models\UbicacionAsesor;
 use App\Modules\Ubicacion\Services\UbicacionAsesorService;
 use App\Modules\Usuario\Models\User;
 
@@ -14,6 +15,11 @@ use App\Modules\Usuario\Models\User;
  * la ubicación de cobranza resuelta — Cliente::ubicacionCobranza() — y si el
  * cliente ya tiene un cobro válido hoy), cruzada con la permanencia que
  * VisitaClienteService fue confirmando en cada ping GPS.
+ *
+ * La lista base de asesores es `asesoresVisiblesPara()` (por rol), NO
+ * `visiblesPara()` (por ping): un asesor autorizado debe aparecer en los
+ * filtros y aportar su ruta/clientes aunque todavía no haya enviado ninguna
+ * ubicación — solo se queda sin marcador propio en el mapa.
  *
  * No duplica ninguna de esas reglas de negocio — solo las combina y agrega
  * el semáforo visual (pendiente/amarillo/verde) que el frontend no puede
@@ -35,9 +41,9 @@ final class MapaUnificadoService
         $radioProximidadMetros = (float) config('mapa_cobranza.radio_proximidad_metros');
         $minutosPermanencia = (int) config('mapa_cobranza.minutos_permanencia');
 
-        $ubicaciones = $this->ubicacionAsesorService->visiblesPara($actor, $agenciaId, $asesorId);
+        $asesoresVisibles = $this->ubicacionAsesorService->asesoresVisiblesPara($actor, $agenciaId, $asesorId);
 
-        if ($ubicaciones->isEmpty()) {
+        if ($asesoresVisibles->isEmpty()) {
             return [
                 'asesores' => [],
                 'clientes' => [],
@@ -49,33 +55,33 @@ final class MapaUnificadoService
         $minutosDesactualizada = (int) config('mapa_cobranza.minutos_ubicacion_desactualizada');
         $ahora = now();
 
-        $asesorIds = $ubicaciones->pluck('asesor_id')->all();
-        $usuariosPorId = User::query()->whereIn('id', $asesorIds)->get()->keyBy('id');
+        $asesorIds = $asesoresVisibles->pluck('id')->all();
+        $ubicacionesPorAsesor = UbicacionAsesor::query()->with('agencia')->whereIn('user_id', $asesorIds)->get()->keyBy('user_id');
         $visitasPorAsesor = $this->visitaClienteService->visitasDeHoyPorAsesor($asesorIds);
 
-        $asesores = $ubicaciones->map(fn (array $u): array => [
-            'asesor_id' => $u['asesor_id'],
-            'nombre' => $u['nombre'],
-            'apellido' => $u['apellido'],
-            'agencia_id' => $u['agencia_id'],
-            'agencia_nombre' => $u['agencia_nombre'],
-            'latitud' => $u['latitud'],
-            'longitud' => $u['longitud'],
-            'precision_metros' => $u['precision_metros'],
-            'capturado_en' => $u['capturado_en']?->toISOString(),
-            'desactualizado' => $u['capturado_en'] === null || $u['capturado_en']->diffInMinutes($ahora) > $minutosDesactualizada,
-        ])->values();
+        $asesores = $asesoresVisibles->map(function (User $asesorUser) use ($ubicacionesPorAsesor, $ahora, $minutosDesactualizada): array {
+            $ubicacion = $ubicacionesPorAsesor->get($asesorUser->id);
+
+            return [
+                'asesor_id' => $asesorUser->id,
+                'nombre' => $asesorUser->nombre,
+                'apellido' => $asesorUser->apellido,
+                'agencia_id' => $asesorUser->agencia_id,
+                'agencia_nombre' => $ubicacion?->agencia?->nombre ?? $asesorUser->agencia?->nombre,
+                'latitud' => $ubicacion?->latitud,
+                'longitud' => $ubicacion?->longitud,
+                'precision_metros' => $ubicacion?->precision_metros,
+                'capturado_en' => $ubicacion?->capturado_en?->toISOString(),
+                // Sin ningún ping todavía, también se considera "desactualizado": no hay
+                // evidencia de dónde está, igual que una lectura vieja.
+                'desactualizado' => $ubicacion === null || $ubicacion->capturado_en === null || $ubicacion->capturado_en->diffInMinutes($ahora) > $minutosDesactualizada,
+            ];
+        })->values();
 
         $clientes = collect();
 
-        foreach ($asesorIds as $id) {
-            $asesorUser = $usuariosPorId->get($id);
-
-            if (! $asesorUser) {
-                continue;
-            }
-
-            $visitasDeEsteAsesor = $visitasPorAsesor->get($id, collect());
+        foreach ($asesoresVisibles as $asesorUser) {
+            $visitasDeEsteAsesor = $visitasPorAsesor->get($asesorUser->id, collect());
 
             foreach ($this->rutaCobranzaService->rutaDe($asesorUser, null, $actor) as $parada) {
                 $visita = $visitasDeEsteAsesor->get($parada['cliente_id']);
@@ -83,7 +89,7 @@ final class MapaUnificadoService
 
                 $clientes->push([
                     'cliente_id' => $parada['cliente_id'],
-                    'asesor_id' => $id,
+                    'asesor_id' => $asesorUser->id,
                     'orden' => $parada['orden'],
                     'nombre' => $parada['nombre'],
                     'apellido' => $parada['apellido'],
