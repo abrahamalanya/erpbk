@@ -250,6 +250,7 @@ class CreditoController extends Controller
     {
         Gate::authorize('view', $credito);
 
+        $credito->setAttribute('puede_cambiar_registrado_por', Gate::allows('cambiarRegistradoPor', $credito));
         $credito->load(['bienes.fotos', 'vehiculos.fotos', 'inmuebles', 'cliente', 'aval', 'aval2', 'registradoPor', 'supervisadoPor', 'aprobadoPor', 'cuotas', 'expedienteDocumentos']);
         $credito->setRelation('documentos', $this->documentoService->documentosDe($credito));
 
@@ -265,6 +266,27 @@ class CreditoController extends Controller
         }
 
         return $this->successResponse($credito);
+    }
+
+    public function asesoresRegistradoPor(Credito $credito): JsonResponse
+    {
+        Gate::authorize('cambiarRegistradoPor', $credito);
+
+        return $this->successResponse($this->hierarchy->asesoresPara($credito)
+            ->map(fn (User $user): array => $user->only(['id', 'nombre', 'apellido'])));
+    }
+
+    public function cambiarRegistradoPor(Credito $credito): JsonResponse
+    {
+        Gate::authorize('cambiarRegistradoPor', $credito);
+        $data = request()->validate([
+            'registrado_por' => ['required', 'integer'],
+            'registrado_por_actual' => ['required', 'integer'],
+        ]);
+
+        $credito = $this->creditoService->cambiarRegistradoPor($credito, request()->user(), $data['registrado_por'], $data['registrado_por_actual']);
+
+        return $this->successResponse($credito, 'Registrado por actualizado');
     }
 
     public function destroy(Credito $credito): JsonResponse

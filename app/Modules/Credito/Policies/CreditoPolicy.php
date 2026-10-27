@@ -15,7 +15,7 @@ class CreditoPolicy
      */
     public function before(User $user, string $ability): ?bool
     {
-        return $user->hasRole('sistemas') ? true : null;
+        return $user->hasRole('sistemas') && $ability !== 'cambiarRegistradoPor' ? true : null;
     }
 
     public function viewAny(User $user): bool
@@ -136,6 +136,12 @@ class CreditoPolicy
     public function editar(User $user, Credito $credito): bool
     {
         return $user->can('creditos_prendarios.editar') && $this->hierarchy->puedeAprobar($user, $credito);
+    }
+
+    public function cambiarRegistradoPor(User $user, Credito $credito): bool
+    {
+        return $credito->tipo_credito === 'prendario'
+            && ($user->hasRole('sistemas') || $this->editar($user, $credito));
     }
 
     /**

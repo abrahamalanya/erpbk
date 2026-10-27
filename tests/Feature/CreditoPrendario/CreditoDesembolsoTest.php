@@ -296,6 +296,54 @@ it('rejects a future fecha_desembolso at desembolso time', function () {
     expect(Credito::find($creditoId)->estado)->toBe('aprobado');
 });
 
+it('rejects desembolsar with 409 caja_saldo_insuficiente when the monto exceeds the caja saldo', function () {
+    Storage::fake('public');
+
+    // monto_prestamo no puede superar la valorización de la garantía: se usa
+    // un bien más valioso solo en este test para poder exceder el saldo de
+    // caja (10000) sin chocar con esa otra regla.
+    $bienValioso = Bien::factory()->paraCliente($this->cliente)->create(['tipo' => 'electro', 'valorizacion' => 20000]);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $creditoId = $this->postJson('/api/creditos-prendarios', [
+        'bien_ids' => [$bienValioso->id],
+        'monto_prestamo' => 20000, 'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+
+    aprobarYFirmarDocumentos($this, $creditoId);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar")
+        ->assertStatus(409)
+        ->assertJsonPath('reason', 'caja_saldo_insuficiente')
+        ->assertJsonPath('message', 'No tienes saldo suficiente en tu caja para desembolsar este crédito.');
+
+    expect(Credito::find($creditoId)->estado)->toBe('aprobado');
+});
+
+it('rejects desembolsar with 409 caja_cerrada when the actor has no open ciclo de caja', function () {
+    Storage::fake('public');
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $creditoId = $this->postJson('/api/creditos-prendarios', [
+        'bien_ids' => [$this->bien->id],
+        'monto_prestamo' => 400, 'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+
+    aprobarYFirmarDocumentos($this, $creditoId);
+
+    CajaCiclo::query()->where('caja_id', Caja::query()->where('user_id', $this->asesor->id)->value('id'))
+        ->update(['estado' => 'cerrada', 'cerrada_at' => now()]);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar")
+        ->assertStatus(409)
+        ->assertJsonPath('reason', 'caja_cerrada')
+        ->assertJsonPath('message', 'Debes aperturar tu caja antes de desembolsar.');
+
+    expect(Credito::find($creditoId)->estado)->toBe('aprobado');
+});
+
 it('denies a non-admin asesor from backdating fecha_desembolso, even though asesor can desembolsar', function () {
     Storage::fake('public');
 

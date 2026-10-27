@@ -44,6 +44,18 @@ final class CreditoHierarchyService
         return $this->visibleQuery(Credito::query(), $actor)->whereKey($credito->id)->exists();
     }
 
+    /** Active advisers who will actually be able to see the assigned credit. */
+    public function asesoresPara(Credito $credito): Collection
+    {
+        return User::role('asesor')
+            ->where('empresa_id', $credito->empresa_id)
+            ->where('agencia_id', $credito->agencia_id)
+            ->where('estado', 'activo')
+            ->orderBy('nombre')->orderBy('apellido')->get()
+            ->filter(fn (User $user): bool => $user->can('creditos_prendarios.ver')
+                && $this->modulos->tieneModulo($user, $credito->tipo_credito))->values();
+    }
+
     public function puedeAprobar(User $actor, Credito $credito): bool
     {
         if ($actor->hasRole('administrador_agencia')) {

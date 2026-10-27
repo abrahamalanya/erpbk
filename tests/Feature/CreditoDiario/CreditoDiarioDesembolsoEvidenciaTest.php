@@ -92,7 +92,8 @@ it('rejects desembolsar when no evidence was ever uploaded', function () {
 
     Sanctum::actingAs($this->asesor, ['*']);
     $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar")
-        ->assertStatus(422)
+        ->assertStatus(409)
+        ->assertJsonPath('reason', 'evidencia_desembolso_pendiente')
         ->assertJsonPath('message', 'Debes registrar el video de evidencia y la ubicación antes de desembolsar este crédito.');
 
     expect(Credito::find($creditoId)->estado)->toBe('aprobado');
@@ -151,7 +152,9 @@ it('rejects a direct desembolsar API call with no evidence, even with valid cred
     $creditoId = crearCreditoDiarioAprobado($this);
 
     Sanctum::actingAs($this->asesor, ['*']);
-    $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar")->assertStatus(422);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar")
+        ->assertStatus(409)
+        ->assertJsonPath('reason', 'evidencia_desembolso_pendiente');
 
     expect(Credito::find($creditoId)->estado)->toBe('aprobado')
         ->and(CajaMovimiento::query()->where('credito_id', $creditoId)->exists())->toBeFalse();

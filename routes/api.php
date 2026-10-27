@@ -241,6 +241,8 @@ Route::middleware(['auth:sanctum', EnsurePerfilAcceso::class, EnsureIdempotency:
     Route::post('creditos-prendarios/{credito}/actualizar-interes', [CreditoController::class, 'actualizarInteres'])->name('creditos-prendarios.actualizar-interes');
     Route::post('creditos-prendarios/{credito}/actualizar-condiciones', [CreditoController::class, 'actualizarCondiciones'])->name('creditos-prendarios.actualizar-condiciones');
     Route::post('creditos-prendarios/{credito}/actualizar-fecha-desembolso', [CreditoController::class, 'actualizarFechaDesembolso'])->name('creditos-prendarios.actualizar-fecha-desembolso');
+    Route::get('creditos-prendarios/{credito}/asesores-registrado-por', [CreditoController::class, 'asesoresRegistradoPor'])->name('creditos-prendarios.asesores-registrado-por');
+    Route::post('creditos-prendarios/{credito}/cambiar-registrado-por', [CreditoController::class, 'cambiarRegistradoPor'])->name('creditos-prendarios.cambiar-registrado-por');
     Route::post('creditos-prendarios/{credito}/actualizar-numero-cuotas', [CreditoController::class, 'actualizarNumeroCuotas'])->name('creditos-prendarios.actualizar-numero-cuotas');
     Route::post('creditos-prendarios/{credito}/revertir-aprobacion', [CreditoController::class, 'revertirAprobacion'])->name('creditos-prendarios.revertir-aprobacion');
     Route::post('creditos-prendarios/{credito}/enviar-tienda', [CreditoController::class, 'enviarATienda'])->name('creditos-prendarios.enviar-tienda');

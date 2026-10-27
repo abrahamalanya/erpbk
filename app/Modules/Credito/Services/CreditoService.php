@@ -50,6 +50,30 @@ use Illuminate\Support\Facades\Storage;
 
 final class CreditoService
 {
+    public function cambiarRegistradoPor(Credito $credito, User $actor, int $asesorId, int $registradoPorActual): Credito
+    {
+        return DB::transaction(function () use ($credito, $actor, $asesorId, $registradoPorActual): Credito {
+            $actual = Credito::query()->lockForUpdate()->findOrFail($credito->id);
+            abort_unless($actual->tipo_credito === 'prendario', 422, 'Solo aplica a créditos prendarios.');
+            abort_unless($actual->registrado_por === $registradoPorActual, 409, 'El responsable cambió. Recarga el detalle antes de continuar.');
+
+            $asesor = $this->hierarchy->asesoresPara($actual)->firstWhere('id', $asesorId);
+            if ($asesor === null) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'registrado_por' => 'Selecciona un asesor activo de la misma agencia con acceso al módulo.',
+                ]);
+            }
+
+            $actual->update(['registrado_por' => $asesor->id]);
+            \Illuminate\Support\Facades\Log::info('Crédito: cambio de registrado por', [
+                'credito_id' => $actual->id, 'actor_id' => $actor->id,
+                'anterior' => $registradoPorActual, 'nuevo' => $asesor->id,
+            ]);
+
+            return $actual->load('registradoPor');
+        });
+    }
+
     /**
      * Default número de cuotas per tipo_cuota, used when desembolsar() isn't
      * given an explicit override — a fixed table, not derived from
@@ -654,7 +678,10 @@ final class CreditoService
             $evidencia = $credito->desembolsoEvidencia;
 
             if (! $evidencia || $evidencia->estado !== 'cargada' || ! $evidencia->video_path || $evidencia->latitud === null || $evidencia->longitud === null) {
-                throw new DomainException('Debes registrar el video de evidencia y la ubicación antes de desembolsar este crédito.');
+                throw new ConflictoDeEstadoException(
+                    'Debes registrar el video de evidencia y la ubicación antes de desembolsar este crédito.',
+                    MotivoConflicto::EVIDENCIA_DESEMBOLSO_PENDIENTE
+                );
             }
         }
 
@@ -669,7 +696,7 @@ final class CreditoService
             $ciclo = $caja?->cicloAbierto()->first();
 
             if (! $ciclo) {
-                throw new DomainException('Debes aperturar tu caja antes de desembolsar.');
+                throw new ConflictoDeEstadoException('Debes aperturar tu caja antes de desembolsar.', MotivoConflicto::CAJA_CERRADA);
             }
 
         }
@@ -689,7 +716,10 @@ final class CreditoService
                 CajaCiclo::query()->whereKey($ciclo->id)->lockForUpdate()->first();
 
                 if (bccomp($credito->monto_prestamo, $ciclo->saldoActual(), 2) > 0) {
-                    throw new DomainException('No tienes saldo suficiente en tu caja para desembolsar este crédito.');
+                    throw new ConflictoDeEstadoException(
+                        'No tienes saldo suficiente en tu caja para desembolsar este crédito.',
+                        MotivoConflicto::CAJA_SALDO_INSUFICIENTE
+                    );
                 }
             }
 

@@ -24,6 +24,12 @@ final class MotivoConflicto
     /** El crédito ya alcanzó el máximo de refrendos permitidos. */
     public const CREDITO_MAXIMO_REFRENDOS = 'credito_maximo_refrendos';
 
+    /** Crédito diario sin el video de evidencia + ubicación cargados (requisito previo a desembolsar). */
+    public const EVIDENCIA_DESEMBOLSO_PENDIENTE = 'evidencia_desembolso_pendiente';
+
+    /** La caja del actor no tiene saldo suficiente para desembolsar el monto del crédito. */
+    public const CAJA_SALDO_INSUFICIENTE = 'caja_saldo_insuficiente';
+
     private function __construct()
     {
         // Solo constantes.
