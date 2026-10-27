@@ -46,7 +46,9 @@ use Illuminate\Database\Eloquent\Relations\MorphToMany;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Validation\ValidationException;
 
 final class CreditoService
 {
@@ -59,13 +61,13 @@ final class CreditoService
 
             $asesor = $this->hierarchy->asesoresPara($actual)->firstWhere('id', $asesorId);
             if ($asesor === null) {
-                throw \Illuminate\Validation\ValidationException::withMessages([
+                throw ValidationException::withMessages([
                     'registrado_por' => 'Selecciona un asesor activo de la misma agencia con acceso al módulo.',
                 ]);
             }
 
             $actual->update(['registrado_por' => $asesor->id]);
-            \Illuminate\Support\Facades\Log::info('Crédito: cambio de registrado por', [
+            Log::info('Crédito: cambio de registrado por', [
                 'credito_id' => $actual->id, 'actor_id' => $actor->id,
                 'anterior' => $registradoPorActual, 'nuevo' => $asesor->id,
             ]);
@@ -665,7 +667,7 @@ final class CreditoService
      * crédito ya nace vencido, se transiciona a 'vencido' en el acto en
      * lugar de esperar al job diario.
      */
-    public function desembolsar(Credito $credito, User $actor, ?int $numeroCuotas, ?string $interes, ?string $fecha = null): Credito
+    public function desembolsar(Credito $credito, User $actor, ?int $numeroCuotas, ?string $interes, ?string $fecha = null, ?array $condicionesEsperadas = null): Credito
     {
         $this->asegurarEstado($credito, 'aprobado');
 
@@ -701,7 +703,7 @@ final class CreditoService
 
         }
 
-        return DB::transaction(function () use ($credito, $actor, $ciclo, $esAdenda, $numeroCuotas, $interes, $fecha): Credito {
+        return DB::transaction(function () use ($credito, $actor, $ciclo, $esAdenda, $numeroCuotas, $interes, $fecha, $condicionesEsperadas): Credito {
             // Bloquea la fila del crédito y vuelve a validar su estado bajo el
             // lock: dos desembolsos simultáneos del mismo crédito no deben
             // generar dos movimientos de caja ni dos cronogramas — el segundo,
@@ -710,10 +712,29 @@ final class CreditoService
             $credito = Credito::query()->whereKey($credito->id)->lockForUpdate()->first();
             $this->asegurarEstado($credito, 'aprobado');
 
+            // La cola propone las condiciones que vio el asesor; nunca las impone
+            // como una edición ni desembolsa con términos distintos en silencio.
+            if ($condicionesEsperadas !== null && (
+                bccomp((string) $condicionesEsperadas['monto_prestamo'], $credito->monto_prestamo, 6) !== 0
+                || bccomp((string) $condicionesEsperadas['interes'], $credito->interes, 6) !== 0
+                || $condicionesEsperadas['tipo_interes'] !== $credito->tipo_interes
+                || $condicionesEsperadas['tipo_cuota'] !== $credito->tipo_cuota
+                || ($condicionesEsperadas['numero_cuotas'] === null ? null : (int) $condicionesEsperadas['numero_cuotas']) !== $credito->numero_cuotas
+                || $condicionesEsperadas['fecha_desembolso'] !== $credito->fecha_desembolso?->toDateString()
+            )) {
+                throw new ConflictoDeEstadoException(
+                    'Las condiciones del crédito cambiaron. Revisa el crédito y la entrega antes de registrar el desembolso.',
+                    MotivoConflicto::CREDITO_CONDICIONES_CAMBIADAS
+                );
+            }
+
             // Se valida dentro de la transacción y con el ciclo bloqueado para
             // que dos desembolsos simultáneos no pasen ambos con el mismo saldo.
             if (! $esAdenda) {
-                CajaCiclo::query()->whereKey($ciclo->id)->lockForUpdate()->first();
+                $ciclo = CajaCiclo::query()->whereKey($ciclo->id)->lockForUpdate()->first();
+                if (! $ciclo || $ciclo->estado !== 'abierta') {
+                    throw new ConflictoDeEstadoException('Debes aperturar tu caja antes de desembolsar.', MotivoConflicto::CAJA_CERRADA);
+                }
 
                 if (bccomp($credito->monto_prestamo, $ciclo->saldoActual(), 2) > 0) {
                     throw new ConflictoDeEstadoException(

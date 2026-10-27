@@ -30,6 +30,9 @@ final class MotivoConflicto
     /** La caja del actor no tiene saldo suficiente para desembolsar el monto del crédito. */
     public const CAJA_SALDO_INSUFICIENTE = 'caja_saldo_insuficiente';
 
+    /** Las condiciones aprobadas cambiaron mientras el dispositivo estaba sin conexión. */
+    public const CREDITO_CONDICIONES_CAMBIADAS = 'credito_condiciones_cambiadas';
+
     private function __construct()
     {
         // Solo constantes.

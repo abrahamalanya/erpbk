@@ -341,6 +341,7 @@ class CreditoController extends Controller
             $data['numero_cuotas'] ?? null,
             isset($data['interes']) ? (string) $data['interes'] : null,
             $data['fecha_desembolso'] ?? null,
+            $data['condiciones_esperadas'] ?? null,
         );
 
         return $this->successResponse($credito, 'Crédito desembolsado y cronograma generado');

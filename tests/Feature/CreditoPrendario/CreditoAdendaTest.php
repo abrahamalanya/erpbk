@@ -238,7 +238,8 @@ it('rejects adendar when monto_pagado covers the full total, suggesting Liquidar
     Sanctum::actingAs($this->adminAgencia, ['*']);
 
     $this->postJson("/api/creditos-prendarios/{$activo->id}/adendar", ['monto_pagado' => 1100, 'interes' => 25, 'medio' => 'efectivo'])
-        ->assertUnprocessable();
+        ->assertConflict()
+        ->assertJsonPath('reason', 'credito_estado_invalido');
 });
 
 it('abona a capital cuando el monto pagado supera el interés, same as refrendar', function () {

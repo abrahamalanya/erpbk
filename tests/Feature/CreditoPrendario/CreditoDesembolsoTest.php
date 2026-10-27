@@ -363,3 +363,98 @@ it('denies a non-admin asesor from backdating fecha_desembolso, even though ases
     $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar")->assertSuccessful();
     expect(Credito::find($creditoId)->fecha_desembolso->toDateString())->toBe(now()->toDateString());
 });
+
+it('replays an offline disbursement without duplicating cash or installments', function () {
+    Storage::fake('public');
+    Sanctum::actingAs($this->asesor, ['*']);
+    $creditoId = $this->postJson('/api/creditos-prendarios', [
+        'bien_ids' => [$this->bien->id], 'monto_prestamo' => 400, 'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+    aprobarYFirmarDocumentos($this, $creditoId);
+
+    $headers = ['Idempotency-Key' => 'offline-desembolso-reintento'];
+    $url = "/api/creditos-prendarios/{$creditoId}/desembolsar";
+    $primera = $this->postJson($url, [], $headers)->assertOk()->json('data');
+    $this->postJson($url, [], $headers)->assertOk()
+        ->assertHeader('Idempotency-Replayed', 'true')->assertJsonPath('data', $primera);
+    expect(CajaMovimiento::query()->where('credito_id', $creditoId)->where('tipo', 'egreso')->count())->toBe(1)
+        ->and(Credito::find($creditoId)->cuotas()->count())->toBe(1);
+});
+
+it('rejects a caja closed between its initial lookup and the transactional lock', function () {
+    Storage::fake('public');
+    Sanctum::actingAs($this->asesor, ['*']);
+    $creditoId = $this->postJson('/api/creditos-prendarios', [
+        'bien_ids' => [$this->bien->id], 'monto_prestamo' => 400, 'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+    aprobarYFirmarDocumentos($this, $creditoId);
+
+    $dispatcher = CajaCiclo::getEventDispatcher();
+    CajaCiclo::setEventDispatcher(clone $dispatcher);
+    $cerrada = false;
+    CajaCiclo::retrieved(function (CajaCiclo $ciclo) use (&$cerrada): void {
+        if (! $cerrada) {
+            $cerrada = true;
+            CajaCiclo::query()->whereKey($ciclo->id)->update(['estado' => 'cerrada', 'cerrada_at' => now()]);
+        }
+    });
+    try {
+        $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar")
+            ->assertConflict()->assertJsonPath('reason', 'caja_cerrada');
+    } finally {
+        CajaCiclo::setEventDispatcher($dispatcher);
+    }
+
+    expect(Credito::find($creditoId)->estado)->toBe('aprobado')
+        ->and(CajaMovimiento::query()->where('credito_id', $creditoId)->count())->toBe(0)
+        ->and(Credito::find($creditoId)->cuotas()->count())->toBe(0);
+});
+
+it('accepts the expected approved conditions without granting edit permission to an asesor', function () {
+    Storage::fake('public');
+    Sanctum::actingAs($this->asesor, ['*']);
+    $creditoId = $this->postJson('/api/creditos-prendarios', [
+        'bien_ids' => [$this->bien->id], 'monto_prestamo' => 400, 'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+    aprobarYFirmarDocumentos($this, $creditoId);
+    $credito = Credito::find($creditoId);
+    $condiciones = $credito->only(['monto_prestamo', 'interes', 'tipo_interes', 'tipo_cuota', 'numero_cuotas', 'fecha_desembolso']);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar", [
+        'condiciones_esperadas' => $condiciones,
+    ])->assertOk();
+});
+
+it('rejects changed offline conditions without creating a cash expense or schedule', function (array $cambio) {
+    Storage::fake('public');
+    Sanctum::actingAs($this->asesor, ['*']);
+    $creditoId = $this->postJson('/api/creditos-prendarios', [
+        'bien_ids' => [$this->bien->id], 'monto_prestamo' => 400, 'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+    aprobarYFirmarDocumentos($this, $creditoId);
+    $credito = Credito::find($creditoId);
+    $condiciones = $credito->only(['monto_prestamo', 'interes', 'tipo_interes', 'tipo_cuota', 'numero_cuotas', 'fecha_desembolso']);
+    $credito->update($cambio);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/desembolsar", [
+        'condiciones_esperadas' => $condiciones,
+    ])->assertConflict()->assertJsonPath('reason', 'credito_condiciones_cambiadas');
+    expect(Credito::find($creditoId)->estado)->toBe('aprobado')
+        ->and(CajaMovimiento::query()->where('credito_id', $creditoId)->count())->toBe(0)
+        ->and(Credito::find($creditoId)->cuotas()->count())->toBe(0);
+})->with([
+    'amount' => [['monto_prestamo' => '500.00']],
+    'interest' => [['interes' => '12.00']],
+    'frequency' => [['tipo_cuota' => 'semanal']],
+    'installments' => [['numero_cuotas' => 3]],
+    'planned date' => [['fecha_desembolso' => '2026-10-01']],
+]);
+
+it('validates an empty expected conditions object before attempting a disbursement', function () {
+    $credito = Credito::factory()->create([
+        'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id,
+        'registrado_por' => $this->asesor->id, 'estado' => 'aprobado',
+    ]);
+    Sanctum::actingAs($this->asesor, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$credito->id}/desembolsar", [
+        'condiciones_esperadas' => [],
+    ])->assertUnprocessable()->assertJsonValidationErrors('condiciones_esperadas');
+});
