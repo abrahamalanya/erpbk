@@ -93,6 +93,9 @@ Route::get('apk-updates/{apkVersion}/archivo', [ApkVersionController::class, 'de
     ->middleware('signed')
     ->name('apk-updates.descargar');
 
+// El teléfono debe poder actualizarse incluso antes de iniciar sesión.
+Route::get('actualizaciones-apk/vigente', [ApkVersionController::class, 'vigente'])->name('actualizaciones-apk.vigente');
+
 // ===== PROTECTED ROUTES (requieren autenticación) =====
 // EnsureIdempotency va después de auth:sanctum para poder acotar la clave al
 // usuario autenticado; solo actúa si la petición trae el header Idempotency-Key.
@@ -118,9 +121,7 @@ Route::middleware(['auth:sanctum', EnsurePerfilAcceso::class, EnsureIdempotency:
     Route::apiResource('modulos', ModuloController::class);
 
     // Gestión de actualizaciones APK — exclusiva del rol sistemas (ver
-    // ApkVersionPolicy); 'vigente' es la única ruta aquí abierta a cualquier
-    // usuario autenticado (la app móvil la usa para saber si hay actualización).
-    Route::get('actualizaciones-apk/vigente', [ApkVersionController::class, 'vigente'])->name('actualizaciones-apk.vigente');
+    // ApkVersionPolicy). La consulta pública de la versión vigente está arriba.
     Route::get('actualizaciones-apk', [ApkVersionController::class, 'index'])->name('actualizaciones-apk.index');
     Route::post('actualizaciones-apk', [ApkVersionController::class, 'store'])->name('actualizaciones-apk.store');
     Route::post('actualizaciones-apk/{apkVersion}/publicar', [ApkVersionController::class, 'publicar'])->name('actualizaciones-apk.publicar');

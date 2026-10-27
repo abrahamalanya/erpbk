@@ -17,6 +17,8 @@ npx expo start
 # APLICATIVO PRODUCCION - POWERSHELL
 npx eas-cli@latest build --platform android --profile production
 
+npx eas-cli@latest build --platform android --profile production --local
+
 npx eas-cli@latest credentials --platform android
 
 # RECONSTRUIR EL APP

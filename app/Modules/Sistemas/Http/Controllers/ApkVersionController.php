@@ -73,17 +73,16 @@ class ApkVersionController extends Controller
     }
 
     /**
-     * Cualquier usuario autenticado: metadata de la versión vigente + una URL
-     * firmada temporal para descargarla desde fuera de la app (ver
-     * descargarFirmado) — Linking.openURL en el aplicativo no manda el
-     * Bearer token, así que la descarga no puede ir por una ruta autenticada.
+     * Consulta pública antes del login: solo metadata de la versión vigente
+     * y una URL firmada temporal. La descarga no requiere Bearer y sigue
+     * comprobando firma y publicación; administrar APKs requiere sistemas.
      */
     public function vigente(): JsonResponse
     {
         $apkVersion = $this->apkVersions->vigente();
 
         if ($apkVersion === null) {
-            return $this->successResponse(null);
+            return $this->successResponse(null)->header('Cache-Control', 'no-store');
         }
 
         return $this->successResponse([
@@ -94,7 +93,7 @@ class ApkVersionController extends Controller
             'sha256' => $apkVersion->sha256,
             'publicada_at' => $apkVersion->publicada_at,
             'descargar_url' => URL::temporarySignedRoute('apk-updates.descargar', now()->addMinutes(30), ['apkVersion' => $apkVersion->id]),
-        ]);
+        ])->header('Cache-Control', 'no-store');
     }
 
     /**

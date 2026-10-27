@@ -284,6 +284,22 @@ it('cualquier usuario autenticado puede consultar la versión vigente, con una U
     expect($url)->toContain('/api/apk-updates/'.$vigente->id.'/archivo')->toContain('signature=');
 });
 
+it('permite detectar y descargar la versión vigente antes de iniciar sesión sin exponer la administración', function () {
+    $this->getJson('/api/actualizaciones-apk/vigente')->assertOk()->assertJsonPath('data', null);
+    $vigente = ApkVersion::query()->create([
+        'application_id' => APPLICATION_ID, 'version' => '1.3.7', 'build_number' => 24,
+        'publicada' => true, 'publicada_at' => now(), 'file_path' => 'apk/vigente',
+        'file_name' => 'umax.apk', 'file_size' => 3, 'sha256' => hash('sha256', 'apk'),
+    ]);
+    Storage::disk('privado')->put($vigente->file_path, 'apk');
+    $respuesta = $this->getJson('/api/actualizaciones-apk/vigente')->assertOk()
+        ->assertJsonPath('data.build_number', 24);
+    expect($respuesta->headers->get('Cache-Control'))->toContain('no-store');
+    $this->get($respuesta->json('data.descargar_url'))->assertOk();
+    $this->getJson('/api/actualizaciones-apk')->assertUnauthorized();
+    $this->postJson('/api/actualizaciones-apk')->assertUnauthorized();
+});
+
 it('descarga el APK vigente desde la URL firmada sin necesitar sesión', function () {
     Storage::disk('privado')->put('apk/vigente', 'contenido-del-apk');
 
