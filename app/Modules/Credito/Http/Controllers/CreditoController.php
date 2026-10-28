@@ -412,6 +412,8 @@ class CreditoController extends Controller
             (string) $data['monto_pagado'],
             $data['medio'],
             $request->file('comprobante'),
+            isset($data['descuento']) ? (string) $data['descuento'] : null,
+            $data['motivo_descuento'] ?? null,
         );
 
         return $this->successResponse($credito, 'Cuotas pagadas', 201);

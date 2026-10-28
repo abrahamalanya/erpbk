@@ -396,10 +396,13 @@ final class CreditoService
      * - Mientras el crédito no se desembolsó (pendiente / aprobado): cualquier
      *   admin con autoridad sobre él (de la agencia o general de la empresa)
      *   puede editar la tasa.
-     * - Ya desembolsado (activo / vencido): solo el administrador general, y
-     *   solo mientras el crédito no tenga NINGÚN cobro registrado — una vez
-     *   que arranca la cobranza, cambiar la tasa descuadraría el cronograma y
-     *   lo ya cobrado.
+     * - Ya desembolsado (activo / vencido): solo el administrador general,
+     *   incluso si el crédito ya tiene cobros registrados — confirmado
+     *   explícitamente que debe poder corregirla en ese caso. La nueva tasa
+     *   solo rige hacia adelante: calcularInteresProrateado() (refrendo/
+     *   mora/liquidación) siempre lee $credito->interes en vivo, así que no
+     *   hace falta ni es correcto recalcular las CuotaCredito ni los Cobro
+     *   ya registrados con la tasa anterior.
      */
     public function actualizarInteres(Credito $credito, User $actor, string $interes): Credito
     {
@@ -418,9 +421,9 @@ final class CreditoService
      * Regla de autoridad para editar la tasa de interés — espejada en el
      * frontend (`puedeEditarInteresCredito()` en creditoPrendarioHierarchy).
      * Antes de desembolsar basta la autoridad admin normal (agencia o
-     * general); una vez desembolsado queda reservada al administrador general
-     * y solo mientras el crédito no tenga cobros (ver `editar()` en la Policy
-     * para el chequeo grueso de permiso/alcance).
+     * general); una vez desembolsado queda reservada al administrador
+     * general, con o sin cobros (ver `editar()` en la Policy para el chequeo
+     * grueso de permiso/alcance).
      */
     private function asegurarPuedeEditarInteres(Credito $credito, User $actor): void
     {
@@ -434,10 +437,6 @@ final class CreditoService
 
         if (! $actor->hasRole(['administrador_general', 'sistemas'])) {
             throw new DomainException('Una vez desembolsado, solo el administrador general puede editar la tasa de interés.');
-        }
-
-        if ($credito->cobros()->exists()) {
-            throw new DomainException('No se puede editar la tasa de interés: el crédito ya tiene pagos registrados.');
         }
     }
 
@@ -1794,9 +1793,25 @@ final class CreditoService
      * abono parcial si el monto no alcanza a cubrirla. Si con este pago ya
      * no queda ninguna cuota pendiente, el crédito pasa a liquidado igual
      * que liquidar() (carta de no adeudo, sin acta de devolución).
+     *
+     * `$descuento`/`$motivoDescuento` ("regularizar" un diario atrasado):
+     * condona parte de las cuotas+mora calculadas — ver
+     * resolverDescuentoRegularizacionCuotas(). Cada cuota se sigue marcando
+     * como abonada/con su mora íntegra (igual que siempre); el descuento
+     * solo reduce el efectivo que hace falta cobrar, nunca lo que se da por
+     * pagado. Solo tiene sentido pagando un número determinado de cuotas
+     * (`$numeroCuotas`), no amortizando un monto libre.
      */
-    public function pagarCuotas(Credito $credito, User $actor, ?int $numeroCuotas, string $montoPagado, string $medio, ?UploadedFile $comprobante): Credito
-    {
+    public function pagarCuotas(
+        Credito $credito,
+        User $actor,
+        ?int $numeroCuotas,
+        string $montoPagado,
+        string $medio,
+        ?UploadedFile $comprobante,
+        ?string $descuento = null,
+        ?string $motivoDescuento = null,
+    ): Credito {
         if ($credito->tipo_interes === 'compuesto') {
             if ($numeroCuotas === null) {
                 throw new DomainException('Los créditos de interés compuesto solo se pagan por cuotas completas: indica cuántas cuotas pagar.');
@@ -1805,18 +1820,27 @@ final class CreditoService
             return $this->pagarCuota($credito, $actor, $montoPagado, $medio, $comprobante, $numeroCuotas);
         }
 
+        $descuentoAplicado = '0.00';
+
         if ($numeroCuotas !== null) {
             $calculo = $this->calcularMontoPagoCuotas($credito, $numeroCuotas);
+            $descuentoAplicado = $this->resolverDescuentoRegularizacionCuotas($credito, $actor, $calculo['total'], $descuento, $motivoDescuento);
+            $totalAPagar = bcsub($calculo['total'], $descuentoAplicado, 2);
 
-            if (bccomp($montoPagado, $calculo['total'], 2) < 0) {
-                throw new DomainException("El monto pagado ({$montoPagado}) es menor al total de las cuotas + mora a pagar calculado ({$calculo['total']}).");
+            if (bccomp($montoPagado, $totalAPagar, 2) < 0) {
+                throw new DomainException("El monto pagado ({$montoPagado}) es menor al total de las cuotas + mora a pagar calculado ({$totalAPagar}).");
             }
 
-            $calculo['vuelto'] = bcsub($montoPagado, $calculo['total'], 2);
+            $calculo['vuelto'] = bcsub($montoPagado, $totalAPagar, 2);
         } else {
+            if ($descuento !== null && bccomp($descuento, '0', 2) > 0) {
+                throw new DomainException('El descuento solo se puede aplicar pagando un número determinado de cuotas.');
+            }
+
             $calculo = $this->calcularAmortizacion($credito, $montoPagado);
         }
 
+        $totalAplicado = bcsub($calculo['total'], $descuentoAplicado, 2);
         $vuelto = $calculo['vuelto'];
         $ciclo = $this->resolverCicloParaCobro($actor);
         $estadoAnterior = $credito->estado;
@@ -1825,7 +1849,7 @@ final class CreditoService
 
         $esDiario = $credito->tipo_credito === 'diario';
 
-        return DB::transaction(function () use ($credito, $actor, $calculo, $ciclo, $montoPagado, $medio, $comprobante, $estadoAnterior, $vuelto, $esUltimaCuota, $cuotasCompletas, $esDiario): Credito {
+        return DB::transaction(function () use ($credito, $actor, $calculo, $ciclo, $montoPagado, $medio, $comprobante, $estadoAnterior, $vuelto, $esUltimaCuota, $cuotasCompletas, $esDiario, $descuentoAplicado, $motivoDescuento, $totalAplicado): Credito {
             if ($esUltimaCuota) {
                 // Mismo final que liquidar(): el diario no tiene garantía
                 // física, salta directo a 'liquidado' + carta de no adeudo;
@@ -1846,6 +1870,8 @@ final class CreditoService
                 'credito_estado_anterior' => $estadoAnterior,
                 'interes' => $calculo['monto_cuotas'],
                 'mora' => $calculo['mora'],
+                'descuento' => $descuentoAplicado,
+                'motivo_descuento' => $motivoDescuento,
                 'vuelto' => $vuelto,
             ]);
 
@@ -1878,7 +1904,9 @@ final class CreditoService
                 'medio' => $medio,
                 'cuotas' => $calculo['cuotas'],
                 'mora' => $calculo['mora'],
-                'total' => $calculo['total'],
+                'descuento' => $descuentoAplicado,
+                'motivo_descuento' => $motivoDescuento,
+                'total' => $totalAplicado,
                 'vuelto' => $vuelto,
                 'credito_id' => $credito->id,
                 'fecha' => now()->toDateString(),
@@ -2510,6 +2538,33 @@ final class CreditoService
         }
 
         return $descuento;
+    }
+
+    /**
+     * Descuento ("regularización") al pagar varias cuotas atrasadas de un
+     * crédito diario — a diferencia de refrendar/adendar/liquidar/
+     * refinanciar (que admiten descuento sin restricción de rol), condonar
+     * aquí queda reservado al administrador general: "pagar cuotas" lo hace
+     * normalmente el asesor en campo, y condonar mora/interés para poner al
+     * día un crédito muy atrasado es una decisión administrativa. Solo
+     * aplica a crédito diario — los demás tipos con pago por cuotas
+     * (prendario/vehicular/hipotecario simple) no admiten descuento aquí.
+     */
+    private function resolverDescuentoRegularizacionCuotas(Credito $credito, User $actor, string $montoBase, ?string $descuento, ?string $motivoDescuento): string
+    {
+        if ($descuento === null || bccomp($descuento, '0', 2) <= 0) {
+            return '0.00';
+        }
+
+        if ($credito->tipo_credito !== 'diario') {
+            throw new DomainException('Solo se puede condonar al pagar cuotas de un crédito diario.');
+        }
+
+        if (! $actor->hasRole(['administrador_general', 'sistemas'])) {
+            throw new DomainException('Solo el administrador general puede condonar mora/interés al pagar cuotas.');
+        }
+
+        return $this->resolverDescuento($montoBase, $descuento, $motivoDescuento);
     }
 
     /**

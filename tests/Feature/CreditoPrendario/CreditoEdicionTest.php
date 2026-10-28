@@ -188,7 +188,7 @@ it('allows administrador_general to update the interest rate while activo, befor
         ->assertJsonPath('data.interes', '7.50');
 });
 
-it('denies administrador_general from updating the interest rate once the crédito has a cobro', function () {
+it('allows administrador_general to update the interest rate even after the crédito has a cobro', function () {
     Storage::fake('public');
 
     Sanctum::actingAs($this->asesor, ['*']);
@@ -223,8 +223,8 @@ it('denies administrador_general from updating the interest rate once the crédi
 
     Sanctum::actingAs($adminGeneral, ['*']);
     $this->postJson("/api/creditos-prendarios/{$creditoId}/actualizar-interes", ['interes' => 7.5])
-        ->assertUnprocessable()
-        ->assertJsonPath('message', 'No se puede editar la tasa de interés: el crédito ya tiene pagos registrados.');
+        ->assertSuccessful()
+        ->assertJsonPath('data.interes', '7.50');
 });
 
 it('denies asesor from updating the interest rate', function () {

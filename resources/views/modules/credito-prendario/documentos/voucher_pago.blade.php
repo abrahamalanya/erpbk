@@ -95,6 +95,9 @@
             @php
                 $cuotasCompletas = collect($datos['cuotas'] ?? [])->filter(fn ($c) => $c['completa'] ?? true)->count();
             @endphp
+            @if ((float) ($datos['descuento'] ?? 0) > 0)
+                <tr><td>Descuento{{ !empty($datos['motivo_descuento']) ? ' ('.$datos['motivo_descuento'].')' : '' }}</td><td class="num">-{{ number_format((float) $datos['descuento'], 2) }}</td></tr>
+            @endif
             <tr class="tot"><td>Total aplicado ({{ $cuotasCompletas }} cuota(s) completa(s))</td><td class="num">{{ number_format((float) ($datos['total'] ?? 0), 2) }}</td></tr>
         @else
             <tr><td>Interés</td><td class="num">{{ number_format((float) ($datos['interes'] ?? 0), 2) }}</td></tr>
