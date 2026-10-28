@@ -175,6 +175,40 @@ it('requires a motivo_descuento when administrador_general aplica un descuento r
     ])->assertStatus(422);
 });
 
+it('regenera las cuotas pendientes (incluida una con abono parcial) al editar la tasa de un diario ya desembolsado', function () {
+    // Abono parcial a la cuota 1 — queda pendiente (pagada_at null) pero con monto_abonado > 0.
+    Sanctum::actingAs($this->asesor, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$this->credito->id}/pagar-cuotas", [
+        'monto_pagado' => '20.00', 'medio' => 'efectivo',
+    ])->assertCreated();
+
+    // Cuota 1 ya está en mora (venció hace 5 días, ver beforeEach): el pago de 20
+    // cubre primero esa mora (5.15) y el resto (14.85) va de abono al saldo.
+    $cuota1Antes = CuotaCredito::where('credito_id', $this->credito->id)->where('numero_cuota', 1)->firstOrFail();
+    $cuota2Antes = CuotaCredito::where('credito_id', $this->credito->id)->where('numero_cuota', 2)->firstOrFail();
+    expect((string) $cuota1Antes->monto_abonado)->toBe('14.85')
+        ->and((string) $cuota1Antes->mora_pagada)->toBe('5.15')
+        ->and($cuota1Antes->pagada_at)->toBeNull();
+
+    Sanctum::actingAs($this->adminGeneral, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$this->credito->id}/actualizar-interes", ['interes' => 30])
+        ->assertSuccessful();
+
+    // Mismo cálculo que filasCronograma(): capital de cada cuota sin tocar, interés nuevo sobre monto_prestamo.
+    $interesNominal = bcdiv(bcmul(bcmul('500', '30', 10), '1', 10), '3000', 2);
+    $totalEsperado = bcadd((string) $cuota1Antes->monto_capital, $interesNominal, 0);
+
+    $cuota1Despues = $cuota1Antes->fresh();
+    $cuota2Despues = $cuota2Antes->fresh();
+
+    expect((string) $cuota1Despues->monto_total)->toBe($totalEsperado.'.00')
+        ->and((string) $cuota1Despues->monto_abonado)->toBe('14.85')
+        ->and((string) $cuota1Despues->mora_pagada)->toBe('5.15')
+        ->and($cuota1Despues->pagada_at)->toBeNull()
+        ->and((string) $cuota2Despues->monto_total)->toBe($totalEsperado.'.00')
+        ->and((string) $cuota1Despues->monto_capital)->toBe((string) $cuota1Antes->monto_capital);
+});
+
 it('denies a descuento amortizando un monto libre (sin numero_cuotas), incluso para administrador_general', function () {
     Sanctum::actingAs($this->adminGeneral, ['*']);
 

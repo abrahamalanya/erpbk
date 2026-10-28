@@ -395,26 +395,62 @@ final class CreditoService
      *
      * - Mientras el crédito no se desembolsó (pendiente / aprobado): cualquier
      *   admin con autoridad sobre él (de la agencia o general de la empresa)
-     *   puede editar la tasa.
+     *   puede editar la tasa; el cronograma todavía no existe.
      * - Ya desembolsado (activo / vencido): solo el administrador general,
      *   incluso si el crédito ya tiene cobros registrados — confirmado
      *   explícitamente que debe poder corregirla en ese caso. La nueva tasa
-     *   solo rige hacia adelante: calcularInteresProrateado() (refrendo/
-     *   mora/liquidación) siempre lee $credito->interes en vivo, así que no
-     *   hace falta ni es correcto recalcular las CuotaCredito ni los Cobro
-     *   ya registrados con la tasa anterior.
+     *   rige hacia adelante de dos formas: calcularInteresProrateado()
+     *   (refrendo/mora/liquidación) siempre lee $credito->interes en vivo, Y
+     *   — solo interés simple — las CuotaCredito PENDIENTES (sin pagar
+     *   completas, un abono parcial no se toca) se regeneran con la tasa
+     *   nueva (ver recalcularCuotasPendientes()), para que el saldo mostrado
+     *   refleje la corrección. Las cuotas ya pagadas completas y los Cobro
+     *   ya registrados nunca se tocan.
      */
     public function actualizarInteres(Credito $credito, User $actor, string $interes): Credito
     {
         $this->asegurarPuedeEditarInteres($credito, $actor);
 
         $credito->update(['interes' => $interes]);
-
         $credito = $credito->fresh();
+
+        if (in_array($credito->estado, ['activo', 'vencido'], true) && $credito->tipo_interes === 'simple') {
+            $this->recalcularCuotasPendientes($credito);
+        }
+
         $this->notificar($credito);
         $this->notificaciones->enviar(collect([$credito->registradoPor]), new CreditoInteresActualizadoNotification($credito));
 
         return $credito;
+    }
+
+    /**
+     * Regenera el interés/total de las cuotas PENDIENTES (sin `pagada_at`,
+     * incluida una con un abono parcial) tras editar la tasa de un crédito
+     * de interés simple ya desembolsado — ver actualizarInteres(). Mismo
+     * cálculo que filasCronograma() al generar el cronograma, pero
+     * conservando el capital y los días de cada cuota ya creada: solo
+     * cambia cuánto interés corresponde a ese capital con la tasa nueva.
+     * `monto_abonado` no se toca — un abono ya registrado sigue siendo
+     * válido contra el nuevo total (que nunca es menor a él en la práctica,
+     * ya que el abono nunca excede el total anterior).
+     *
+     * Solo interés simple: el compuesto (cuota fija por anualidad francesa)
+     * exigiría rehacer todo el saldo insoluto restante, no solo esta cuota.
+     */
+    private function recalcularCuotasPendientes(Credito $credito): void
+    {
+        $diasPorCuota = self::DIAS_POR_PERIODO[$credito->tipo_cuota];
+        $interesNominal = $this->interesSimplePeriodo((string) $credito->monto_prestamo, (string) $credito->interes, $diasPorCuota);
+
+        $credito->cuotas()->pendientes()->get()->each(function (CuotaCredito $cuota) use ($interesNominal): void {
+            $totalCuota = $this->bcRoundEntero(bcadd((string) $cuota->monto_capital, $interesNominal, 2));
+
+            $cuota->update([
+                'monto_interes' => bcsub($totalCuota, (string) $cuota->monto_capital, 2),
+                'monto_total' => $totalCuota,
+            ]);
+        });
     }
 
     /**

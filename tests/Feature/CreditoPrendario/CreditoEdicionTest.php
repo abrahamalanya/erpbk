@@ -6,6 +6,7 @@ use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Cobranza\Models\Cobro;
 use App\Modules\Credito\Models\ConfiguracionCredito;
 use App\Modules\Credito\Models\Credito;
+use App\Modules\Credito\Models\CuotaCredito;
 use App\Modules\CreditoHipotecario\Models\Inmueble;
 use App\Modules\CreditoPrendario\Models\Bien;
 use App\Modules\Empresa\Models\Agencia;
@@ -218,6 +219,9 @@ it('allows administrador_general to update the interest rate even after the cré
         'operacion' => 'refrendo',
     ]);
 
+    $cuotaAntes = CuotaCredito::where('credito_id', $creditoId)->firstOrFail();
+    expect((string) $cuotaAntes->monto_total)->toBe('550.00');
+
     $adminGeneral = User::factory()->forEmpresa($this->empresa)->create();
     $adminGeneral->assignRole('administrador_general');
 
@@ -225,6 +229,12 @@ it('allows administrador_general to update the interest rate even after the cré
     $this->postJson("/api/creditos-prendarios/{$creditoId}/actualizar-interes", ['interes' => 7.5])
         ->assertSuccessful()
         ->assertJsonPath('data.interes', '7.50');
+
+    // La cuota pendiente se regenera con la tasa nueva: 500*7.5%*30días/3000 = 37.5 -> redondeado 38.
+    $cuotaDespues = $cuotaAntes->fresh();
+    expect((string) $cuotaDespues->monto_interes)->toBe('38.00')
+        ->and((string) $cuotaDespues->monto_total)->toBe('538.00')
+        ->and((string) $cuotaDespues->monto_capital)->toBe('500.00');
 });
 
 it('denies asesor from updating the interest rate', function () {
