@@ -72,6 +72,34 @@ class CajaMovimiento extends Model
         return $query->where('tipo', 'egreso')->whereNull('credito_id');
     }
 
+    /**
+     * Ingresos manuales: los que registra el propio módulo Ingresos
+     * (CajaService::registrarMovimiento(), que siempre exige un concepto del
+     * catálogo). Un cobro o un pago de venta TAMBIÉN generan un movimiento
+     * tipo=ingreso (ver CreditoService::registrarCobroEnCaja() y
+     * VentaService::registrarPago()), pero ninguno de los dos lleva
+     * concepto_id — por eso ese campo (y no credito_id/venta_id, que acá
+     * apuntarían al origen, no a "es manual") es lo que distingue uno de
+     * otro, sin contar dos veces el mismo dinero que ya suma `cobranza`.
+     */
+    public function scopeIngresosManuales(Builder $query): Builder
+    {
+        return $query->where('tipo', 'ingreso')->whereNotNull('concepto_id');
+    }
+
+    /**
+     * Billetaje aprobado (efectivo o digital — ver BilletajeService): dinero
+     * que entra a esta caja desde la bóveda, igual de real que un ingreso
+     * para CajaCiclo::saldoActual(), pero de origen interno, no de un
+     * cliente. `registrado_por` acá es quien APROBÓ el billetaje (el
+     * administrador), no el asesor que lo recibió — para saber de quién es
+     * hay que mirar la caja (cajaCiclo.caja.user_id), no este campo.
+     */
+    public function scopeBilletajes(Builder $query): Builder
+    {
+        return $query->where('tipo', 'billetaje');
+    }
+
     public function cajaCiclo(): BelongsTo
     {
         return $this->belongsTo(CajaCiclo::class);

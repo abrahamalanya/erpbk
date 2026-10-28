@@ -1,5 +1,7 @@
 <?php
 
+use App\Modules\Caja\Models\Billetaje;
+use App\Modules\Caja\Models\Boveda;
 use App\Modules\Caja\Models\Caja;
 use App\Modules\Caja\Models\CajaMovimiento;
 use App\Modules\Cliente\Models\Cliente;
@@ -26,6 +28,55 @@ beforeEach(function () {
 
     $this->conceptoIngreso = Concepto::factory()->paraEmpresa($this->empresa)->create(['tipo' => 'ingreso', 'nombre' => 'Ingreso vario']);
     $this->conceptoGasto = Concepto::factory()->paraEmpresa($this->empresa)->create(['tipo' => 'gasto', 'nombre' => 'Útiles de oficina']);
+});
+
+it('separates manual movements from disbursements and collections in both list and summary', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+    $this->postJson('/api/caja/aperturar')->assertCreated();
+    $ciclo = Caja::query()->where('user_id', $this->asesor->id)->firstOrFail()->cicloAbierto;
+    $credito = Credito::factory()->create(['empresa_id' => $this->empresa->id]);
+    $base = ['empresa_id' => $this->empresa->id, 'registrado_por' => $this->asesor->id, 'fecha_caja' => now()->toDateString()];
+    $ciclo->movimientos()->create([...$base, 'tipo' => 'ingreso', 'monto' => 50, 'concepto_id' => $this->conceptoIngreso->id]);
+    $ciclo->movimientos()->create([...$base, 'tipo' => 'ingreso', 'monto' => 900, 'credito_id' => $credito->id]);
+    $ciclo->movimientos()->create([...$base, 'tipo' => 'egreso', 'monto' => 20, 'concepto_id' => $this->conceptoGasto->id]);
+    $ciclo->movimientos()->create([...$base, 'tipo' => 'egreso', 'monto' => 700, 'credito_id' => $credito->id]);
+
+    foreach (['ingreso' => '50.00', 'egreso' => '20.00'] as $tipo => $total) {
+        $this->getJson("/api/caja/movimientos?tipo={$tipo}&solo_manuales=1")
+            ->assertSuccessful()->assertJsonCount(1, 'data.data')
+            ->assertJsonPath('data.resumen.total', $total)->assertJsonPath('data.resumen.cantidad', 1);
+    }
+    $this->getJson('/api/caja/movimientos?tipo=egreso&solo_desembolsos=1')
+        ->assertSuccessful()->assertJsonCount(1, 'data.data')->assertJsonPath('data.resumen.total', '700.00');
+    $this->getJson('/api/caja/movimientos?tipo=egreso&solo_manuales=1&solo_desembolsos=1')->assertUnprocessable();
+});
+
+it('filters billetajes by receipt date and summarizes only accepted ones across pages', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+    $this->postJson('/api/caja/aperturar')->assertCreated();
+    $ciclo = Caja::query()->where('user_id', $this->asesor->id)->firstOrFail()->cicloAbierto;
+    $boveda = Boveda::query()->where('agencia_id', $this->agencia->id)->firstOrFail();
+    $hoy = now()->toDateString();
+    $base = ['caja_ciclo_id' => $ciclo->id, 'boveda_id' => $boveda->id, 'empresa_id' => $this->empresa->id, 'asesor_id' => $this->asesor->id, 'solicitado_por' => $this->asesor->id];
+    foreach (range(1, 17) as $index) {
+        Billetaje::query()->create([...$base, 'monto' => '0.10', 'estado' => 'aprobado', 'fecha_resolucion' => now(), 'created_at' => now()->subDay()]);
+    }
+    Billetaje::query()->create([...$base, 'monto' => 100, 'estado' => 'pendiente']);
+    Billetaje::query()->create([...$base, 'monto' => 200, 'estado' => 'rechazado', 'fecha_resolucion' => now()]);
+    Billetaje::query()->create([...$base, 'monto' => 999, 'estado' => 'aprobado', 'fecha_resolucion' => now()->subDay()]);
+
+    foreach ([1 => 15, 2 => 4] as $page => $cantidad) {
+        $this->getJson("/api/billetajes?desde={$hoy}&hasta={$hoy}&page={$page}")
+            ->assertSuccessful()->assertJsonCount($cantidad, 'data.data')
+            ->assertJsonPath('data.resumen.total', '1.70')->assertJsonPath('data.resumen.cantidad', 17);
+    }
+    $this->getJson('/api/billetajes?desde=2030-01-01&hasta=2020-01-01')->assertUnprocessable();
+    $this->getJson('/api/billetajes?desde=invalid')->assertUnprocessable();
+    $this->getJson("/api/billetajes?hasta={$hoy}")
+        ->assertSuccessful()->assertJsonPath('data.resumen.total', '1000.70')->assertJsonPath('data.resumen.cantidad', 18);
+    $this->getJson('/api/billetajes?desde=2030-01-01')
+        ->assertSuccessful()->assertJsonPath('data.resumen.total', '0.00')->assertJsonPath('data.resumen.cantidad', 0);
+    $this->getJson("/api/billetajes?desde={$hoy}&hasta={$hoy}&asesor_id=999999999")->assertUnprocessable();
 });
 
 it('summarizes every filtered movement across pages without including other cajas or movement types', function () {

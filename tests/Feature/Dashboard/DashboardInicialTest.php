@@ -1,9 +1,11 @@
 <?php
 
+use App\Modules\Caja\Models\CajaCiclo;
 use App\Modules\Caja\Models\CajaMovimiento;
 use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
+use App\Modules\Sistemas\Models\Concepto;
 use App\Modules\Usuario\Models\User;
 use Database\Seeders\PermissionSeeder;
 use Database\Seeders\RoleSeeder;
@@ -117,10 +119,35 @@ it('sums several egresos manuales of the day and ignores other days', function (
     expect($data['egresos']['cantidad'])->toBe(2);
 });
 
-it('sums ingresos manuales of the day, separate from cobranza, and ignores other days', function () {
-    movimientoHoy($this->asesor, 'ingreso', '500.00');
-    movimientoHoy($this->asesor, 'ingreso', '200.00');
-    $otroDia = movimientoHoy($this->asesor, 'ingreso', '999.00');
+/**
+ * Ingreso manual (módulo Ingresos: tipo=ingreso CON concepto del catálogo —
+ * ver CajaMovimiento::scopeIngresosManuales()), a diferencia de
+ * movimientoHoy()/un cobro/un pago de venta, que nunca llevan concepto_id.
+ */
+function ingresoManualHoy(User $registradoPor, string $monto): CajaMovimiento
+{
+    $concepto = Concepto::factory()->paraEmpresa(test()->empresa)->create(['tipo' => 'ingreso']);
+
+    return CajaMovimiento::query()->create([
+        'caja_ciclo_id' => test()->ciclo->id,
+        'empresa_id' => test()->ciclo->empresa_id,
+        'tipo' => 'ingreso',
+        'concepto_id' => $concepto->id,
+        'registrado_por' => $registradoPor->id,
+        'monto' => $monto,
+        'fecha_caja' => test()->ciclo->fecha,
+        'created_at' => now(),
+    ]);
+}
+
+it('sums ingresos manuales of the day, separate from cobranza (a cobro also writes tipo=ingreso, but without concepto_id), and ignores other days', function () {
+    $cliente = clienteEn($this->agencia);
+    $credito = créditoDe($cliente);
+    cobroHoy([], $credito, $cliente, $this->asesor, '300.00');
+
+    ingresoManualHoy($this->asesor, '500.00');
+    ingresoManualHoy($this->asesor, '200.00');
+    $otroDia = ingresoManualHoy($this->asesor, '999.00');
     CajaMovimiento::query()->where('id', $otroDia->id)->update(['created_at' => now()->subDay()]);
 
     Sanctum::actingAs($this->admin, ['*']);
@@ -129,21 +156,22 @@ it('sums ingresos manuales of the day, separate from cobranza, and ignores other
 
     assertTotal(700.00, $data['ingresos']['total']);
     expect($data['ingresos']['cantidad'])->toBe(2);
-    assertTotal(0.00, $data['cobranza']['total']);
+    // El cobro cuenta en cobranza, no en ingresos: no se duplica.
+    assertTotal(300.00, $data['cobranza']['total']);
 });
 
 it('filters ingresos by agencia and asesor, without widening what the actor can see', function () {
     $otroAsesor = User::factory()->forAgencia($this->otraAgencia)->create();
     $otroAsesor->assignRole('asesor');
     $otroCiclo = cicloDe($otroAsesor, $this->empresa, $this->otraAgencia);
+    $conceptoOtra = Concepto::factory()->paraEmpresa($this->empresa)->create(['tipo' => 'ingreso']);
 
-    movimientoHoy($this->asesor, 'ingreso', '100.00');
+    ingresoManualHoy($this->asesor, '100.00');
     CajaMovimiento::query()->create([
         'caja_ciclo_id' => $otroCiclo->id,
         'empresa_id' => $otroCiclo->empresa_id,
         'tipo' => 'ingreso',
-        'concepto_id' => null,
-        'credito_id' => null,
+        'concepto_id' => $conceptoOtra->id,
         'registrado_por' => $otroAsesor->id,
         'monto' => '900.00',
         'fecha_caja' => $otroCiclo->fecha,
@@ -164,6 +192,113 @@ it('filters ingresos by agencia and asesor, without widening what the actor can 
 
     assertTotal(0.00, $this->getJson("/api/dashboard/resumen?agencia_id={$this->otraAgencia->id}")
         ->assertSuccessful()->json('data.ingresos.total'));
+});
+
+/**
+ * Billetaje aprobado en $ciclo (dinero que esa caja recibió de la bóveda).
+ * `registrado_por` es $aprobador (quien lo aprobó, no quien lo recibe) —
+ * mismo criterio que BilletajeService::aprobarEnEfectivo().
+ */
+function billetajeHoy(CajaCiclo $ciclo, string $monto, User $aprobador): CajaMovimiento
+{
+    return CajaMovimiento::query()->create([
+        'caja_ciclo_id' => $ciclo->id,
+        'empresa_id' => $ciclo->empresa_id,
+        'tipo' => 'billetaje',
+        'monto' => $monto,
+        'registrado_por' => $aprobador->id,
+        'fecha_caja' => $ciclo->fecha,
+        'created_at' => now(),
+    ]);
+}
+
+it('adds billetaje recibido to the neto, on top of cobranza minus desembolso', function () {
+    $cliente = clienteEn($this->agencia);
+    $credito = créditoDe($cliente);
+    cobroHoy([], $credito, $cliente, $this->asesor, '300.00');
+    desembolsoHoy($credito, $this->asesor, '900.00');
+    billetajeHoy($this->ciclo, '900.00', $this->admin);
+
+    Sanctum::actingAs($this->admin, ['*']);
+
+    $data = $this->getJson('/api/dashboard/resumen')->assertSuccessful()->json('data');
+
+    assertTotal(900.00, $data['billetajes']['total']);
+    expect($data['billetajes']['cantidad'])->toBe(1);
+    // Sin el billetaje el neto sería -600 (300 - 900); con él, el billetaje
+    // cubrió el desembolso y el neto queda en lo que de verdad se cobró.
+    assertTotal(300.00, $data['neto']);
+});
+
+it('attributes billetaje to the asesor who received it (the caja owner), not to the aprobador', function () {
+    $otroAsesor = User::factory()->forAgencia($this->agencia)->create();
+    $otroAsesor->assignRole('asesor');
+    $otroCiclo = cicloDe($otroAsesor, $this->empresa, $this->agencia);
+
+    billetajeHoy($this->ciclo, '500.00', $this->admin);
+    billetajeHoy($otroCiclo, '800.00', $this->admin);
+
+    Sanctum::actingAs($this->admin, ['*']);
+
+    assertTotal(500.00, $this->getJson("/api/dashboard/resumen?asesor_id={$this->asesor->id}")
+        ->assertSuccessful()->json('data.billetajes.total'));
+
+    assertTotal(800.00, $this->getJson("/api/dashboard/resumen?asesor_id={$otroAsesor->id}")
+        ->assertSuccessful()->json('data.billetajes.total'));
+
+    // Filtrar por el aprobador (administrador) no debe devolver nada: no es
+    // "su" billetaje, el dueño de la caja es quien lo recibió.
+    assertTotal(0.00, $this->getJson("/api/dashboard/resumen?asesor_id={$this->admin->id}")
+        ->assertSuccessful()->json('data.billetajes.total'));
+});
+
+it('filters billetajes by agencia, without widening what the actor can see', function () {
+    $otroAsesor = User::factory()->forAgencia($this->otraAgencia)->create();
+    $otroAsesor->assignRole('asesor');
+    $otroCiclo = cicloDe($otroAsesor, $this->empresa, $this->otraAgencia);
+
+    billetajeHoy($this->ciclo, '100.00', $this->admin);
+    billetajeHoy($otroCiclo, '900.00', $this->admin);
+
+    $adminAgencia = User::factory()->forAgencia($this->agencia)->create();
+    $adminAgencia->assignRole('administrador_agencia');
+    Sanctum::actingAs($adminAgencia, ['*']);
+
+    assertTotal(100.00, $this->getJson('/api/dashboard/resumen')->assertSuccessful()->json('data.billetajes.total'));
+
+    assertTotal(0.00, $this->getJson("/api/dashboard/resumen?agencia_id={$this->otraAgencia->id}")
+        ->assertSuccessful()->json('data.billetajes.total'));
+});
+
+it('limits billetajes to the selected dates and includes digital receipts regardless of credit type', function () {
+    billetajeHoy($this->ciclo, '120.00', $this->admin);
+    billetajeHoy($this->ciclo, '80.00', $this->admin)->update(['medio' => 'cuenta_bancaria']);
+    $anterior = billetajeHoy($this->ciclo, '999.00', $this->admin);
+    CajaMovimiento::query()->whereKey($anterior->id)->update(['created_at' => now()->subDay()]);
+
+    Sanctum::actingAs($this->admin, ['*']);
+    $hoy = now()->toDateString();
+    $ayer = now()->subDay()->toDateString();
+
+    $data = $this->getJson("/api/dashboard/resumen?desde={$hoy}&hasta={$hoy}&tipo_credito=diario")
+        ->assertSuccessful()->json('data');
+
+    assertTotal(200.00, $data['billetajes']['total']);
+    expect($data['billetajes']['cantidad'])->toBe(2);
+    assertTotal(200.00, $data['neto']);
+    assertTotal(999.00, $this->getJson("/api/dashboard/resumen?desde={$ayer}&hasta={$ayer}")
+        ->assertSuccessful()->json('data.billetajes.total'));
+});
+
+it('only exposes the asesors own received billetajes even when another asesor is requested', function () {
+    $otroCiclo = cicloDe($this->otroAsesor, $this->empresa, $this->agencia);
+    billetajeHoy($this->ciclo, '100.00', $this->admin);
+    billetajeHoy($otroCiclo, '900.00', $this->admin);
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    assertTotal(100.00, $this->getJson('/api/dashboard/resumen')->assertSuccessful()->json('data.billetajes.total'));
+    assertTotal(0.00, $this->getJson("/api/dashboard/resumen?asesor_id={$this->otroAsesor->id}")
+        ->assertSuccessful()->json('data.billetajes.total'));
 });
 
 it('filters egresos by agencia (via the caja that recorded them)', function () {

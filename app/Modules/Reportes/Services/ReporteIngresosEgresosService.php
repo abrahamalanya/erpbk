@@ -109,8 +109,9 @@ final class ReporteIngresosEgresosService
     private function ingresos(Carbon $inicio, Carbon $fin, User $actor, ?int $agenciaId): array
     {
         $filas = $this->movimientosDeCaja($inicio, $fin, $actor, $agenciaId)
-            ->where('tipo', 'ingreso')
-            ->whereNotNull('concepto_id')
+            // ingresosManuales() = tipo ingreso CON concepto del catálogo
+            // (ver CajaMovimiento::scopeIngresosManuales()): el módulo Ingresos.
+            ->ingresosManuales()
             ->get()
             ->map(fn (CajaMovimiento $m): array => $this->fila([
                 'cuenta' => $this->nombre($m->registradoPor),

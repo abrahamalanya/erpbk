@@ -275,6 +275,7 @@ final class CajaService
         return CajaMovimiento::query()
             ->whereHas('cajaCiclo', fn ($query) => $query->whereIn('caja_id', $cajasVisibles))
             ->where('tipo', $tipo)
+            ->when($filtros['solo_manuales'] ?? false, fn (Builder $query) => $tipo === 'ingreso' ? $query->ingresosManuales() : $query->egresosManuales())
             ->when($filtros['concepto_id'] ?? null, fn ($query, int $conceptoId) => $query->where('concepto_id', $conceptoId))
             ->when($soloDesembolsos, fn (Builder $query) => $query->desembolsos())
             ->when($excluirDesembolsos, fn (Builder $query) => $query->egresosManuales())

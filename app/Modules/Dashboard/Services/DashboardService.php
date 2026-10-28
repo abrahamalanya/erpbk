@@ -36,9 +36,18 @@ use Illuminate\Support\Collection;
  * tipo=egreso SIN credito_id) — gastos generales, deliberadamente distintos
  * de "desembolso" para no contar el mismo movimiento en las dos cards.
  *
- * "Ingresos" son los ingresos de caja (tipo=ingreso) — depósitos/aportes que
- * no vienen de cobrarle a un cliente, deliberadamente distintos de
- * "cobranza" por la misma razón que "egresos" lo es de "desembolso".
+ * "Ingresos" son los ingresos de caja MANUALES (CajaMovimiento::ingresosManuales(),
+ * tipo=ingreso CON concepto del catálogo) — los que registra el propio módulo
+ * Ingresos. Un cobro o un pago de venta también generan un movimiento
+ * tipo=ingreso, pero sin concepto_id, y esos YA están contados en
+ * "cobranza" — sin este filtro se contarían dos veces el mismo dinero.
+ *
+ * "Billetajes" es el billetaje aprobado (tipo=billetaje — ver
+ * CajaMovimiento::scopeBilletajes()): dinero que la caja recibió de la
+ * bóveda, no de un cliente. A diferencia de egresos/ingresos manuales, SÍ
+ * suma en `neto`: es efectivo real con el que la caja cubrió un desembolso,
+ * así que dejarlo fuera haría ver un neto negativo que en realidad no refleja
+ * una pérdida — solo una entrada de dinero de otro origen.
  *
  * "Vencidos" no es "del día": es la cartera vencida visible para el actor en
  * este momento (cantidad de créditos + su saldo pendiente), mismo cálculo de
@@ -99,6 +108,7 @@ final class DashboardService
     {
         $cobranza = $this->totalCobranzas($actor, $agenciaId, $asesorId, $tipoCredito, $desde, $hasta);
         $desembolso = $this->totalDesembolsos($actor, $agenciaId, $asesorId, $tipoCredito, $desde, $hasta);
+        $billetajes = $this->totalBilletajes($actor, $agenciaId, $asesorId, $desde, $hasta);
 
         return [
             // Alias de compatibilidad con clientes (app móvil) que todavía no
@@ -109,15 +119,22 @@ final class DashboardService
             'hasta' => $hasta,
             'cobranza' => $cobranza,
             'desembolso' => $desembolso,
-            // Lo que quedó en caja por la operación del período. Puede ser
-            // negativo: es la diferencia, no un saldo de cuentas.
-            'neto' => round($cobranza['total'] - $desembolso['total'], 2),
+            // Lo que quedó en caja por la operación del período: lo cobrado
+            // más el billetaje recibido (dinero real que entró a la caja,
+            // aunque venga de la bóveda y no de un cliente — ver
+            // totalBilletajes()) menos lo desembolsado. Puede ser negativo:
+            // es la diferencia, no un saldo de cuentas. egresos/ingresos
+            // manuales quedan fuera a propósito: son flujo de caja GENERAL
+            // (gastos/aportes que no son de la operación de créditos), cada
+            // uno con su propia tarjeta.
+            'neto' => round($cobranza['total'] + $billetajes['total'] - $desembolso['total'], 2),
             'egresos' => $this->totalEgresos($actor, $agenciaId, $asesorId, $desde, $hasta),
             // Ingresos de caja manuales (tipo=ingreso) — distinto de `cobranza`
             // (cobros sobre créditos + pagos de venta): un ingreso manual es un
             // depósito/aporte que no viene de cobrarle a un cliente. Para la
             // tarjeta "Ingreso" del panel y el módulo Ingresos.
             'ingresos' => $this->totalIngresos($actor, $agenciaId, $asesorId, $desde, $hasta),
+            'billetajes' => $billetajes,
             'vencidos' => $this->totalVencidos($actor, $agenciaId, $asesorId, $tipoCredito),
         ];
     }
@@ -685,7 +702,7 @@ final class DashboardService
         }
 
         $query = CajaMovimiento::query()
-            ->where('tipo', 'ingreso')
+            ->ingresosManuales()
             ->whereDate('created_at', '>=', $desde)
             ->whereDate('created_at', '<=', $hasta)
             ->whereHas('cajaCiclo.caja', function (Builder $q) use ($actor, $agenciaId): void {
@@ -699,6 +716,47 @@ final class DashboardService
         if ($asesorId) {
             $query->where('registrado_por', $asesorId);
         }
+
+        [$suma, $conteo] = $this->sumar($query, 'monto');
+
+        return ['total' => round($suma, 2), 'cantidad' => $conteo];
+    }
+
+    /**
+     * Billetaje aprobado del período (efectivo o digital — ver
+     * CajaMovimiento::scopeBilletajes()): dinero que entró a la caja desde la
+     * bóveda, tan real para el flujo del día como un ingreso — por eso suma
+     * en `neto` (ver resumenDelDia()), aunque no venga de un cliente.
+     *
+     * `asesor_id` filtra por quién RECIBIÓ el billetaje (el dueño de la
+     * caja), no por quién lo aprobó: `registrado_por` en este movimiento es
+     * el aprobador (un administrador), así que mirarlo daría de baja todo el
+     * billetaje de un asesor bajo el nombre de su supervisor. La agencia
+     * también sale de la caja, por la misma razón.
+     *
+     * @return array{total: float, cantidad: int}
+     */
+    private function totalBilletajes(User $actor, ?int $agenciaId, ?int $asesorId, string $desde, string $hasta): array
+    {
+        if (! app(ModuloService::class)->perfilPermite($actor, 'movimientos', 'mi_caja', 'cajas', 'billetajes')) {
+            return ['total' => 0.0, 'cantidad' => 0];
+        }
+
+        $query = CajaMovimiento::query()
+            ->billetajes()
+            ->whereDate('created_at', '>=', $desde)
+            ->whereDate('created_at', '<=', $hasta)
+            ->whereHas('cajaCiclo.caja', function (Builder $q) use ($actor, $agenciaId, $asesorId): void {
+                $this->cajas->cajasVisibles($q, $actor);
+
+                if ($agenciaId) {
+                    $q->where('agencia_id', $agenciaId);
+                }
+
+                if ($asesorId) {
+                    $q->where('user_id', $asesorId);
+                }
+            });
 
         [$suma, $conteo] = $this->sumar($query, 'monto');
 

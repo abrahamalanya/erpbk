@@ -11,6 +11,8 @@ use App\Modules\Usuario\Models\User;
 use App\Nucleo\Http\Controllers\Controller;
 use App\Nucleo\Traits\ApiResponse;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 
 class BilletajeController extends Controller
@@ -22,14 +24,29 @@ class BilletajeController extends Controller
         private readonly CajaBovedaHierarchyService $hierarchy,
     ) {}
 
-    public function index(): JsonResponse
+    public function index(Request $request): JsonResponse
     {
         Gate::authorize('viewAny', Billetaje::class);
+
+        $filtros = $request->validate([
+            'desde' => ['nullable', 'date_format:Y-m-d'],
+            'hasta' => ['nullable', 'date_format:Y-m-d', ...($request->filled('desde') ? ['after_or_equal:desde'] : [])],
+            'agencia_id' => ['nullable', 'integer', 'exists:agencias,id'],
+            'asesor_id' => ['nullable', 'integer', 'exists:users,id'],
+        ]);
 
         $query = Billetaje::query()->with(['boveda', 'solicitadoPor', 'asesor', 'aprobadoPor', 'cliente', 'fotos']);
         $query = $this->hierarchy->billetajesVisibles($query, request()->user());
 
-        $resumen = (clone $query)->toBase()
+        // Los aceptados pertenecen al día en que ingresaron a caja; los
+        // pendientes, que aún no tienen resolución, al día del envío.
+        $fecha = DB::raw('COALESCE(fecha_resolucion, created_at)');
+        $query->when($filtros['desde'] ?? null, fn ($q, $desde) => $q->whereDate($fecha, '>=', $desde))
+            ->when($filtros['hasta'] ?? null, fn ($q, $hasta) => $q->whereDate($fecha, '<=', $hasta))
+            ->when($filtros['agencia_id'] ?? null, fn ($q, $agencia) => $q->whereHas('cajaCiclo.caja', fn ($caja) => $caja->where('agencia_id', $agencia)))
+            ->when($filtros['asesor_id'] ?? null, fn ($q, $asesor) => $q->where('asesor_id', $asesor));
+
+        $resumen = (clone $query)->where('estado', 'aprobado')->toBase()
             ->selectRaw('COALESCE(SUM(monto), 0) as total, COUNT(*) as cantidad')->first();
 
         return $this->successResponse([

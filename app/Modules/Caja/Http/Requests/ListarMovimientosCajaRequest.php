@@ -23,6 +23,7 @@ class ListarMovimientosCajaRequest extends FormRequest
     {
         return [
             'tipo' => ['required', 'string', 'in:ingreso,egreso'],
+            'solo_manuales' => ['nullable', 'boolean', 'prohibits:solo_desembolsos'],
             'concepto_id' => [
                 'nullable',
                 'integer',
