@@ -36,6 +36,10 @@ use Illuminate\Support\Collection;
  * tipo=egreso SIN credito_id) — gastos generales, deliberadamente distintos
  * de "desembolso" para no contar el mismo movimiento en las dos cards.
  *
+ * "Ingresos" son los ingresos de caja (tipo=ingreso) — depósitos/aportes que
+ * no vienen de cobrarle a un cliente, deliberadamente distintos de
+ * "cobranza" por la misma razón que "egresos" lo es de "desembolso".
+ *
  * "Vencidos" no es "del día": es la cartera vencida visible para el actor en
  * este momento (cantidad de créditos + su saldo pendiente), mismo cálculo de
  * saldo que ReporteAtrasosService.
@@ -84,34 +88,45 @@ final class DashboardService
     ) {}
 
     /**
-     * Resumen del día para el actor, acotado por los filtros opcionales.
+     * Resumen del período [$desde, $hasta] para el actor, acotado por los
+     * filtros opcionales. `vencidos` queda fuera del rango a propósito: es la
+     * cartera vencida visible AHORA, no un flujo del período (ver
+     * totalVencidos()).
      *
      * @return array<string, mixed>
      */
-    public function resumenDelDia(User $actor, ?int $agenciaId, ?int $asesorId, ?string $tipoCredito): array
+    public function resumenDelDia(User $actor, ?int $agenciaId, ?int $asesorId, ?string $tipoCredito, string $desde, string $hasta): array
     {
-        $hoy = now()->toDateString();
-
-        $cobranza = $this->totalCobranzas($actor, $agenciaId, $asesorId, $tipoCredito, $hoy);
-        $desembolso = $this->totalDesembolsos($actor, $agenciaId, $asesorId, $tipoCredito, $hoy);
+        $cobranza = $this->totalCobranzas($actor, $agenciaId, $asesorId, $tipoCredito, $desde, $hasta);
+        $desembolso = $this->totalDesembolsos($actor, $agenciaId, $asesorId, $tipoCredito, $desde, $hasta);
 
         return [
-            'fecha' => $hoy,
+            // Alias de compatibilidad con clientes (app móvil) que todavía no
+            // conocen desde/hasta: con el rango por defecto (hoy = hoy) vale
+            // exactamente lo mismo que antes de que este filtro existiera.
+            'fecha' => $hasta,
+            'desde' => $desde,
+            'hasta' => $hasta,
             'cobranza' => $cobranza,
             'desembolso' => $desembolso,
-            // Lo que quedó en caja por la operación del día. Puede ser
+            // Lo que quedó en caja por la operación del período. Puede ser
             // negativo: es la diferencia, no un saldo de cuentas.
             'neto' => round($cobranza['total'] - $desembolso['total'], 2),
-            'egresos' => $this->totalEgresos($actor, $agenciaId, $asesorId, $hoy),
+            'egresos' => $this->totalEgresos($actor, $agenciaId, $asesorId, $desde, $hasta),
+            // Ingresos de caja manuales (tipo=ingreso) — distinto de `cobranza`
+            // (cobros sobre créditos + pagos de venta): un ingreso manual es un
+            // depósito/aporte que no viene de cobrarle a un cliente. Para la
+            // tarjeta "Ingreso" del panel y el módulo Ingresos.
+            'ingresos' => $this->totalIngresos($actor, $agenciaId, $asesorId, $desde, $hasta),
             'vencidos' => $this->totalVencidos($actor, $agenciaId, $asesorId, $tipoCredito),
         ];
     }
 
     /**
-     * Cobranza vs. desembolso del día, agrupados para compararlos entre
-     * agencias, asesores o tipos de crédito a la vez — a diferencia de
-     * resumenDelDia(), que da un solo total para el ámbito ya filtrado.
-     * Mismos filtros y misma jerarquía de visibilidad que el resumen.
+     * Cobranza vs. desembolso del período [$desde, $hasta], agrupados para
+     * compararlos entre agencias, asesores o tipos de crédito a la vez — a
+     * diferencia de resumenDelDia(), que da un solo total para el ámbito ya
+     * filtrado. Mismos filtros y misma jerarquía de visibilidad que el resumen.
      *
      * @return array<string, mixed>
      */
@@ -121,11 +136,11 @@ final class DashboardService
         ?int $asesorId,
         ?string $tipoCredito,
         string $agruparPor,
+        string $desde,
+        string $hasta,
     ): array {
-        $hoy = now()->toDateString();
-
-        $cobranza = $this->registrosCobranza($actor, $agenciaId, $asesorId, $tipoCredito, $hoy);
-        $desembolso = $this->registrosDesembolso($actor, $agenciaId, $asesorId, $tipoCredito, $hoy, $hoy);
+        $cobranza = $this->registrosCobranza($actor, $agenciaId, $asesorId, $tipoCredito, $desde, $hasta);
+        $desembolso = $this->registrosDesembolso($actor, $agenciaId, $asesorId, $tipoCredito, $desde, $hasta);
 
         $filas = match ($agruparPor) {
             self::AGRUPACION_ASESOR => $this->agruparPorAsesor($cobranza, $desembolso),
@@ -135,7 +150,10 @@ final class DashboardService
         };
 
         return [
-            'fecha' => $hoy,
+            // Alias de compatibilidad (ver resumenDelDia()).
+            'fecha' => $hasta,
+            'desde' => $desde,
+            'hasta' => $hasta,
             'agrupado_por' => $agruparPor,
             'filas' => $filas,
         ];
@@ -145,18 +163,19 @@ final class DashboardService
      * Igual que totalCobranzas() pero devuelve las filas con sus columnas de
      * agrupación (agencia, tipo, asesor) en vez de un total ya sumado — es la
      * materia prima de graficoCobranzaDesembolso(). Mismo scoping, mismos
-     * filtros, mismo "hoy".
+     * filtros, mismo rango [$desde, $hasta].
      *
      * @return Collection<int, array{agencia_id: ?int, agencia_nombre: string, asesor_id: ?int, asesor_nombre: string, tipo: string, monto: float}>
      */
-    private function registrosCobranza(User $actor, ?int $agenciaId, ?int $asesorId, ?string $tipo, string $hoy): Collection
+    private function registrosCobranza(User $actor, ?int $agenciaId, ?int $asesorId, ?string $tipo, string $desde, string $hasta): Collection
     {
         $filas = collect();
 
         if ($tipo !== self::TIPO_VENTAS) {
             $cobros = Cobro::query()
                 ->where('estado', 'registrado')
-                ->whereDate('created_at', $hoy)
+                ->whereDate('created_at', '>=', $desde)
+                ->whereDate('created_at', '<=', $hasta)
                 ->whereHas('credito', function (Builder $q) use ($actor, $agenciaId, $tipo): void {
                     $this->creditos->visibleQuery($q, $actor);
 
@@ -187,7 +206,8 @@ final class DashboardService
         if (($tipo === null || $tipo === self::TIPO_VENTAS) && app(ModuloService::class)->perfilPermite($actor, 'ventas')) {
             $pagos = PagoVenta::query()
                 ->whereNull('anulado_at')
-                ->whereDate('created_at', $hoy)
+                ->whereDate('created_at', '>=', $desde)
+                ->whereDate('created_at', '<=', $hasta)
                 ->whereHas('venta', function (Builder $q) use ($actor, $agenciaId): void {
                     $this->acotarVentas($q, $actor);
 
@@ -509,7 +529,7 @@ final class DashboardService
     /**
      * @return array{total: float, cantidad: int}
      */
-    private function totalCobranzas(User $actor, ?int $agenciaId, ?int $asesorId, ?string $tipo, string $hoy): array
+    private function totalCobranzas(User $actor, ?int $agenciaId, ?int $asesorId, ?string $tipo, string $desde, string $hasta): array
     {
         $total = 0.0;
         $cantidad = 0;
@@ -518,7 +538,8 @@ final class DashboardService
         if ($tipo !== self::TIPO_VENTAS) {
             $cobros = Cobro::query()
                 ->where('estado', 'registrado')
-                ->whereDate('created_at', $hoy)
+                ->whereDate('created_at', '>=', $desde)
+                ->whereDate('created_at', '<=', $hasta)
                 ->whereHas('credito', function (Builder $q) use ($actor, $agenciaId, $tipo): void {
                     $this->creditos->visibleQuery($q, $actor);
 
@@ -546,7 +567,8 @@ final class DashboardService
         if (($tipo === null || $tipo === self::TIPO_VENTAS) && app(ModuloService::class)->perfilPermite($actor, 'ventas')) {
             $pagos = PagoVenta::query()
                 ->whereNull('anulado_at')
-                ->whereDate('created_at', $hoy)
+                ->whereDate('created_at', '>=', $desde)
+                ->whereDate('created_at', '<=', $hasta)
                 ->whereHas('venta', function (Builder $q) use ($actor, $agenciaId): void {
                     $this->acotarVentas($q, $actor);
 
@@ -571,7 +593,7 @@ final class DashboardService
     /**
      * @return array{total: float, cantidad: int}
      */
-    private function totalDesembolsos(User $actor, ?int $agenciaId, ?int $asesorId, ?string $tipo, string $hoy): array
+    private function totalDesembolsos(User $actor, ?int $agenciaId, ?int $asesorId, ?string $tipo, string $desde, string $hasta): array
     {
         // Las ventas de tienda no se financian con desembolso de crédito, así
         // que ese filtro no aplica acá: el total queda en cero.
@@ -581,7 +603,8 @@ final class DashboardService
 
         $query = CajaMovimiento::query()
             ->desembolsos()
-            ->whereDate('created_at', $hoy)
+            ->whereDate('created_at', '>=', $desde)
+            ->whereDate('created_at', '<=', $hasta)
             ->whereHas('credito', function (Builder $q) use ($actor, $agenciaId, $tipo): void {
                 $this->creditos->visibleQuery($q, $actor);
 
@@ -604,7 +627,7 @@ final class DashboardService
     }
 
     /**
-     * Egresos manuales de caja del día (gastos generales) — deliberadamente
+     * Egresos manuales de caja del período (gastos generales) — deliberadamente
      * `egresosManuales()` (tipo=egreso SIN credito_id, ver
      * CajaMovimiento::scopeEgresosManuales()) y no todo tipo=egreso, para no
      * contar dos veces el mismo movimiento que ya suma `desembolso`
@@ -619,7 +642,7 @@ final class DashboardService
      *
      * @return array{total: float, cantidad: int}
      */
-    private function totalEgresos(User $actor, ?int $agenciaId, ?int $asesorId, string $hoy): array
+    private function totalEgresos(User $actor, ?int $agenciaId, ?int $asesorId, string $desde, string $hasta): array
     {
         if (! app(ModuloService::class)->perfilPermite($actor, 'movimientos', 'mi_caja', 'cajas')) {
             return ['total' => 0.0, 'cantidad' => 0];
@@ -627,7 +650,44 @@ final class DashboardService
 
         $query = CajaMovimiento::query()
             ->egresosManuales()
-            ->whereDate('created_at', $hoy)
+            ->whereDate('created_at', '>=', $desde)
+            ->whereDate('created_at', '<=', $hasta)
+            ->whereHas('cajaCiclo.caja', function (Builder $q) use ($actor, $agenciaId): void {
+                $this->cajas->cajasVisibles($q, $actor);
+
+                if ($agenciaId) {
+                    $q->where('agencia_id', $agenciaId);
+                }
+            });
+
+        if ($asesorId) {
+            $query->where('registrado_por', $asesorId);
+        }
+
+        [$suma, $conteo] = $this->sumar($query, 'monto');
+
+        return ['total' => round($suma, 2), 'cantidad' => $conteo];
+    }
+
+    /**
+     * Ingresos manuales de caja del período (tipo=ingreso) — depósitos/aportes
+     * que no vienen de cobrarle a un cliente, a diferencia de `cobranza`
+     * (cobros sobre créditos + pagos de venta). Mismo criterio de visibilidad
+     * de caja que totalEgresos(); `tipo_credito` tampoco aplica aquí por la
+     * misma razón.
+     *
+     * @return array{total: float, cantidad: int}
+     */
+    private function totalIngresos(User $actor, ?int $agenciaId, ?int $asesorId, string $desde, string $hasta): array
+    {
+        if (! app(ModuloService::class)->perfilPermite($actor, 'movimientos', 'mi_caja', 'cajas')) {
+            return ['total' => 0.0, 'cantidad' => 0];
+        }
+
+        $query = CajaMovimiento::query()
+            ->where('tipo', 'ingreso')
+            ->whereDate('created_at', '>=', $desde)
+            ->whereDate('created_at', '<=', $hasta)
             ->whereHas('cajaCiclo.caja', function (Builder $q) use ($actor, $agenciaId): void {
                 $this->cajas->cajasVisibles($q, $actor);
 

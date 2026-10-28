@@ -460,6 +460,31 @@ it('does not show an administrador de agencia the movimientos of another agencia
     expect(collect($this->getJson('/api/caja/movimientos?tipo=ingreso')->json('data.data'))->pluck('monto')->all())->toBe(['10.00']);
 });
 
+it('filters the movimientos by agencia_id, without widening what the actor can see', function () {
+    $otraAgencia = Agencia::factory()->for($this->empresa)->create();
+    $asesorOtraAgencia = User::factory()->forAgencia($otraAgencia)->create();
+    $asesorOtraAgencia->assignRole('asesor');
+
+    registrarMovimientoComo($this->asesor, ['tipo' => 'ingreso', 'concepto_id' => $this->conceptoIngreso->id, 'monto' => 10]);
+    registrarMovimientoComo($asesorOtraAgencia, ['tipo' => 'ingreso', 'concepto_id' => $this->conceptoIngreso->id, 'monto' => 20]);
+
+    $adminGeneral = User::factory()->forEmpresa($this->empresa)->create();
+    $adminGeneral->assignRole('administrador_general');
+    Sanctum::actingAs($adminGeneral, ['*']);
+
+    expect(collect($this->getJson("/api/caja/movimientos?tipo=ingreso&agencia_id={$this->agencia->id}")->json('data.data'))->pluck('monto')->all())
+        ->toBe(['10.00']);
+    expect(collect($this->getJson("/api/caja/movimientos?tipo=ingreso&agencia_id={$otraAgencia->id}")->json('data.data'))->pluck('monto')->all())
+        ->toBe(['20.00']);
+
+    // Un administrador_agencia no puede ampliar su alcance pidiendo otra agencia.
+    $adminAgencia = User::factory()->forAgencia($this->agencia)->create();
+    $adminAgencia->assignRole('administrador_agencia');
+    Sanctum::actingAs($adminAgencia, ['*']);
+
+    expect($this->getJson("/api/caja/movimientos?tipo=ingreso&agencia_id={$otraAgencia->id}")->json('data.data'))->toBe([]);
+});
+
 it('filters the movimientos by concepto, usuario, fecha and desembolsos', function () {
     $otroAsesor = User::factory()->forAgencia($this->agencia)->create();
     $otroAsesor->assignRole('asesor');

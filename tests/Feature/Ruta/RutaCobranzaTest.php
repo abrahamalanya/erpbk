@@ -617,6 +617,86 @@ it('rejects an unknown tipo de crédito', function () {
     $this->postJson('/api/rutas-cobranza/reordenar', ['tipo_credito' => 'otro', 'cliente_ids' => [1]])->assertUnprocessable();
 });
 
+it('does not let an asesor filter by a tipo de crédito outside their módulos, even without PerfilCreditoScope', function () {
+    // Override legado (users.modulos), no perfil_acceso_id: a propósito NO
+    // activa el global scope de Credito (PerfilCreditoScope solo mira
+    // perfil_acceso_id), así que esta prueba ejercita específicamente el
+    // candado nuevo de RutaCobranzaService, no el scope que ya existía.
+    $this->asesor->update(['modulos' => ['diario', 'mi_caja']]);
+
+    $clienteDiario = Cliente::factory()->asignadoA($this->asesor)->create();
+    $clientePrendario = Cliente::factory()->asignadoA($this->asesor)->create();
+    creditoEnMoraParaRuta($this->empresa, $this->agencia, $clienteDiario, $this->asesor, 4);
+    prendarioEnMoraParaRuta($this->empresa, $this->agencia, $clientePrendario, $this->asesor, 6);
+
+    Sanctum::actingAs($this->asesor->fresh(), ['*']);
+
+    expect(collect($this->getJson('/api/rutas-cobranza?tipo_credito=diario')->json('data'))->pluck('cliente_id')->all())
+        ->toBe([$clienteDiario->id]);
+
+    // Prendario no está en sus módulos: la ruta queda vacía, no un 403/422 ni
+    // la cartera de otro tipo.
+    expect($this->getJson('/api/rutas-cobranza?tipo_credito=prendario')->json('data'))->toBe([]);
+});
+
+it('filters the ruta by frecuencia de pago (tipo_cuota), independent of and combinable with tipo_credito', function () {
+    $clienteMensual = Cliente::factory()->asignadoA($this->asesor)->create();
+    $clienteSemanal = Cliente::factory()->asignadoA($this->asesor)->create();
+
+    $prendarioMensual = Credito::factory()->create([
+        'registrado_por' => $this->asesor->id,
+        'empresa_id' => $this->empresa->id,
+        'agencia_id' => $this->agencia->id,
+        'cliente_id' => $clienteMensual->id,
+        'tipo_credito' => 'prendario',
+        'tipo_cuota' => 'mensual',
+        'estado' => 'activo',
+    ]);
+    CuotaCredito::factory()->paraCredito($prendarioMensual)->create([
+        'numero_cuota' => 1,
+        'fecha_vencimiento' => now()->subDays(5)->toDateString(),
+        'monto_capital' => 100, 'monto_interes' => 10, 'monto_total' => 110,
+    ]);
+
+    $prendarioSemanal = Credito::factory()->create([
+        'registrado_por' => $this->asesor->id,
+        'empresa_id' => $this->empresa->id,
+        'agencia_id' => $this->agencia->id,
+        'cliente_id' => $clienteSemanal->id,
+        'tipo_credito' => 'prendario',
+        'tipo_cuota' => 'semanal',
+        'estado' => 'activo',
+    ]);
+    CuotaCredito::factory()->paraCredito($prendarioSemanal)->create([
+        'numero_cuota' => 1,
+        'fecha_vencimiento' => now()->subDays(5)->toDateString(),
+        'monto_capital' => 100, 'monto_interes' => 10, 'monto_total' => 110,
+    ]);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    expect(collect($this->getJson('/api/rutas-cobranza?tipo_cuota=mensual')->json('data'))->pluck('cliente_id')->all())
+        ->toBe([$clienteMensual->id]);
+
+    expect(collect($this->getJson('/api/rutas-cobranza?tipo_cuota=semanal')->json('data'))->pluck('cliente_id')->all())
+        ->toBe([$clienteSemanal->id]);
+
+    // Combinado con tipo_credito: la intersección de ambos filtros, no la unión.
+    expect(collect($this->getJson('/api/rutas-cobranza?tipo_credito=prendario&tipo_cuota=mensual')->json('data'))->pluck('cliente_id')->all())
+        ->toBe([$clienteMensual->id]);
+
+    // Sin frecuencia, los dos aparecen — el filtro de frecuencia nunca amplía
+    // lo que ya mostraba tipo_credito por sí solo.
+    expect(collect($this->getJson('/api/rutas-cobranza?tipo_credito=prendario')->json('data'))->pluck('cliente_id')->sort()->values()->all())
+        ->toBe(collect([$clienteMensual->id, $clienteSemanal->id])->sort()->values()->all());
+});
+
+it('rejects an unknown tipo_cuota (frecuencia)', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $this->getJson('/api/rutas-cobranza?tipo_cuota=anual')->assertUnprocessable();
+});
+
 it('keeps a cliente whose overdue cuotas were paid while the credit is active', function () {
     $cliente = Cliente::factory()->asignadoA($this->asesor)->create();
     $credito = creditoEnMoraParaRuta($this->empresa, $this->agencia, $cliente, $this->asesor, 3);

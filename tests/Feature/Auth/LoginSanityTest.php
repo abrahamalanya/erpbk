@@ -16,14 +16,16 @@ it('logs in as sistemas and can view /auth/me', function () {
     $login = $this->postJson('/api/auth/login', [
         'email' => $user->email,
         'password' => 'password',
-    ])->assertSuccessful();
+    ])->assertSuccessful()
+        ->assertJsonPath('data.user.agencia', null);
 
     $token = $login->json('data.access_token');
 
     $this->withHeader('Authorization', "Bearer {$token}")
         ->getJson('/api/auth/me')
         ->assertSuccessful()
-        ->assertJsonPath('data.email', $user->email);
+        ->assertJsonPath('data.email', $user->email)
+        ->assertJsonPath('data.agencia', null);
 });
 
 it('logs in with dni instead of email', function () {
@@ -53,12 +55,18 @@ it('logs in as a tenant-scoped user and can view /auth/me', function () {
         'password' => 'password',
     ])->assertSuccessful();
 
+    $login->assertJsonPath('data.user.agencia.id', $agencia->id)
+        ->assertJsonPath('data.user.agencia.nombre', $agencia->nombre);
+
+    $agencia->update(['nombre' => 'Nombre actualizado']);
     $token = $login->json('data.access_token');
 
     $this->withHeader('Authorization', "Bearer {$token}")
         ->getJson('/api/auth/me')
         ->assertSuccessful()
         ->assertJsonPath('data.agencia_id', $agencia->id)
+        ->assertJsonPath('data.agencia.id', $agencia->id)
+        ->assertJsonPath('data.agencia.nombre', 'Nombre actualizado')
         ->assertJsonPath('data.empresa_id', $agencia->empresa_id);
 });
 

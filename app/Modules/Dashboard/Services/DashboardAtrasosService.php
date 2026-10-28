@@ -7,7 +7,6 @@ use App\Modules\Credito\Services\CreditoHierarchyService;
 use App\Modules\Reportes\Tipos\AtrasoVencimiento;
 use App\Modules\Reportes\Tipos\FranjaAtraso;
 use App\Modules\Usuario\Models\User;
-use Carbon\CarbonInterface;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Collection;
 
@@ -22,11 +21,17 @@ use Illuminate\Support\Collection;
  * cambiar de unidad. Un cliente con dos créditos aparece dos veces, que es lo
  * que pregunta "¿cuántos créditos tengo en rojo?".
  *
- * "Cobrado" significa cobrado HOY (un cobro con estado 'registrado' de la fecha
- * en curso), que es lo mismo que mide DashboardService::resumenDelDia(): las dos
- * líneas son el avance de la ronda de cobranza de hoy sobre la cartera que
+ * "Cobrado" significa cobrado dentro del período [desde, hasta] del filtro
+ * global del dashboard (un cobro con estado 'registrado' en ese rango, default
+ * hoy-hoy), que es lo mismo que mide DashboardService::resumenDelDia(): las dos
+ * líneas son el avance de la cobranza del período sobre la cartera que
  * arrastra mora. No es "alguna vez pagó" — ese número sería alto desde el primer
  * día y no se movería.
+ *
+ * La FRANJA de cada crédito (qué tan atrasado está) en cambio SIEMPRE se
+ * calcula contra el día de hoy real, nunca contra $hasta: la mora de un
+ * crédito es un hecho del momento presente, no algo que dependa del rango de
+ * fechas que el usuario eligió para mirar la cobranza.
  *
  * El monto total de cada franja es el capital + interés financiado (la suma de
  * cuotas.monto_total), que es la columna Total del reporte, NO el saldo: el
@@ -37,18 +42,20 @@ final class DashboardAtrasosService
     public function __construct(private readonly CreditoHierarchyService $creditos) {}
 
     /**
-     * Payload de las dos líneas de tiempo, ya con porcentajes.
+     * Payload de las dos líneas de tiempo, ya con porcentajes. $desde/$hasta
+     * acotan solo el "cobrado" (ver docblock de la clase); la franja de cada
+     * crédito siempre se calcula contra el día de hoy real.
      *
      * @return array<string, mixed>
      */
-    public function lineaDeTiempo(User $actor, ?int $agenciaId, ?int $asesorId, ?string $tipoCredito): array
+    public function lineaDeTiempo(User $actor, ?int $agenciaId, ?int $asesorId, ?string $tipoCredito, string $desde, string $hasta): array
     {
-        $hoy = now()->startOfDay();
+        $ahora = now()->startOfDay();
 
         $franjas = $this->franjasVacias();
 
-        foreach ($this->creditosDelPanel($actor, $agenciaId, $asesorId, $tipoCredito, $hoy) as $credito) {
-            $dias = AtrasoVencimiento::diasDeAtraso($credito->fecha_vencimiento, $hoy);
+        foreach ($this->creditosDelPanel($actor, $agenciaId, $asesorId, $tipoCredito, $desde, $hasta) as $credito) {
+            $dias = AtrasoVencimiento::diasDeAtraso($credito->fecha_vencimiento, $ahora);
             $franja = FranjaAtraso::desde(AtrasoVencimiento::desdeDias($dias));
 
             $franjas[$franja->value]['creditos']++;
@@ -62,13 +69,13 @@ final class DashboardAtrasosService
             }
         }
 
-        return $this->armarPayload($hoy->toDateString(), $franjas);
+        return $this->armarPayload($hasta, $franjas);
     }
 
     /**
      * @return Collection<int, Credito>
      */
-    private function creditosDelPanel(User $actor, ?int $agenciaId, ?int $asesorId, ?string $tipoCredito, CarbonInterface $hoy): Collection
+    private function creditosDelPanel(User $actor, ?int $agenciaId, ?int $asesorId, ?string $tipoCredito, string $desde, string $hasta): Collection
     {
         return $this->creditos
             ->visibleQuery(Credito::query(), $actor)
@@ -88,7 +95,8 @@ final class DashboardAtrasosService
                 // HasMany, no un Builder (los eager loads no pasan por where()).
                 'cobros' => fn ($q) => $q
                     ->where('estado', 'registrado')
-                    ->whereDate('created_at', $hoy)
+                    ->whereDate('created_at', '>=', $desde)
+                    ->whereDate('created_at', '<=', $hasta)
                     ->select(['id', 'credito_id', 'monto_pagado']),
             ])
             ->get(['id', 'fecha_vencimiento']);

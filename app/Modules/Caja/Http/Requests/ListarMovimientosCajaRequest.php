@@ -38,6 +38,7 @@ class ListarMovimientosCajaRequest extends FormRequest
             ],
             'excluir_desembolsos' => ['nullable', 'boolean', 'prohibited_if:tipo,ingreso'],
             'registrado_por' => ['nullable', 'integer', 'exists:users,id'],
+            'agencia_id' => ['nullable', 'integer', 'exists:agencias,id'],
             'boleta' => ['nullable', 'string', 'max:30'],
             'desde' => ['nullable', 'date'],
             'hasta' => ['nullable', 'date', 'after_or_equal:desde'],
@@ -58,6 +59,7 @@ class ListarMovimientosCajaRequest extends FormRequest
             'solo_desembolsos.prohibits' => 'No puedes filtrar por desembolsos y por egresos manuales a la vez',
             'excluir_desembolsos.prohibited_if' => 'La exclusión de desembolsos solo aplica a los egresos',
             'registrado_por.exists' => 'El usuario indicado no existe',
+            'agencia_id.exists' => 'La agencia indicada no existe',
             'hasta.after_or_equal' => 'La fecha final no puede ser anterior a la inicial',
         ];
     }

@@ -279,6 +279,38 @@ it('cuenta como cobrado solo lo que se cobro HOY', function () {
         ->and(tramo($data, 'rojo')['creditos'])->toBe(3);
 });
 
+it('cuenta como cobrado lo del rango desde/hasta, no solo hoy', function () {
+    $hoy = creditoEnFranja($this->cliente, $this->asesor, 45);
+    $ayer = creditoEnFranja($this->cliente, $this->asesor, 45);
+    $nunca = creditoEnFranja($this->cliente, $this->asesor, 45);
+
+    cobroDeHoy($hoy, 100);
+    Cobro::factory()->create([
+        'empresa_id' => $this->empresa->id,
+        'cliente_id' => $this->cliente->id,
+        'credito_id' => $ayer->id,
+        'estado' => 'registrado',
+        'monto_pagado' => 100,
+        'medio' => 'yape',
+        'created_at' => now()->subDay(),
+    ]);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $desde = now()->subDay()->toDateString();
+    $hasta = now()->toDateString();
+
+    $data = $this->getJson("/api/dashboard/linea-de-tiempo-atrasos?desde={$desde}&hasta={$hasta}")
+        ->assertSuccessful()->json('data');
+
+    // Con el rango ampliado a ayer+hoy, el cobro de ayer ya cuenta.
+    expect($data['cobrados'])->toBe(2)
+        ->and(numero($data['monto_cobrado']))->toBe(200.0)
+        // La franja (qué tan atrasado está el crédito) no cambia con el rango:
+        // sigue siendo contra el día de hoy real.
+        ->and(tramo($data, 'rojo')['creditos'])->toBe(3);
+});
+
 it('ignora los cobros anulados', function () {
     $credito = creditoEnFranja($this->cliente, $this->asesor, 45);
     cobroDeHoy($credito, 500, 'anulado');
@@ -383,6 +415,7 @@ it('rechaza un filtro invalido', function (string $query, string $campo) {
     'agencia inexistente' => ['agencia_id=999999', 'agencia_id'],
     'asesor inexistente' => ['asesor_id=999999', 'asesor_id'],
     'tipo de credito invalido' => ['tipo_credito=inventado', 'tipo_credito'],
+    'hasta antes de desde' => ['desde=2026-01-05&hasta=2026-01-01', 'hasta'],
 ]);
 
 it('acota al asesor a su propia cartera', function () {

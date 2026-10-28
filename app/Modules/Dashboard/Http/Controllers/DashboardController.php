@@ -30,10 +30,11 @@ class DashboardController extends Controller
     ) {}
 
     /**
-     * Totales del día para el panel inicial: cobranzas (cobros + pagos de
+     * Totales del período para el panel inicial: cobranzas (cobros + pagos de
      * ventas) y desembolsos, con el neto de la diferencia. Filtros opcionales
-     * por agencia, asesor (quien cobró) y tipo de crédito; el alcance siempre
-     * se acota a lo que el actor puede ver, así que un filtro no amplía nada.
+     * por agencia, asesor (quien cobró), tipo de crédito y rango de fechas
+     * (desde/hasta, default hoy); el alcance siempre se acota a lo que el
+     * actor puede ver, así que un filtro no amplía nada.
      */
     public function resumen(DashboardInicialRequest $request): JsonResponse
     {
@@ -46,6 +47,8 @@ class DashboardController extends Controller
             $request->agenciaId(),
             $request->asesorId(),
             $request->tipoCredito(),
+            $request->desde(),
+            $request->hasta(),
         ));
     }
 
@@ -53,7 +56,7 @@ class DashboardController extends Controller
      * Las dos líneas de tiempo del panel inicial: cartera en mora del reporte
      * de atrasos-diarios, repartida en las franjas de riesgo (verde / amarillo /
      * rojo / sin color), en cantidad de créditos y en dinero por cobrar, con el
-     * porcentaje cobrado hoy de cada franja.
+     * porcentaje cobrado en el período (desde/hasta, default hoy) de cada franja.
      *
      * Comparte los filtros y el alcance de rol del resumen de arriba: lo que
      * este endpoint cuenta es un subconjunto de la cartera, nunca más.
@@ -69,13 +72,16 @@ class DashboardController extends Controller
             $request->agenciaId(),
             $request->asesorId(),
             $request->tipoCredito(),
+            $request->desde(),
+            $request->hasta(),
         ));
     }
 
     /**
-     * Cobranza vs. desembolso del día agrupados (por agencia, asesor, tipo de
-     * crédito, o agencia y tipo a la vez) para el gráfico comparativo del
-     * panel inicial. Mismos filtros y mismo alcance de rol que resumen().
+     * Cobranza vs. desembolso del período (desde/hasta, default hoy) agrupados
+     * (por agencia, asesor, tipo de crédito, o agencia y tipo a la vez) para el
+     * gráfico comparativo del panel inicial. Mismos filtros y mismo alcance de
+     * rol que resumen().
      */
     public function graficoCobranzaDesembolso(DashboardInicialRequest $request): JsonResponse
     {
@@ -89,6 +95,8 @@ class DashboardController extends Controller
             $request->asesorId(),
             $request->tipoCredito(),
             $request->agruparPor(),
+            $request->desde(),
+            $request->hasta(),
         ));
     }
 

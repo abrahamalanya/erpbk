@@ -117,6 +117,55 @@ it('sums several egresos manuales of the day and ignores other days', function (
     expect($data['egresos']['cantidad'])->toBe(2);
 });
 
+it('sums ingresos manuales of the day, separate from cobranza, and ignores other days', function () {
+    movimientoHoy($this->asesor, 'ingreso', '500.00');
+    movimientoHoy($this->asesor, 'ingreso', '200.00');
+    $otroDia = movimientoHoy($this->asesor, 'ingreso', '999.00');
+    CajaMovimiento::query()->where('id', $otroDia->id)->update(['created_at' => now()->subDay()]);
+
+    Sanctum::actingAs($this->admin, ['*']);
+
+    $data = $this->getJson('/api/dashboard/resumen')->assertSuccessful()->json('data');
+
+    assertTotal(700.00, $data['ingresos']['total']);
+    expect($data['ingresos']['cantidad'])->toBe(2);
+    assertTotal(0.00, $data['cobranza']['total']);
+});
+
+it('filters ingresos by agencia and asesor, without widening what the actor can see', function () {
+    $otroAsesor = User::factory()->forAgencia($this->otraAgencia)->create();
+    $otroAsesor->assignRole('asesor');
+    $otroCiclo = cicloDe($otroAsesor, $this->empresa, $this->otraAgencia);
+
+    movimientoHoy($this->asesor, 'ingreso', '100.00');
+    CajaMovimiento::query()->create([
+        'caja_ciclo_id' => $otroCiclo->id,
+        'empresa_id' => $otroCiclo->empresa_id,
+        'tipo' => 'ingreso',
+        'concepto_id' => null,
+        'credito_id' => null,
+        'registrado_por' => $otroAsesor->id,
+        'monto' => '900.00',
+        'fecha_caja' => $otroCiclo->fecha,
+        'created_at' => now(),
+    ]);
+
+    Sanctum::actingAs($this->admin, ['*']);
+
+    assertTotal(100.00, $this->getJson("/api/dashboard/resumen?agencia_id={$this->agencia->id}")
+        ->assertSuccessful()->json('data.ingresos.total'));
+
+    assertTotal(100.00, $this->getJson("/api/dashboard/resumen?asesor_id={$this->asesor->id}")
+        ->assertSuccessful()->json('data.ingresos.total'));
+
+    $adminAgencia = User::factory()->forAgencia($this->agencia)->create();
+    $adminAgencia->assignRole('administrador_agencia');
+    Sanctum::actingAs($adminAgencia, ['*']);
+
+    assertTotal(0.00, $this->getJson("/api/dashboard/resumen?agencia_id={$this->otraAgencia->id}")
+        ->assertSuccessful()->json('data.ingresos.total'));
+});
+
 it('filters egresos by agencia (via the caja that recorded them)', function () {
     $otroAsesor = User::factory()->forAgencia($this->otraAgencia)->create();
     $otroAsesor->assignRole('asesor');
@@ -341,9 +390,11 @@ it('returns zeroed totals when there is no movement at all', function () {
     expect($data['cobranza']['cantidad'])->toBe(0)
         ->and($data['desembolso']['cantidad'])->toBe(0)
         ->and($data['egresos']['cantidad'])->toBe(0)
+        ->and($data['ingresos']['cantidad'])->toBe(0)
         ->and($data['vencidos']['cantidad'])->toBe(0);
 
     assertTotal(0.00, $data['egresos']['total']);
+    assertTotal(0.00, $data['ingresos']['total']);
     assertTotal(0.00, $data['vencidos']['total']);
 });
 
@@ -417,4 +468,70 @@ it('does not let a vencidos filter widen what an administrador_agencia can see',
 
     assertTotal(0.00, $this->getJson("/api/dashboard/resumen?agencia_id={$this->otraAgencia->id}")
         ->assertSuccessful()->json('data.vencidos.total'));
+});
+
+it('defaults desde/hasta to today and echoes them back', function () {
+    Sanctum::actingAs($this->admin, ['*']);
+
+    $data = $this->getJson('/api/dashboard/resumen')->assertSuccessful()->json('data');
+
+    expect($data['desde'])->toBe(now()->toDateString())
+        ->and($data['hasta'])->toBe(now()->toDateString())
+        ->and($data['fecha'])->toBe(now()->toDateString());
+});
+
+it('sums cobranza, desembolso and egresos over the whole desde/hasta range, not just today', function () {
+    $cliente = clienteEn($this->agencia);
+    $credito = créditoDe($cliente);
+
+    $ayer = cobroHoy(['created_at' => now()->subDay()], $credito, $cliente, $this->asesor, '200.00');
+    cobroHoy([], $credito, $cliente, $this->asesor, '100.00');
+
+    $desembolsoAyer = desembolsoHoy($credito, $this->asesor, '300.00');
+    CajaMovimiento::query()->where('id', $desembolsoAyer->id)->update(['created_at' => now()->subDay()]);
+
+    $egresoAyer = egresoManualHoy($this->asesor, '50.00');
+    CajaMovimiento::query()->where('id', $egresoAyer->id)->update(['created_at' => now()->subDay()]);
+
+    Sanctum::actingAs($this->admin, ['*']);
+
+    $desde = now()->subDay()->toDateString();
+    $hasta = now()->toDateString();
+
+    $data = $this->getJson("/api/dashboard/resumen?desde={$desde}&hasta={$hasta}")->assertSuccessful()->json('data');
+
+    assertTotal(300.00, $data['cobranza']['total']);
+    assertTotal(300.00, $data['desembolso']['total']);
+    assertTotal(50.00, $data['egresos']['total']);
+    expect($data['desde'])->toBe($desde)->and($data['hasta'])->toBe($hasta);
+
+    // Un solo día (hoy) sigue dejando fuera lo de ayer, igual que antes de que
+    // el rango existiera.
+    $soloHoy = $this->getJson('/api/dashboard/resumen')->assertSuccessful()->json('data');
+    assertTotal(100.00, $soloHoy['cobranza']['total']);
+    assertTotal(0.00, $soloHoy['desembolso']['total']);
+});
+
+it('does not let desde/hasta affect vencidos, which is the cartera right now', function () {
+    $cliente = clienteEn($this->agencia);
+    creditoVencidoDe($cliente, '1000.00', '600.00');
+
+    Sanctum::actingAs($this->admin, ['*']);
+
+    $desde = now()->subYear()->toDateString();
+    $hasta = now()->subYear()->toDateString();
+
+    assertTotal(400.00, $this->getJson("/api/dashboard/resumen?desde={$desde}&hasta={$hasta}")
+        ->assertSuccessful()->json('data.vencidos.total'));
+});
+
+it('rejects hasta before desde', function () {
+    Sanctum::actingAs($this->admin, ['*']);
+
+    $desde = now()->toDateString();
+    $hasta = now()->subDay()->toDateString();
+
+    $this->getJson("/api/dashboard/resumen?desde={$desde}&hasta={$hasta}")
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('hasta');
 });

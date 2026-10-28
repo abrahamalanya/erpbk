@@ -251,7 +251,10 @@ class CreditoController extends Controller
         Gate::authorize('view', $credito);
 
         $credito->setAttribute('puede_cambiar_registrado_por', Gate::allows('cambiarRegistradoPor', $credito));
-        $credito->load(['bienes.fotos', 'vehiculos.fotos', 'inmuebles', 'cliente', 'aval', 'aval2', 'registradoPor', 'supervisadoPor', 'aprobadoPor', 'cuotas', 'expedienteDocumentos']);
+        // 'cliente.fotos' (no solo 'cliente'): el detalle del crédito muestra
+        // las fotos del cliente (casa/negocio/adicionales), igual que ya hace
+        // RutaCobranzaService::clientesEnMoraDe() con ->with(['cliente.fotos']).
+        $credito->load(['bienes.fotos', 'vehiculos.fotos', 'inmuebles.fotos', 'cliente.fotos', 'aval', 'aval2', 'registradoPor', 'supervisadoPor', 'aprobadoPor', 'cuotas', 'expedienteDocumentos']);
         $credito->setRelation('documentos', $this->documentoService->documentosDe($credito));
 
         if (in_array($credito->estado, ['activo', 'vencido'], true)) {

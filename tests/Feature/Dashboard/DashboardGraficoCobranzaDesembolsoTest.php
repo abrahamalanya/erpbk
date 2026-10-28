@@ -227,6 +227,34 @@ it('rejects an invalid agrupar_por', function () {
         ->assertJsonValidationErrors('agrupar_por');
 });
 
+it('sums cobranza and desembolso over the whole desde/hasta range, not just today', function () {
+    $cliente = clienteEn($this->agencia);
+    $credito = créditoDe($cliente);
+
+    cobroHoy(['created_at' => now()->subDay()], $credito, $cliente, $this->asesor, '200.00');
+    cobroHoy([], $credito, $cliente, $this->asesor, '100.00');
+
+    Sanctum::actingAs($this->admin, ['*']);
+
+    $desde = now()->subDay()->toDateString();
+    $hasta = now()->toDateString();
+
+    $filas = filasDe($this->getJson("/api/dashboard/grafico-cobranza-desembolso?agrupar_por=agencia&desde={$desde}&hasta={$hasta}"));
+
+    assertTotal(300.00, filaConClave($filas, 'agencia_id', $this->agencia->id)['cobranza']['total']);
+});
+
+it('rejects an invalid desde/hasta range', function () {
+    Sanctum::actingAs($this->admin, ['*']);
+
+    $desde = now()->toDateString();
+    $hasta = now()->subDay()->toDateString();
+
+    $this->getJson("/api/dashboard/grafico-cobranza-desembolso?desde={$desde}&hasta={$hasta}")
+        ->assertUnprocessable()
+        ->assertJsonValidationErrors('hasta');
+});
+
 it('returns an empty filas list when there is no movement at all', function () {
     Sanctum::actingAs($this->admin, ['*']);
 

@@ -7,6 +7,7 @@ use App\Modules\Cobranza\Models\Cobro;
 use App\Modules\Credito\Models\Credito;
 use App\Modules\Credito\Models\CuotaCredito;
 use App\Modules\Ruta\Models\RutaClienteOrden;
+use App\Modules\Sistemas\Services\ModuloService;
 use App\Modules\Usuario\Models\User;
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
@@ -17,6 +18,8 @@ final class RutaCobranzaService
 {
     /** Valor de `clientes_ruta_orden.tipo_credito` de la ruta sin filtro por tipo. */
     private const RUTA_GENERAL = 'todos';
+
+    public function __construct(private readonly ModuloService $modulos) {}
 
     /**
      * Clientes de $propietario (cliente.asesor_id) con al menos un crédito
@@ -38,15 +41,20 @@ final class RutaCobranzaService
      * tipo — la ruta se recorre por tipo (diario, prendario, hipotecario,
      * vehicular) — y los conteos y días de atraso salen solo de ellos.
      *
+     * `$tipoCuota` (frecuencia de pago) es un filtro independiente del tipo:
+     * solo recorta más, sin tener su propia ruta/orden persistido — ver
+     * creditosPlanificados(). `$actor` es quien pide el filtro (para que un
+     * tipo_credito explícito que no tenga habilitado no devuelva nada).
+     *
      * @return Collection<int, array{cliente: Cliente, dias_atraso_max: int, creditos_vencidos: int, credito_codigos: list<string>, creditos: list<array{id: int, codigo: string, tipo_credito: string, monto: string, permite_refinanciar: bool}>}>
      */
-    private function clientesEnMoraDe(User $propietario, ?string $tipoCredito): Collection
+    private function clientesEnMoraDe(User $propietario, ?string $tipoCredito, ?string $tipoCuota = null, ?User $actor = null): Collection
     {
         $hoy = now()->startOfDay()->toDateString();
 
         $ajenos = $this->clientesAjenosVisibles($propietario, $tipoCredito);
 
-        $creditos = $this->creditosPlanificados($propietario, $tipoCredito)
+        $creditos = $this->creditosPlanificados($propietario, $tipoCredito, $tipoCuota, $actor)
             ->whereHas('cliente', function (Builder $cliente) use ($propietario, $ajenos): void {
                 $cliente->where('asesor_id', $propietario->id);
 
@@ -126,17 +134,21 @@ final class RutaCobranzaService
      * rutas, y se ordena por separado en cada una); sin él, la ruta general.
      *
      * `$actor` es quien consulta la ruta (puede ser otro que el propietario:
-     * un supervisor viendo la ruta de su asesor). Solo se usa para marcar
-     * `en_mi_ruta` en cada parada, que es lo que le permite al frontend saber
-     * si un cliente de la ruta de un asesor ya está copiado en la suya.
+     * un supervisor viendo la ruta de su asesor). Se usa tanto para marcar
+     * `en_mi_ruta` en cada parada como para que un `$tipoCredito` explícito
+     * que el actor no tenga habilitado no devuelva nada (ver
+     * creditosPlanificados()) — nunca para ampliar lo que ya podía ver.
+     *
+     * `$tipoCuota` (frecuencia de pago: diario/semanal/quincenal/mensual) es
+     * un filtro independiente del tipo de crédito — ver clientesEnMoraDe().
      *
      * @return Collection<int, array<string, mixed>>
      */
-    public function rutaDe(User $propietario, ?string $tipoCredito = null, ?User $actor = null): Collection
+    public function rutaDe(User $propietario, ?string $tipoCredito = null, ?User $actor = null, ?string $tipoCuota = null): Collection
     {
         $actor ??= $propietario;
 
-        $clientesEnMora = $this->clientesEnMoraDe($propietario, $tipoCredito);
+        $clientesEnMora = $this->clientesEnMoraDe($propietario, $tipoCredito, $tipoCuota, $actor);
 
         if ($clientesEnMora->isEmpty()) {
             return collect();
@@ -152,6 +164,7 @@ final class RutaCobranzaService
             ->where('created_at', '>=', $inicio)
             ->where('created_at', '<', $inicio->copy()->addDay())
             ->when($tipoCredito !== null, fn (Builder $q) => $q->whereHas('credito', fn (Builder $c) => $c->where('tipo_credito', $tipoCredito)))
+            ->when($tipoCuota !== null, fn (Builder $q) => $q->whereHas('credito', fn (Builder $c) => $c->where('tipo_cuota', $tipoCuota)))
             ->pluck('cliente_id');
 
         $ruta = $tipoCredito ?? self::RUTA_GENERAL;
@@ -358,7 +371,21 @@ final class RutaCobranzaService
             ->exists();
     }
 
-    private function creditosPlanificados(User $propietario, ?string $tipoCredito): Builder
+    /**
+     * `$tipoCuota` (frecuencia de pago) solo recorta — no tiene su propio
+     * `RutaClienteOrden.tipo_credito`/orden persistido como `$tipoCredito`,
+     * así que no participa en $planificados ni en ningún otro lugar que
+     * identifique "la ruta": es ortogonal, nunca una ruta aparte.
+     *
+     * `$actor` (quien pide el filtro, no necesariamente $propietario) solo se
+     * usa para el candado de $tipoCredito: un tipo explícito que el actor no
+     * tenga habilitado en su perfil de acceso (ModuloService::tieneModulo())
+     * da una condición siempre falsa en vez de filtrar por ese tipo — mismo
+     * criterio que el resto del dashboard, un filtro nunca amplía lo que el
+     * actor puede ver. Sin $actor (llamadas internas como tieneCreditoEnRuta())
+     * no se aplica este candado.
+     */
+    private function creditosPlanificados(User $propietario, ?string $tipoCredito, ?string $tipoCuota = null, ?User $actor = null): Builder
     {
         $planificados = $this->clientesEnRutaDe($propietario, $tipoCredito);
         $hoy = now()->toDateString();
@@ -367,7 +394,16 @@ final class RutaCobranzaService
         // cuota compuesta crea un sucesor activo con vencimientos futuros.
         return Credito::query()
             ->whereIn('estado', ['activo', 'vencido'])
-            ->when($tipoCredito !== null, fn (Builder $q) => $q->where('tipo_credito', $tipoCredito))
+            ->when($tipoCredito !== null, function (Builder $q) use ($tipoCredito, $actor): void {
+                if ($actor !== null && ! $this->modulos->tieneModulo($actor, $tipoCredito)) {
+                    $q->whereRaw('1 = 0');
+
+                    return;
+                }
+
+                $q->where('tipo_credito', $tipoCredito);
+            })
+            ->when($tipoCuota !== null, fn (Builder $q) => $q->where('tipo_cuota', $tipoCuota))
             ->where(fn (Builder $q) => $q
                 ->whereIn('cliente_id', $planificados)
                 ->orWhereHas('cuotas', fn (Builder $cuotas) => $cuotas->whereDate('fecha_vencimiento', '<=', $hoy)));

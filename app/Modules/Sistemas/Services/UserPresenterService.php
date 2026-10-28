@@ -31,7 +31,7 @@ final class UserPresenterService
      */
     public function decorar(User $user): User
     {
-        $user->load(['roles', 'empresa', 'perfilAcceso']);
+        $user->load(['roles', 'empresa', 'agencia', 'perfilAcceso']);
         $user->setAttribute('permission_names', $user->getAllPermissions()->pluck('name')->values());
         $user->setAttribute('modulos_efectivos', $this->modulos->modulosEfectivos($user));
         $user->setAttribute('permisos_temporales_clientes', $this->permisosTemporales->activasParaUsuario($user));

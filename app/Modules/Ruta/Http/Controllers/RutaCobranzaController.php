@@ -39,7 +39,12 @@ class RutaCobranzaController extends Controller
 
         $asesor = $this->resolverAsesor();
 
-        return $this->successResponse($this->rutaCobranzaService->rutaDe($asesor, $request->validated('tipo_credito'), $request->user()));
+        return $this->successResponse($this->rutaCobranzaService->rutaDe(
+            $asesor,
+            $request->validated('tipo_credito'),
+            $request->user(),
+            $request->validated('tipo_cuota'),
+        ));
     }
 
     /**
@@ -62,7 +67,12 @@ class RutaCobranzaController extends Controller
 
         $asesor = $this->resolverAsesor();
 
-        $paradas = $this->rutaCobranzaService->rutaDe($asesor, $request->validated('tipo_credito'), $request->user())
+        $paradas = $this->rutaCobranzaService->rutaDe(
+            $asesor,
+            $request->validated('tipo_credito'),
+            $request->user(),
+            $request->validated('tipo_cuota'),
+        )
             ->filter(fn (array $parada): bool => $parada['latitud_cobranza'] !== null && $parada['longitud_cobranza'] !== null)
             ->map(fn (array $parada): array => [$parada['latitud_cobranza'], $parada['longitud_cobranza']])
             ->values()

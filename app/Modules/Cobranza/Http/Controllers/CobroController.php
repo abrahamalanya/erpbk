@@ -78,7 +78,7 @@ class CobroController extends Controller
      * lista de Cobranzas. No cuenta los anulados — igual que
      * DashboardService::cobranzaResumen(), un cobro anulado no es cobranza.
      * Misma visibilidad y mismos filtros que index() (q/operacion/estado/
-     * registrado_por/cliente_id/credito_id/desde/hasta).
+     * registrado_por/cliente_id/credito_id/agencia_id/desde/hasta).
      */
     public function resumen(): JsonResponse
     {
@@ -116,9 +116,12 @@ class CobroController extends Controller
 
     /**
      * Mismos filtros que index() (q/operacion/estado/registrado_por/
-     * cliente_id/credito_id/desde/hasta/anulado_desde/anulado_hasta) y misma
-     * jerarquía de visibilidad — lo comparten index()/pdf()/excel() para no
-     * triplicar el armado del query. anulado_desde/anulado_hasta son
+     * cliente_id/credito_id/agencia_id/desde/hasta/anulado_desde/anulado_hasta)
+     * y misma jerarquía de visibilidad — lo comparten index()/pdf()/excel()
+     * para no triplicar el armado del query. agencia_id solo filtra: la
+     * visibilidad real sigue siendo la de creditoHierarchy->visibleQuery(),
+     * así que un actor no puede ampliarla pidiendo otra agencia (mismo
+     * criterio que el resto del dashboard). anulado_desde/anulado_hasta son
      * distintos de desde/hasta (fecha del cobro original): para el reporte
      * de "historial de anulaciones" el rango relevante es CUÁNDO se anuló,
      * no cuándo se registró el cobro. credito_id permite ver el historial de
@@ -128,7 +131,13 @@ class CobroController extends Controller
     {
         $query = Cobro::query()
             ->with(['cliente', 'credito', 'registradoPor', 'anuladoPor'])
-            ->whereHas('credito', fn (Builder $q) => $this->creditoHierarchy->visibleQuery($q, $actor));
+            ->whereHas('credito', function (Builder $q) use ($actor): void {
+                $this->creditoHierarchy->visibleQuery($q, $actor);
+
+                if (request()->filled('agencia_id')) {
+                    $q->where('agencia_id', request()->integer('agencia_id'));
+                }
+            });
 
         if (request()->filled('q')) {
             $termino = trim((string) request()->string('q'));

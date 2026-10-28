@@ -13,6 +13,15 @@ class MostrarRutaCobranzaRequest extends FormRequest
     }
 
     /**
+     * `tipo_credito` y `tipo_cuota` (frecuencia de pago) son filtros
+     * independientes: el primero decide CUÁL ruta (cada tipo tiene su propio
+     * orden persistido en clientes_ruta_orden); el segundo solo recorta, sin
+     * crear una ruta ni un orden propios — ver RutaCobranzaService. Ninguno
+     * de los dos valida acá si el actor tiene ese tipo habilitado: eso lo
+     * hace el servicio (mismo criterio que el resto del dashboard — un
+     * filtro nunca amplía lo que el actor puede ver, así que pedir un tipo no
+     * habilitado da una ruta vacía, no un error).
+     *
      * @return array<string, ValidationRule|array<mixed>|string>
      */
     public function rules(): array
@@ -20,6 +29,7 @@ class MostrarRutaCobranzaRequest extends FormRequest
         return [
             'asesor_id' => ['nullable', 'integer'],
             'tipo_credito' => ['nullable', 'string', 'in:diario,prendario,hipotecario,vehicular'],
+            'tipo_cuota' => ['nullable', 'string', 'in:diario,semanal,quincenal,mensual'],
             'desde_ubicacion_actual' => ['nullable', 'boolean'],
         ];
     }
@@ -31,6 +41,7 @@ class MostrarRutaCobranzaRequest extends FormRequest
     {
         return [
             'tipo_credito.in' => 'El tipo de crédito debe ser diario, prendario, hipotecario o vehicular',
+            'tipo_cuota.in' => 'La frecuencia de pago debe ser diario, semanal, quincenal o mensual',
         ];
     }
 

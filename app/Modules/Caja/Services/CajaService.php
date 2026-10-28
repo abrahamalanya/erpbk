@@ -222,11 +222,13 @@ final class CajaService
      * egresos manuales; `solo_desembolsos` deja solo los desembolsos reales.
      *
      * Filtros opcionales en $filtros: concepto_id, solo_desembolsos,
-     * excluir_desembolsos, registrado_por, boleta, desde y hasta (sobre
-     * fecha_caja, ambos inclusive). `boleta` busca parcial y sin distinguir
-     * mayúsculas en la serie o el número de la boleta.
+     * excluir_desembolsos, registrado_por, agencia_id, boleta, desde y hasta
+     * (sobre fecha_caja, ambos inclusive). `boleta` busca parcial y sin
+     * distinguir mayúsculas en la serie o el número de la boleta.
+     * `agencia_id` solo recorta dentro de las cajas que la jerarquía del
+     * actor ya deja ver — nunca las amplía.
      *
-     * @param  array{concepto_id?: int|null, solo_desembolsos?: bool|null, excluir_desembolsos?: bool|null, registrado_por?: int|null, boleta?: string|null, desde?: string|null, hasta?: string|null}  $filtros
+     * @param  array{concepto_id?: int|null, solo_desembolsos?: bool|null, excluir_desembolsos?: bool|null, registrado_por?: int|null, agencia_id?: int|null, boleta?: string|null, desde?: string|null, hasta?: string|null}  $filtros
      * @return LengthAwarePaginator<int, CajaMovimiento>
      */
     public function listarMovimientos(User $actor, string $tipo, array $filtros = []): LengthAwarePaginator
@@ -261,7 +263,12 @@ final class CajaService
 
     private function movimientosFiltrados(User $actor, string $tipo, array $filtros): Builder
     {
-        $cajasVisibles = $this->hierarchy->cajasVisibles(Caja::query(), $actor)->select('id');
+        $cajasVisibles = $this->hierarchy->cajasVisibles(Caja::query(), $actor)
+            // Solo recorta dentro de lo que la jerarquía ya deja ver — un
+            // actor nunca amplía su alcance pidiendo otra agencia (mismo
+            // criterio que el resto del dashboard).
+            ->when($filtros['agencia_id'] ?? null, fn (Builder $query, int $agenciaId) => $query->where('agencia_id', $agenciaId))
+            ->select('id');
         $soloDesembolsos = (bool) ($filtros['solo_desembolsos'] ?? false);
         $excluirDesembolsos = (bool) ($filtros['excluir_desembolsos'] ?? false);
 

@@ -150,6 +150,55 @@ it('filters cobros by registrado_por', function () {
     expect($deOtroAsesor->json('data.data'))->toHaveCount(0);
 });
 
+it('filters cobros by agencia_id, without widening what the actor can see', function () {
+    $otraAgencia = Agencia::factory()->for($this->empresa)->create();
+    $clienteOtraAgencia = Cliente::factory()->forAgencia($otraAgencia)->create();
+    $otroAsesor = User::factory()->forAgencia($otraAgencia)->create();
+    $otroAsesor->assignRole('asesor');
+    $cajaOtraAgencia = Caja::factory()->create(['user_id' => $otroAsesor->id, 'empresa_id' => $this->empresa->id, 'agencia_id' => $otraAgencia->id]);
+    CajaCiclo::query()->create([
+        'caja_id' => $cajaOtraAgencia->id, 'empresa_id' => $cajaOtraAgencia->empresa_id, 'fecha' => now()->toDateString(),
+        'estado' => 'abierta', 'saldo_apertura' => 0, 'abierta_at' => now(),
+    ]);
+
+    $creditoAgenciaA = Credito::factory()->paraBien($this->bien)
+        ->activo()
+        ->create(['registrado_por' => $this->asesor->id, 'cliente_id' => $this->cliente->id, 'agencia_id' => $this->agencia->id]);
+    $bienOtraAgencia = Bien::factory()->paraCliente($clienteOtraAgencia)->create(['tipo' => 'electro']);
+    $creditoAgenciaB = Credito::factory()->paraBien($bienOtraAgencia)
+        ->activo()
+        ->create(['registrado_por' => $otroAsesor->id, 'cliente_id' => $clienteOtraAgencia->id, 'agencia_id' => $otraAgencia->id]);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $totalA = $this->getJson("/api/creditos-prendarios/{$creditoAgenciaA->id}")->json('data.monto_liquidacion_sugerido.total');
+    $this->postJson("/api/creditos-prendarios/{$creditoAgenciaA->id}/liquidar", ['monto_pagado' => $totalA, 'medio' => 'efectivo'])
+        ->assertSuccessful();
+
+    Sanctum::actingAs($otroAsesor, ['*']);
+    $totalB = $this->getJson("/api/creditos-prendarios/{$creditoAgenciaB->id}")->json('data.monto_liquidacion_sugerido.total');
+    $this->postJson("/api/creditos-prendarios/{$creditoAgenciaB->id}/liquidar", ['monto_pagado' => $totalB, 'medio' => 'efectivo'])
+        ->assertSuccessful();
+
+    $adminGeneral = User::factory()->forEmpresa($this->empresa)->create();
+    $adminGeneral->assignRole('administrador_general');
+    Sanctum::actingAs($adminGeneral, ['*']);
+
+    $deAgenciaA = $this->getJson("/api/cobros?agencia_id={$this->agencia->id}")->assertSuccessful();
+    expect($deAgenciaA->json('data.data'))->toHaveCount(1)
+        ->and($deAgenciaA->json('data.data.0.credito_id'))->toBe($creditoAgenciaA->id);
+
+    $deAgenciaB = $this->getJson("/api/cobros?agencia_id={$otraAgencia->id}")->assertSuccessful();
+    expect($deAgenciaB->json('data.data'))->toHaveCount(1)
+        ->and($deAgenciaB->json('data.data.0.credito_id'))->toBe($creditoAgenciaB->id);
+
+    // Un administrador_agencia no puede ampliar su alcance pidiendo otra agencia.
+    $adminAgenciaA = User::factory()->forAgencia($this->agencia)->create();
+    $adminAgenciaA->assignRole('administrador_agencia');
+    Sanctum::actingAs($adminAgenciaA, ['*']);
+    $pedidoAjeno = $this->getJson("/api/cobros?agencia_id={$otraAgencia->id}")->assertSuccessful();
+    expect($pedidoAjeno->json('data.data'))->toHaveCount(0);
+});
+
 it('filters cobros by cliente_id', function () {
     $otroCliente = Cliente::factory()->forAgencia($this->agencia)->create();
     $otroBien = Bien::factory()->paraCliente($otroCliente)->create(['tipo' => 'electro']);
