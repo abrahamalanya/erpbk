@@ -18,6 +18,7 @@ use App\Modules\Credito\Http\Requests\PreviewCronogramaRequest;
 use App\Modules\Credito\Http\Requests\RechazarCreditoRequest;
 use App\Modules\Credito\Http\Requests\RefinanciarCreditoRequest;
 use App\Modules\Credito\Http\Requests\RefrendarCreditoRequest;
+use App\Modules\Credito\Http\Requests\RegularizarCuotasRequest;
 use App\Modules\Credito\Http\Requests\StoreCreditoRequest;
 use App\Modules\Credito\Http\Requests\SubirDocumentoFirmadoRequest;
 use App\Modules\Credito\Http\Requests\VenderCreditoRequest;
@@ -412,11 +413,43 @@ class CreditoController extends Controller
             (string) $data['monto_pagado'],
             $data['medio'],
             $request->file('comprobante'),
-            isset($data['descuento']) ? (string) $data['descuento'] : null,
-            $data['motivo_descuento'] ?? null,
         );
 
         return $this->successResponse($credito, 'Cuotas pagadas', 201);
+    }
+
+    public function regularizar(RegularizarCuotasRequest $request, Credito $credito): JsonResponse
+    {
+        Gate::authorize('regularizar', $credito);
+
+        $data = $request->validated();
+
+        $credito = $this->creditoService->regularizarCuotas($credito, $request->user(), (int) $data['numero_cuotas'], $data['motivo']);
+
+        return $this->successResponse($credito, 'Crédito regularizado');
+    }
+
+    /**
+     * Historial de regularizaciones, para el reporte — mismo alcance por rol
+     * que index()/el mapa de asesores. Filtros opcionales: agencia_id,
+     * asesor_id (registrado_por del crédito), desde/hasta.
+     */
+    public function regularizaciones(): JsonResponse
+    {
+        Gate::authorize('viewAny', Credito::class);
+
+        $porPagina = max(1, min(request()->integer('per_page', 15), 100));
+
+        $regularizaciones = $this->creditoService->regularizacionesVisiblesPara(
+            request()->user(),
+            request()->integer('agencia_id') ?: null,
+            request()->integer('asesor_id') ?: null,
+            request('desde'),
+            request('hasta'),
+            $porPagina,
+        );
+
+        return $this->successResponse($regularizaciones);
     }
 
     public function liquidar(LiquidarCreditoRequest $request, Credito $credito): JsonResponse

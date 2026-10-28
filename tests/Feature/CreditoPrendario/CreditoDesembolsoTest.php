@@ -72,14 +72,16 @@ it('defaults numero_cuotas from the fixed table per tipo_cuota (semanal -> 4)', 
 
     // Capital amortizado en 4 partes iguales (100 c/u); interés nominal
     // sobre el monto_prestamo original completo (400) × 10% × 7 días / 30 ->
-    // 9.33 por cuota, pero la cuota total se redondea al sol entero (100 +
-    // 9.33 = 109.33 -> 109.00), así que el interés mostrado absorbe el
-    // ajuste (9.00 por cuota, 4 cuotas -> 36.00).
+    // 9.33 por cuota. Las cuotas 1-3 redondean su total a la décima más
+    // cercana (100 + 9.33 = 109.33 -> 109.30); la última (4) no se redondea:
+    // se cobra lo exacto que falta para cerrar el total real (400 + 4×9.33 =
+    // 437.32) sin sobrante ni faltante -> 109.42. Interés mostrado: 9.30 ×
+    // 3 + 9.42 = 37.32.
     $sumaCapital = number_format((float) $cuotas->sum('monto_capital'), 2, '.', '');
     $sumaInteres = number_format((float) $cuotas->sum('monto_interes'), 2, '.', '');
     expect($sumaCapital)->toBe('400.00')
-        ->and($sumaInteres)->toBe('36.00');
-    expect($cuotas->pluck('monto_total')->unique()->values()->all())->toBe(['109.00']);
+        ->and($sumaInteres)->toBe('37.32');
+    expect($cuotas->pluck('monto_total')->unique()->values()->all())->toBe(['109.30', '109.42']);
 });
 
 it('streams a tentative cronograma PDF for a crédito that has no cuotas yet', function () {

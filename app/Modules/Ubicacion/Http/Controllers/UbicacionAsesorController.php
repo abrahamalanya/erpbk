@@ -60,7 +60,10 @@ class UbicacionAsesorController extends Controller
 
     /**
      * Asesores cuyo historial puede consultar el actor, para el selector
-     * del reporte — mismo alcance por rol que index().
+     * del reporte — mismo alcance por rol que index(). Trae agencia_id/
+     * agencia_nombre (no solo el id) para que el reporte pueda armar su
+     * propio filtro de agencia a partir de esta misma lista, igual que
+     * MapaCobranzaUnificado arma el suyo desde la lista de asesores del mapa.
      */
     public function asesoresVisibles(): JsonResponse
     {
@@ -71,6 +74,8 @@ class UbicacionAsesorController extends Controller
                 'id' => $asesor->id,
                 'nombre' => $asesor->nombre,
                 'apellido' => $asesor->apellido,
+                'agencia_id' => $asesor->agencia_id,
+                'agencia_nombre' => $asesor->agencia?->nombre,
             ]);
 
         return $this->successResponse($asesores);

@@ -27,6 +27,40 @@ npx expo run:android
 npx expo start --dev-client
 ```
 
+## Generar el APK BUILD en LOCAL
+
+Desde Git Bash, ejecuta:
+
+```bash
+cd /c/Users/min/dev/abrahamalanya/umax-app
+
+export JAVA_HOME="C:/Program Files/Eclipse Adoptium/jdk-17.0.20.8-hotspot"
+export PATH="/c/Users/min/.config/herd/bin/nvm/v26.7.0:/c/Program Files/Eclipse Adoptium/jdk-17.0.20.8-hotspot/bin:$PATH"
+
+export APP_ENV=production
+export NODE_ENV=production
+export API_URL="https://erpbk.credimasperu.com/api"
+export DOTENV_CONFIG_PATH="C:/Users/min/dev/abrahamalanya/umax-app/.env.production.local"
+
+cd android
+
+./gradlew :app:assembleRelease \
+  --max-workers=2 \
+  -PreactNativeArchitectures=armeabi-v7a,arm64-v8a
+
+Cuando aparezca BUILD SUCCESSFUL, encontrarás el APK en:
+
+C:\Users\min\dev\abrahamalanya\umax-app\android\app\build\outputs\apk\release\app-release.apk
+
+La firma de producción ya quedó configurada. Conserva estos archivos locales, que están excluidos de Git:
+
+- credentials.json
+- credentials/android/keystore.jks
+- .env.production.local
+
+Estos comandos recompilan la versión actual. Para distribuir una nueva actualización, incrementa versionCode, actualmente 27, en app.config.ts y en android/app/build.gradle.
+```
+
 ## ⚠️ El servidor es PHP 8.2 — no regenerar el lock con PHP 8.4
 
 En local, Herd tiene PHP 8.4 como `php` por defecto, pero **producción corre 8.2**

@@ -2,6 +2,7 @@
 
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
+use App\Modules\Ubicacion\Events\UbicacionAsesorActualizada;
 use App\Modules\Ubicacion\Models\UbicacionAsesor;
 use App\Modules\Ubicacion\Models\UbicacionAsesorHistorial;
 use App\Modules\Usuario\Models\User;
@@ -14,6 +15,23 @@ beforeEach(function () {
     $this->empresa = Empresa::factory()->create();
     $this->agencia = Agencia::factory()->for($this->empresa)->create();
 });
+
+it('preserves the GPS instant when saving UTC or offset dates in Lima', function (string $captura) {
+    config(['app.timezone' => 'America/Lima']);
+    $asesor = User::factory()->forAgencia($this->agencia)->create();
+    $asesor->assignRole('asesor');
+    Sanctum::actingAs($asesor, ['*']);
+
+    $this->postJson('/api/ubicaciones-asesores', [
+        'latitud' => -12.04, 'longitud' => -77.03, 'capturado_en' => $captura,
+    ])->assertSuccessful()->assertJsonPath('data.capturado_en', '2026-10-28T19:53:00.000000Z');
+
+    $this->assertDatabaseHas('ubicaciones_asesores', ['user_id' => $asesor->id, 'capturado_en' => '2026-10-28 14:53:00']);
+    $this->assertDatabaseHas('ubicacion_asesor_historial', ['user_id' => $asesor->id, 'capturado_en' => '2026-10-28 14:53:00']);
+
+    $evento = new UbicacionAsesorActualizada(UbicacionAsesor::where('user_id', $asesor->id)->firstOrFail(), $asesor);
+    expect($evento->broadcastWith()['capturado_en'])->toBe('2026-10-28T19:53:00.000000Z');
+})->with(['2026-10-28T19:53:00.000Z', '2026-10-28T14:53:00-05:00']);
 
 it('allows an asesor to register their own location', function () {
     $asesor = User::factory()->forAgencia($this->agencia)->create();
@@ -234,5 +252,7 @@ it('lists only the asesores visible to the actor for the history selector', func
     $response = $this->getJson('/api/ubicaciones-asesores/asesores-visibles')->assertSuccessful();
 
     expect($response->json('data'))->toHaveCount(1)
-        ->and($response->json('data.0.id'))->toBe($propio->id);
+        ->and($response->json('data.0.id'))->toBe($propio->id)
+        ->and($response->json('data.0.agencia_id'))->toBe($this->agencia->id)
+        ->and($response->json('data.0.agencia_nombre'))->toBe($this->agencia->nombre);
 });

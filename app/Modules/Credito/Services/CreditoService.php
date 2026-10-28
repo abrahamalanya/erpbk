@@ -13,6 +13,7 @@ use App\Modules\Credito\Models\ConfiguracionCredito;
 use App\Modules\Credito\Models\Credito;
 use App\Modules\Credito\Models\CuotaCredito;
 use App\Modules\Credito\Models\DocumentoCredito;
+use App\Modules\Credito\Models\RegularizacionCredito;
 use App\Modules\Credito\Notifications\CreditoAdendadoNotification;
 use App\Modules\Credito\Notifications\CreditoAprobacionRevertidaNotification;
 use App\Modules\Credito\Notifications\CreditoAprobadoNotification;
@@ -41,9 +42,11 @@ use App\Nucleo\Exceptions\ConflictoDeEstadoException;
 use App\Nucleo\Exceptions\MotivoConflicto;
 use Carbon\Carbon;
 use DomainException;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\MorphToMany;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
@@ -401,11 +404,14 @@ final class CreditoService
      *   explícitamente que debe poder corregirla en ese caso. La nueva tasa
      *   rige hacia adelante de dos formas: calcularInteresProrateado()
      *   (refrendo/mora/liquidación) siempre lee $credito->interes en vivo, Y
-     *   — solo interés simple — las CuotaCredito PENDIENTES (sin pagar
-     *   completas, un abono parcial no se toca) se regeneran con la tasa
-     *   nueva (ver recalcularCuotasPendientes()), para que el saldo mostrado
-     *   refleje la corrección. Las cuotas ya pagadas completas y los Cobro
-     *   ya registrados nunca se tocan.
+     *   — solo interés simple — se regenera el monto_interes/monto_total de
+     *   TODAS las CuotaCredito del cronograma (pagadas y pendientes, ver
+     *   recalcularCronogramaInteres()) con la tasa nueva, para que el
+     *   cronograma se vea consistente de punta a punta — confirmado
+     *   explícitamente: en una ya pagada esto puede dejar su monto_abonado
+     *   por encima del nuevo total (se ve "pagada de más"), pero
+     *   monto_abonado/mora_pagada/pagada_at/los Cobro ya registrados nunca
+     *   se tocan — solo el total que se MUESTRA.
      */
     public function actualizarInteres(Credito $credito, User $actor, string $interes): Credito
     {
@@ -415,7 +421,7 @@ final class CreditoService
         $credito = $credito->fresh();
 
         if (in_array($credito->estado, ['activo', 'vencido'], true) && $credito->tipo_interes === 'simple') {
-            $this->recalcularCuotasPendientes($credito);
+            $this->recalcularCronogramaInteres($credito);
         }
 
         $this->notificar($credito);
@@ -425,32 +431,68 @@ final class CreditoService
     }
 
     /**
-     * Regenera el interés/total de las cuotas PENDIENTES (sin `pagada_at`,
-     * incluida una con un abono parcial) tras editar la tasa de un crédito
-     * de interés simple ya desembolsado — ver actualizarInteres(). Mismo
-     * cálculo que filasCronograma() al generar el cronograma, pero
-     * conservando el capital y los días de cada cuota ya creada: solo
-     * cambia cuánto interés corresponde a ese capital con la tasa nueva.
-     * `monto_abonado` no se toca — un abono ya registrado sigue siendo
-     * válido contra el nuevo total (que nunca es menor a él en la práctica,
-     * ya que el abono nunca excede el total anterior).
+     * Regenera el interés/total de TODAS las cuotas (pagadas y pendientes)
+     * tras editar la tasa de un crédito de interés simple ya desembolsado —
+     * ver actualizarInteres(). Mismo cálculo y mismo criterio de redondeo
+     * que filasCronograma() al generar el cronograma (décima más cercana,
+     * última cuota exacta — ver su docblock), pero conservando el capital y
+     * los días de cada cuota ya creada: solo cambia cuánto interés
+     * corresponde a ese capital con la tasa nueva — confirmado
+     * explícitamente: el cronograma debe quedar consistente de punta a
+     * punta, no solo en lo que queda pendiente (igual que
+     * regularizarCuotas()). `monto_abonado`/`mora_pagada`/`pagada_at` de una
+     * cuota ya pagada nunca se tocan — ver recalcularTotalesCuotas() — así
+     * que si el total nuevo queda por debajo de lo ya abonado, esa cuota
+     * simplemente se ve "pagada de más"; nunca se le reclama ni se le
+     * devuelve nada por eso.
      *
      * Solo interés simple: el compuesto (cuota fija por anualidad francesa)
      * exigiría rehacer todo el saldo insoluto restante, no solo esta cuota.
      */
-    private function recalcularCuotasPendientes(Credito $credito): void
+    private function recalcularCronogramaInteres(Credito $credito): void
     {
         $diasPorCuota = self::DIAS_POR_PERIODO[$credito->tipo_cuota];
         $interesNominal = $this->interesSimplePeriodo((string) $credito->monto_prestamo, (string) $credito->interes, $diasPorCuota);
 
-        $credito->cuotas()->pendientes()->get()->each(function (CuotaCredito $cuota) use ($interesNominal): void {
-            $totalCuota = $this->bcRoundEntero(bcadd((string) $cuota->monto_capital, $interesNominal, 2));
+        $this->recalcularTotalesCuotas($credito->cuotas()->orderBy('numero_cuota')->get(), $interesNominal);
+    }
+
+    /**
+     * Recalcula monto_interes/monto_total de $cuotas con $interesNominal —
+     * mismo criterio de redondeo que filasCronograma() (décima más cercana;
+     * la ÚLTIMA de la lista queda exacta para que la suma cierre sin
+     * sobrante/faltante, ver su docblock). No toca monto_capital,
+     * monto_abonado, mora_pagada ni pagada_at: solo el total que se MUESTRA
+     * en el cronograma. Por eso, si $cuotas incluye alguna ya pagada (ver
+     * regularizarCuotas()), su monto_abonado histórico puede terminar por
+     * encima del monto_total recalculado — se ve como "pagada de más" por
+     * los pocos céntimos que absorbía el redondeo viejo, nunca se le
+     * reclama ni se le devuelve nada por eso.
+     *
+     * @param  Collection<int, CuotaCredito>  $cuotas  Ordenadas por numero_cuota.
+     */
+    private function recalcularTotalesCuotas(Collection $cuotas, string $interesNominal): void
+    {
+        $capitalTotal = '0';
+        foreach ($cuotas as $cuota) {
+            $capitalTotal = bcadd($capitalTotal, (string) $cuota->monto_capital, 2);
+        }
+        $totalExacto = bcadd($capitalTotal, bcmul($interesNominal, (string) $cuotas->count(), 2), 2);
+        $totalAcumulado = '0';
+        $ultimoIndice = $cuotas->count() - 1;
+
+        foreach ($cuotas->values() as $indice => $cuota) {
+            $totalCuota = $indice === $ultimoIndice
+                ? bcsub($totalExacto, $totalAcumulado, 2)
+                : $this->bcRoundDecima(bcadd((string) $cuota->monto_capital, $interesNominal, 2));
 
             $cuota->update([
                 'monto_interes' => bcsub($totalCuota, (string) $cuota->monto_capital, 2),
                 'monto_total' => $totalCuota,
             ]);
-        });
+
+            $totalAcumulado = bcadd($totalAcumulado, $totalCuota, 2);
+        }
     }
 
     /**
@@ -892,13 +934,17 @@ final class CreditoService
      * cuota sobre el monto original completo. `dias` es el desfase desde el
      * desembolso hasta el vencimiento de esa cuota.
      *
-     * La cuota TOTAL se redondea al sol entero más cercano (39.99 -> 40.00),
-     * para que el cliente pague un monto redondo sin decimales — el capital
-     * es siempre el exacto de la amortización (sin tocar), el interés
-     * mostrado absorbe el ajuste de redondeo (33.33 + 6.67 = 40.00, en vez
-     * de 6.66). Como el capital de la última cuota ya es distinto (absorbe
-     * el resto de la amortización), su redondeo la "regulariza" sola, sin
-     * un caso especial aparte — confirmado explícitamente con el usuario.
+     * La cuota TOTAL se redondea a los 10 céntimos más cercanos (39.94 ->
+     * 39.90), para que el cliente pague un monto práctico en efectivo sin
+     * centavos exactos — el capital es siempre el exacto de la amortización
+     * (sin tocar), el interés mostrado absorbe el ajuste de redondeo. La
+     * ÚLTIMA cuota no se redondea: se calcula como lo que falta exacto para
+     * que la suma de todas las cuotas cierre perfecto contra capital +
+     * interés real, sin dejar que el redondeo de las demás se acumule en
+     * sobrante o faltante al final del crédito (antes se redondeaba al sol
+     * entero en TODAS las cuotas, lo que con muchas cuotas —diario, hasta
+     * 30— podía inflar el total varios soles; confirmado explícitamente con
+     * el usuario, mismo criterio para los demás tipos de interés simple).
      *
      * `$plazoTotal`, cuando se da, fija los días de la ÚLTIMA cuota en vez de
      * `$diasPorCuota * $n` — usado por diario con tipo_cuota semanal (ver
@@ -913,12 +959,16 @@ final class CreditoService
         $saldoCapital = $monto;
 
         $interesNominal = $this->interesSimplePeriodo($monto, $interes, $diasPorCuota);
+        $totalExacto = bcadd($monto, bcmul($interesNominal, (string) $n, 2), 2);
+        $totalAcumulado = '0';
 
         $filas = [];
 
         for ($i = 1; $i <= $n; $i++) {
             $capitalCuota = $i === $n ? $saldoCapital : $capitalPorCuota;
-            $totalCuota = $this->bcRoundEntero(bcadd($capitalCuota, $interesNominal, 2));
+            $totalCuota = $i === $n
+                ? bcsub($totalExacto, $totalAcumulado, 2)
+                : $this->bcRoundDecima(bcadd($capitalCuota, $interesNominal, 2));
 
             $filas[] = [
                 'numero_cuota' => $i,
@@ -929,19 +979,10 @@ final class CreditoService
             ];
 
             $saldoCapital = bcsub($saldoCapital, $capitalCuota, 2);
+            $totalAcumulado = bcadd($totalAcumulado, $totalCuota, 2);
         }
 
         return $filas;
-    }
-
-    /**
-     * Redondeo half-up al sol entero más cercano (0 decimales, formateado a
-     * 2) — la cuota total de interés simple se muestra así (ver
-     * filasCronograma()), para que el cliente pague un monto sin decimales.
-     */
-    private function bcRoundEntero(string $numero): string
-    {
-        return bcadd(bcadd($numero, '0.5', 0), '0', 2);
     }
 
     /**
@@ -1016,7 +1057,9 @@ final class CreditoService
     /**
      * Redondeo half-up a los 10 céntimos más cercanos (1 decimal), formateado
      * a 2 — la cuota fija del sistema francés se redondea así (no al centavo
-     * exacto) para calzar con las planillas de referencia del negocio.
+     * exacto) para calzar con las planillas de referencia del negocio; mismo
+     * criterio que usa filasCronograma()/recalcularCronogramaInteres() para
+     * el interés simple (salvo la última cuota, que queda exacta).
      */
     private function bcRoundDecima(string $numero): string
     {
@@ -1829,14 +1872,6 @@ final class CreditoService
      * abono parcial si el monto no alcanza a cubrirla. Si con este pago ya
      * no queda ninguna cuota pendiente, el crédito pasa a liquidado igual
      * que liquidar() (carta de no adeudo, sin acta de devolución).
-     *
-     * `$descuento`/`$motivoDescuento` ("regularizar" un diario atrasado):
-     * condona parte de las cuotas+mora calculadas — ver
-     * resolverDescuentoRegularizacionCuotas(). Cada cuota se sigue marcando
-     * como abonada/con su mora íntegra (igual que siempre); el descuento
-     * solo reduce el efectivo que hace falta cobrar, nunca lo que se da por
-     * pagado. Solo tiene sentido pagando un número determinado de cuotas
-     * (`$numeroCuotas`), no amortizando un monto libre.
      */
     public function pagarCuotas(
         Credito $credito,
@@ -1845,8 +1880,6 @@ final class CreditoService
         string $montoPagado,
         string $medio,
         ?UploadedFile $comprobante,
-        ?string $descuento = null,
-        ?string $motivoDescuento = null,
     ): Credito {
         if ($credito->tipo_interes === 'compuesto') {
             if ($numeroCuotas === null) {
@@ -1856,27 +1889,18 @@ final class CreditoService
             return $this->pagarCuota($credito, $actor, $montoPagado, $medio, $comprobante, $numeroCuotas);
         }
 
-        $descuentoAplicado = '0.00';
-
         if ($numeroCuotas !== null) {
             $calculo = $this->calcularMontoPagoCuotas($credito, $numeroCuotas);
-            $descuentoAplicado = $this->resolverDescuentoRegularizacionCuotas($credito, $actor, $calculo['total'], $descuento, $motivoDescuento);
-            $totalAPagar = bcsub($calculo['total'], $descuentoAplicado, 2);
 
-            if (bccomp($montoPagado, $totalAPagar, 2) < 0) {
-                throw new DomainException("El monto pagado ({$montoPagado}) es menor al total de las cuotas + mora a pagar calculado ({$totalAPagar}).");
+            if (bccomp($montoPagado, $calculo['total'], 2) < 0) {
+                throw new DomainException("El monto pagado ({$montoPagado}) es menor al total de las cuotas + mora a pagar calculado ({$calculo['total']}).");
             }
 
-            $calculo['vuelto'] = bcsub($montoPagado, $totalAPagar, 2);
+            $calculo['vuelto'] = bcsub($montoPagado, $calculo['total'], 2);
         } else {
-            if ($descuento !== null && bccomp($descuento, '0', 2) > 0) {
-                throw new DomainException('El descuento solo se puede aplicar pagando un número determinado de cuotas.');
-            }
-
             $calculo = $this->calcularAmortizacion($credito, $montoPagado);
         }
 
-        $totalAplicado = bcsub($calculo['total'], $descuentoAplicado, 2);
         $vuelto = $calculo['vuelto'];
         $ciclo = $this->resolverCicloParaCobro($actor);
         $estadoAnterior = $credito->estado;
@@ -1885,7 +1909,7 @@ final class CreditoService
 
         $esDiario = $credito->tipo_credito === 'diario';
 
-        return DB::transaction(function () use ($credito, $actor, $calculo, $ciclo, $montoPagado, $medio, $comprobante, $estadoAnterior, $vuelto, $esUltimaCuota, $cuotasCompletas, $esDiario, $descuentoAplicado, $motivoDescuento, $totalAplicado): Credito {
+        return DB::transaction(function () use ($credito, $actor, $calculo, $ciclo, $montoPagado, $medio, $comprobante, $estadoAnterior, $vuelto, $esUltimaCuota, $cuotasCompletas, $esDiario): Credito {
             if ($esUltimaCuota) {
                 // Mismo final que liquidar(): el diario no tiene garantía
                 // física, salta directo a 'liquidado' + carta de no adeudo;
@@ -1906,8 +1930,6 @@ final class CreditoService
                 'credito_estado_anterior' => $estadoAnterior,
                 'interes' => $calculo['monto_cuotas'],
                 'mora' => $calculo['mora'],
-                'descuento' => $descuentoAplicado,
-                'motivo_descuento' => $motivoDescuento,
                 'vuelto' => $vuelto,
             ]);
 
@@ -1940,9 +1962,7 @@ final class CreditoService
                 'medio' => $medio,
                 'cuotas' => $calculo['cuotas'],
                 'mora' => $calculo['mora'],
-                'descuento' => $descuentoAplicado,
-                'motivo_descuento' => $motivoDescuento,
-                'total' => $totalAplicado,
+                'total' => $calculo['total'],
                 'vuelto' => $vuelto,
                 'credito_id' => $credito->id,
                 'fecha' => now()->toDateString(),
@@ -1959,6 +1979,122 @@ final class CreditoService
 
             return $this->conCobro($credito, $cobro);
         });
+    }
+
+    /**
+     * "Regulariza" un crédito diario atrasado: condona por completo las
+     * `$numeroCuotas` cuotas más antiguas pendientes (capital+interés+mora,
+     * mismo cálculo que calcularMontoPagoCuotas()/pagarCuotas()) sin que
+     * entre dinero por ese acto — es una corrección administrativa con
+     * auditoría (ver RegularizacionCredito), no un cobro: no genera `Cobro`
+     * ni movimiento de caja, y por eso no pide monto pagado/medio/
+     * comprobante. Reservado a administrador_general/sistemas. Si con esto
+     * ya no queda ninguna cuota pendiente, el crédito pasa a liquidado igual
+     * que pagarCuotas() (carta de no adeudo).
+     *
+     * También recalcula el monto_total/interés mostrado de TODAS las cuotas
+     * del crédito (pagadas y pendientes) con la tasa vigente — mismo
+     * criterio y mismo método que actualizarInteres() usa para esto (ver
+     * recalcularCronogramaInteres()), para que el cronograma quede
+     * consistente de punta a punta.
+     */
+    public function regularizarCuotas(Credito $credito, User $actor, int $numeroCuotas, string $motivo): Credito
+    {
+        if ($credito->tipo_credito !== 'diario') {
+            throw new DomainException('Solo se puede regularizar un crédito diario.');
+        }
+
+        if (! $actor->hasRole(['administrador_general', 'sistemas'])) {
+            throw new DomainException('Solo el administrador general puede regularizar un crédito.');
+        }
+
+        if (! in_array($credito->estado, ['activo', 'vencido'], true)) {
+            throw new DomainException('Solo se puede regularizar un crédito activo o vencido.');
+        }
+
+        $calculo = $this->calcularMontoPagoCuotas($credito, $numeroCuotas);
+        $esUltimaCuota = $calculo['es_ultima_cuota'];
+
+        return DB::transaction(function () use ($credito, $actor, $calculo, $esUltimaCuota, $numeroCuotas, $motivo): Credito {
+            if ($esUltimaCuota) {
+                // El diario no tiene garantía física: salta directo a
+                // 'liquidado' + carta de no adeudo, igual que pagarCuotas().
+                $credito->update(['estado' => 'liquidado']);
+
+                $modeloGarantia = $this->tipos->paraCredito($credito)->garantiaModelo();
+                $modeloGarantia::query()->whereIn('id', $this->garantiasDe($credito)->get()->pluck('id'))->update(['estado' => 'recuperado']);
+
+                $this->documentos->generarCartaNoAdeudo($credito, $actor);
+            }
+
+            foreach ($calculo['cuotas'] as $fila) {
+                $cuota = $credito->cuotas()->where('numero_cuota', $fila['numero_cuota'])->firstOrFail();
+
+                $cuota->update([
+                    'monto_abonado' => bcadd((string) $cuota->monto_abonado, $fila['abono'], 2),
+                    'mora_pagada' => bcadd((string) ($cuota->mora_pagada ?? 0), $fila['mora'], 2),
+                    'pagada_at' => $fila['completa'] ? now() : $cuota->pagada_at,
+                ]);
+            }
+
+            RegularizacionCredito::query()->create([
+                'empresa_id' => $credito->empresa_id,
+                'agencia_id' => $credito->agencia_id,
+                'credito_id' => $credito->id,
+                'actor_id' => $actor->id,
+                'numero_cuotas' => $numeroCuotas,
+                'monto_condonado' => $calculo['total'],
+                'motivo' => $motivo,
+            ]);
+
+            $this->recalcularCronogramaInteres($credito);
+
+            $credito = $credito->fresh(['garantiasDiarias']);
+            $this->notificar($credito);
+
+            if ($esUltimaCuota) {
+                $this->notificaciones->enviar(collect([$credito->registradoPor]), new CreditoLiquidadoNotification($credito));
+            }
+
+            return $credito;
+        });
+    }
+
+    /**
+     * Regularizaciones visibles para $actor, para el reporte — mismo alcance
+     * por rol que CreditoHierarchyService::visibleQuery() (empresa ya la
+     * acota el TenantScope de RegularizacionCredito). $agenciaId/$asesorId
+     * acotan aún más ese alcance, nunca lo amplían.
+     */
+    public function regularizacionesVisiblesPara(User $actor, ?int $agenciaId, ?int $asesorId, ?string $desde, ?string $hasta, int $porPagina = 15): LengthAwarePaginator
+    {
+        $query = RegularizacionCredito::query()->with(['credito.cliente', 'credito.registradoPor', 'agencia', 'actor']);
+
+        if ($actor->hasRole('administrador_agencia')) {
+            $query->where('agencia_id', $actor->agencia_id);
+        } elseif ($actor->hasRole('supervisor')) {
+            $query->whereHas('credito.registradoPor', fn (Builder $q) => $q->where('supervisor_id', $actor->id));
+        } elseif (! $actor->hasAnyRole(['sistemas', 'administrador_general', 'secretaria'])) {
+            $query->whereRaw('1 = 0');
+        }
+
+        if ($agenciaId !== null) {
+            $query->where('agencia_id', $agenciaId);
+        }
+
+        if ($asesorId !== null) {
+            $query->whereHas('credito', fn (Builder $q) => $q->where('registrado_por', $asesorId));
+        }
+
+        if ($desde !== null) {
+            $query->whereDate('created_at', '>=', $desde);
+        }
+
+        if ($hasta !== null) {
+            $query->whereDate('created_at', '<=', $hasta);
+        }
+
+        return $query->orderByDesc('created_at')->paginate($porPagina);
     }
 
     /**
@@ -2586,23 +2722,6 @@ final class CreditoService
      * aplica a crédito diario — los demás tipos con pago por cuotas
      * (prendario/vehicular/hipotecario simple) no admiten descuento aquí.
      */
-    private function resolverDescuentoRegularizacionCuotas(Credito $credito, User $actor, string $montoBase, ?string $descuento, ?string $motivoDescuento): string
-    {
-        if ($descuento === null || bccomp($descuento, '0', 2) <= 0) {
-            return '0.00';
-        }
-
-        if ($credito->tipo_credito !== 'diario') {
-            throw new DomainException('Solo se puede condonar al pagar cuotas de un crédito diario.');
-        }
-
-        if (! $actor->hasRole(['administrador_general', 'sistemas'])) {
-            throw new DomainException('Solo el administrador general puede condonar mora/interés al pagar cuotas.');
-        }
-
-        return $this->resolverDescuento($montoBase, $descuento, $motivoDescuento);
-    }
-
     /**
      * Daily state transitions: activo -> vencido once fecha_vencimiento passes,
      * vencido -> en_venta once the configured días de espera also pass. Each

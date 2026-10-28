@@ -138,6 +138,17 @@ class CreditoPolicy
         return $user->can('creditos_prendarios.editar') && $this->hierarchy->puedeAprobar($user, $credito);
     }
 
+    /**
+     * Misma autoridad amplia que editar() — la restricción dura a
+     * administrador_general/sistemas vive en
+     * CreditoService::regularizarCuotas(), igual que
+     * asegurarPuedeEditarInteres() para editar interés con cobros.
+     */
+    public function regularizar(User $user, Credito $credito): bool
+    {
+        return $user->can('creditos_prendarios.editar') && $this->hierarchy->puedeAprobar($user, $credito);
+    }
+
     public function cambiarRegistradoPor(User $user, Credito $credito): bool
     {
         return $credito->tipo_credito === 'prendario'

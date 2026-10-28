@@ -34,7 +34,10 @@ final class UbicacionAsesorService
     {
         return DB::transaction(function () use ($asesor, $datos): UbicacionAsesor {
             $anterior = UbicacionAsesor::query()->where('user_id', $asesor->id)->first();
-            $capturadoEn = $datos['capturado_en'] ?? now();
+            // La base guarda fechas sin zona horaria en la zona de la app.
+            // El móvil envía ISO en UTC: convertir antes de perder ese offset.
+            $capturadoEn = CarbonImmutable::parse($datos['capturado_en'] ?? now(), config('app.timezone'))
+                ->setTimezone(config('app.timezone'));
 
             $ubicacion = UbicacionAsesor::query()->updateOrCreate(
                 ['user_id' => $asesor->id],
@@ -123,7 +126,7 @@ final class UbicacionAsesorService
      */
     public function asesoresVisiblesPara(User $actor, ?int $agenciaId = null, ?int $asesorId = null): Collection
     {
-        $query = User::role('asesor');
+        $query = User::role('asesor')->with('agencia');
 
         if ($actor->hasRole('administrador_agencia')) {
             $query->where('agencia_id', $actor->agencia_id);

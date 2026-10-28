@@ -1,5 +1,6 @@
 <?php
 
+use App\Modules\Caja\Services\CajaService;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Usuario\Models\User;
@@ -160,4 +161,45 @@ it('forces the administrador_agencia actor own agencia, ignoring any submitted o
     ])->assertSuccessful();
 
     expect($target->fresh()->agencia_id)->toBe($agenciaPropia->id);
+});
+
+it('keeps an asesor Caja agencia in sync when reassigned to a different agencia', function () {
+    $empresa = Empresa::factory()->create();
+    $agenciaVieja = Agencia::factory()->for($empresa)->create();
+    $agenciaNueva = Agencia::factory()->for($empresa)->create();
+
+    $admin = User::factory()->forEmpresa($empresa)->create();
+    $admin->assignRole('administrador_general');
+    Sanctum::actingAs($admin, ['*']);
+
+    $target = User::factory()->forAgencia($agenciaVieja)->create();
+    $target->assignRole('asesor');
+    $caja = app(CajaService::class)->cajaDe($target);
+    expect($caja->agencia_id)->toBe($agenciaVieja->id);
+
+    $this->putJson("/api/usuarios/{$target->id}", [
+        'agencia_id' => $agenciaNueva->id,
+    ])->assertSuccessful();
+
+    expect($target->fresh()->agencia_id)->toBe($agenciaNueva->id)
+        ->and($caja->fresh()->agencia_id)->toBe($agenciaNueva->id);
+});
+
+it('leaves the Caja agencia untouched when the update does not change it', function () {
+    $empresa = Empresa::factory()->create();
+    $agencia = Agencia::factory()->for($empresa)->create();
+
+    $admin = User::factory()->forEmpresa($empresa)->create();
+    $admin->assignRole('administrador_general');
+    Sanctum::actingAs($admin, ['*']);
+
+    $target = User::factory()->forAgencia($agencia)->create();
+    $target->assignRole('asesor');
+    $caja = app(CajaService::class)->cajaDe($target);
+
+    $this->putJson("/api/usuarios/{$target->id}", [
+        'nombre' => 'Nuevo Nombre',
+    ])->assertSuccessful();
+
+    expect($caja->fresh()->updated_at->eq($caja->updated_at))->toBeTrue();
 });

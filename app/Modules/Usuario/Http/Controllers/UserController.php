@@ -2,6 +2,7 @@
 
 namespace App\Modules\Usuario\Http\Controllers;
 
+use App\Modules\Caja\Services\CajaService;
 use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Sistemas\Models\PerfilAcceso;
 use App\Modules\Usuario\Http\Requests\StoreUserRequest;
@@ -41,6 +42,7 @@ class UserController extends Controller
     public function __construct(
         private readonly UserHierarchyService $hierarchy,
         private readonly ConsultaDniService $consultaDni,
+        private readonly CajaService $cajaService,
     ) {}
 
     public function consultarDni(string $dni): JsonResponse
@@ -193,6 +195,7 @@ class UserController extends Controller
         // Whenever the role set or the agencia is part of this request, re-resolve
         // the agencia the same way `store` does: an agencia-level role pins the
         // user to an agencia, a purely empresa-level set clears it.
+        $agenciaAnterior = $user->agencia_id;
         if ($roles !== null || array_key_exists('agencia_id', $data)) {
             $data['agencia_id'] = $this->hierarchy->resolveAgenciaId(
                 $actor,
@@ -205,6 +208,13 @@ class UserController extends Controller
 
         if ($roles !== null) {
             $user->syncRoles($roles);
+        }
+
+        // Si la agencia cambió, su Caja (si ya tenía una) se queda con la
+        // vieja para siempre a menos que se la refresque explícitamente —
+        // ver CajaService::sincronizarAgencia().
+        if ($user->agencia_id !== $agenciaAnterior) {
+            $this->cajaService->sincronizarAgencia($user);
         }
 
         $this->storeImagenes($request, $user, self::IMAGENES, 'usuarios');

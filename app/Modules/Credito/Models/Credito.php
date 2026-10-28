@@ -271,6 +271,11 @@ class Credito extends Model
         return $this->hasMany(Cobro::class, 'credito_id');
     }
 
+    public function regularizaciones(): HasMany
+    {
+        return $this->hasMany(RegularizacionCredito::class, 'credito_id');
+    }
+
     /**
      * La deuda completa a la que pertenece este crédito: el original y todos
      * los sucesores que nacieron de él (refrendo, adenda, refinanciamiento,

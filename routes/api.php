@@ -236,6 +236,8 @@ Route::middleware(['auth:sanctum', EnsurePerfilAcceso::class, EnsureIdempotency:
     Route::post('creditos-prendarios/{credito}/pagar-cuota', [CreditoController::class, 'pagarCuota'])->name('creditos-prendarios.pagar-cuota');
     Route::post('creditos-prendarios/{credito}/pagar-cuotas-preview', [CreditoController::class, 'pagarCuotasPreview'])->name('creditos-prendarios.pagar-cuotas-preview');
     Route::post('creditos-prendarios/{credito}/pagar-cuotas', [CreditoController::class, 'pagarCuotas'])->name('creditos-prendarios.pagar-cuotas');
+    Route::post('creditos-prendarios/{credito}/regularizar', [CreditoController::class, 'regularizar'])->name('creditos-prendarios.regularizar');
+    Route::get('regularizaciones-credito', [CreditoController::class, 'regularizaciones'])->name('regularizaciones-credito.index');
     Route::post('creditos-prendarios/{credito}/liquidar', [CreditoController::class, 'liquidar'])->name('creditos-prendarios.liquidar');
     Route::post('creditos-prendarios/{credito}/adendar', [CreditoController::class, 'adendar'])->name('creditos-prendarios.adendar');
     Route::post('creditos-prendarios/{credito}/refinanciar', [CreditoController::class, 'refinanciar'])->name('creditos-prendarios.refinanciar');

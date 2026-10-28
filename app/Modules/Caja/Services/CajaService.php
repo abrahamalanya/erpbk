@@ -41,6 +41,22 @@ final class CajaService
         );
     }
 
+    /**
+     * Mantiene la agencia de la Caja de $user igual a la suya — cajaDe()
+     * solo la copia al CREARLA, así que si un administrador reasigna a este
+     * usuario a otra agencia después, su Caja (si ya tenía una) se quedaba
+     * con la agencia vieja para siempre: el selector de destinatario de
+     * Billetajes, los reportes de caja y cualquier otro filtro por
+     * caja.agencia_id seguían mostrando la agencia anterior aunque
+     * users.agencia_id ya estuviera actualizado. La llama
+     * UserController::updateUser() cada vez que cambia la agencia de un
+     * usuario. No crea una Caja si el usuario todavía no tiene una.
+     */
+    public function sincronizarAgencia(User $user): void
+    {
+        Caja::query()->where('user_id', $user->id)->update(['agencia_id' => $user->agencia_id]);
+    }
+
     public function aperturar(User $actor): CajaCiclo
     {
         $caja = $this->cajaDe($actor);

@@ -230,10 +230,12 @@ it('allows administrador_general to update the interest rate even after the cré
         ->assertSuccessful()
         ->assertJsonPath('data.interes', '7.50');
 
-    // La cuota pendiente se regenera con la tasa nueva: 500*7.5%*30días/3000 = 37.5 -> redondeado 38.
+    // La cuota se regenera con la tasa nueva: 500*7.5%*30días/3000 = 37.5
+    // exacto — es la única del cronograma, así que no se redondea (queda
+    // exacta, ver recalcularCronogramaInteres()).
     $cuotaDespues = $cuotaAntes->fresh();
-    expect((string) $cuotaDespues->monto_interes)->toBe('38.00')
-        ->and((string) $cuotaDespues->monto_total)->toBe('538.00')
+    expect((string) $cuotaDespues->monto_interes)->toBe('37.50')
+        ->and((string) $cuotaDespues->monto_total)->toBe('537.50')
         ->and((string) $cuotaDespues->monto_capital)->toBe('500.00');
 });
 

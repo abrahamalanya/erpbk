@@ -187,9 +187,13 @@ it('calcula sin cliente ni agencia usando los defaults de empresa y sin persisti
         'tipo_cuota' => 'mensual', 'numero_cuotas' => 3,
     ])->assertSuccessful()->assertJsonPath('data.interes', '8.00');
 
+    // 1000/3 ≈ 333.33 de capital + 80.00 de interés (1000×8%×30/30) por cuota;
+    // las cuotas 1-2 redondean a la décima (413.33 -> 413.30), la 3.ª
+    // (última) queda exacta para cerrar el total real sin sobrante/faltante
+    // -> 413.40. Total: 413.30+413.30+413.40 = 1240.00.
     expect($respuesta->json('data.cronograma'))->toHaveCount(3)
         ->and($respuesta->json('data.cronograma.2.saldo_pendiente'))->toBe('0.00')
-        ->and($respuesta->json('data.monto_total_pagar'))->toBe('1239.00')
+        ->and($respuesta->json('data.monto_total_pagar'))->toBe('1240.00')
         ->and(SimulacionCredito::count())->toBe(0);
     $this->assertDatabaseCount('creditos_prendarios', 0);
     $this->assertDatabaseCount('cuotas_credito_prendario', 0);
@@ -221,7 +225,7 @@ it('valida cuotas y rechaza resultados inválidos antes de persistir', function 
 })->with([
     'máximo configurado' => [['numero_cuotas' => 13], 'numero_cuotas'],
     'cuotas fraccionarias' => [['numero_cuotas' => 1.5], 'numero_cuotas'],
-    'interés negativo por redondeo' => [['monto_prestamo' => '0.01', 'interes' => '0', 'numero_cuotas' => 1], 'numero_cuotas'],
+    'interés negativo por redondeo' => [['monto_prestamo' => '0.08', 'interes' => '0', 'numero_cuotas' => 2], 'numero_cuotas'],
 ]);
 
 it('protege cálculo y defaults con los permisos existentes', function () {
