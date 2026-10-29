@@ -11,8 +11,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
  * Historial de "regularizaciones" de un crédito diario — ver
- * CreditoService::regularizarCuotas(): condona por completo un número de
- * cuotas pendientes (capital+interés+mora) sin generar ningún Cobro ni
+ * CreditoService::regularizarCuotas(): condona cuotas completas o un monto
+ * sobre las cuotas pendientes (capital+interés+mora) sin generar ningún Cobro ni
  * movimiento de caja. Esta fila es el único registro contable/auditable de
  * la operación.
  */
@@ -21,6 +21,8 @@ class RegularizacionCredito extends Model
     use BelongsToTenant;
 
     protected $table = 'regularizaciones_credito';
+
+    protected $hidden = ['reversion'];
 
     /**
      * @var list<string>
@@ -33,6 +35,7 @@ class RegularizacionCredito extends Model
         'numero_cuotas',
         'monto_condonado',
         'motivo',
+        'reversion',
     ];
 
     /**
@@ -41,8 +44,10 @@ class RegularizacionCredito extends Model
     protected function casts(): array
     {
         return [
+            // Cuotas canceladas por completo; puede ser cero en un abono parcial.
             'numero_cuotas' => 'integer',
             'monto_condonado' => 'decimal:2',
+            'reversion' => 'array',
         ];
     }
 

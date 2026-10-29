@@ -9,6 +9,7 @@ use App\Modules\Credito\Models\ConfiguracionCredito;
 use App\Modules\Credito\Models\Credito;
 use App\Modules\Credito\Models\CuotaCredito;
 use App\Modules\Credito\Models\RegularizacionCredito;
+use App\Modules\Credito\Services\CreditoService;
 use App\Modules\CreditoPrendario\Models\Bien;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
@@ -202,6 +203,204 @@ it('denies regularizar a credit that is not diario, even for administrador_gener
         'numero_cuotas' => 1,
         'motivo' => 'no debería permitirse',
     ])->assertStatus(422);
+});
+
+it('regulariza por monto conservando el saldo parcial y sin movimientos de caja', function () {
+    Sanctum::actingAs($this->adminGeneral, ['*']);
+    $movimientos = CajaMovimiento::query()->count();
+
+    foreach (['60.00', '180.00'] as $monto) {
+        $this->postJson("/api/creditos-prendarios/{$this->credito->id}/regularizar", [
+            'monto' => $monto, 'motivo' => 'Regularización por monto',
+        ])->assertSuccessful()->assertJsonPath('data.estado', 'activo');
+    }
+
+    $cuotas = $this->credito->cuotas()->orderBy('numero_cuota')->get();
+    expect((string) $cuotas[0]->monto_abonado)->toBe('102.50')
+        ->and((string) $cuotas[0]->mora_pagada)->toBe('5.12')
+        ->and($cuotas[0]->pagada_at)->not->toBeNull()
+        ->and($cuotas[1]->pagada_at)->not->toBeNull()
+        ->and((string) $cuotas[2]->monto_abonado)->toBe('24.76')
+        ->and($cuotas[2]->pagada_at)->toBeNull()
+        ->and(Cobro::where('credito_id', $this->credito->id)->count())->toBe(0)
+        ->and(CajaMovimiento::query()->count())->toBe($movimientos);
+
+    $historial = RegularizacionCredito::where('credito_id', $this->credito->id)->orderBy('id')->get();
+    expect($historial->pluck('numero_cuotas')->all())->toBe([0, 2])
+        ->and((string) $historial[0]->monto_condonado)->toBe('60.00')
+        ->and((string) $historial[1]->monto_condonado)->toBe('180.00');
+});
+
+it('liquida por monto exacto y rechaza el exceso sin modificar cuotas', function () {
+    Sanctum::actingAs($this->adminGeneral, ['*']);
+    $total = $this->postJson("/api/creditos-prendarios/{$this->credito->id}/pagar-cuotas-preview", [
+        'numero_cuotas' => 5,
+    ])->assertSuccessful()->json('data.total');
+
+    $this->postJson("/api/creditos-prendarios/{$this->credito->id}/regularizar", [
+        'monto' => bcadd($total, '0.01', 2), 'motivo' => 'Exceso',
+    ])->assertUnprocessable();
+    expect($this->credito->cuotas()->pagadas()->count())->toBe(0)
+        ->and(RegularizacionCredito::where('credito_id', $this->credito->id)->count())->toBe(0);
+
+    $this->postJson("/api/creditos-prendarios/{$this->credito->id}/regularizar", [
+        'monto' => $total, 'motivo' => 'Liquidación por monto',
+    ])->assertSuccessful()->assertJsonPath('data.estado', 'liquidado');
+    expect($this->credito->cuotas()->pagadas()->count())->toBe(5);
+});
+
+it('valida un único criterio de regularización y montos positivos con centavos', function (array $criterio) {
+    Sanctum::actingAs($this->adminGeneral, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$this->credito->id}/regularizar", [
+        ...$criterio, 'motivo' => 'Validación',
+    ])->assertUnprocessable();
+})->with([
+    [[]],
+    [['monto' => '0']],
+    [['monto' => '-1']],
+    [['monto' => '1.001']],
+    [['monto' => 'abc']],
+    [['monto' => '60', 'numero_cuotas' => 1]],
+]);
+
+it('elimina regularizaciones por monto en orden inverso y restaura los abonos anteriores', function () {
+    Sanctum::actingAs($this->adminGeneral, ['*']);
+    $original = $this->credito->cuotas()->orderBy('id')->get()->map->only(['monto_abonado', 'mora_pagada', 'pagada_at', 'cobro_id'])->all();
+    $movimientos = CajaMovimiento::query()->count();
+    $this->postJson("/api/creditos-prendarios/{$this->credito->id}/regularizar", [
+        'monto' => '60.00', 'motivo' => 'Primera',
+    ])->assertSuccessful();
+    $primera = RegularizacionCredito::latest('id')->firstOrFail();
+    $parcial = $this->credito->cuotas()->orderBy('id')->get()->map->only(['monto_abonado', 'mora_pagada', 'pagada_at', 'cobro_id'])->all();
+    $this->postJson("/api/creditos-prendarios/{$this->credito->id}/regularizar", [
+        'monto' => '180.00', 'motivo' => 'Segunda',
+    ])->assertSuccessful();
+    $segunda = RegularizacionCredito::latest('id')->firstOrFail();
+
+    $this->deleteJson("/api/regularizaciones-credito/{$primera->id}")->assertUnprocessable();
+    $this->getJson('/api/regularizaciones-credito?per_page=1&page=2')->assertSuccessful()
+        ->assertJsonPath('data.data.0.id', $primera->id)->assertJsonPath('data.data.0.puede_eliminar', false);
+    $this->deleteJson("/api/regularizaciones-credito/{$segunda->id}")->assertSuccessful();
+    expect($this->credito->cuotas()->orderBy('id')->get()->map->only(['monto_abonado', 'mora_pagada', 'pagada_at', 'cobro_id'])->all())->toEqual($parcial);
+    $this->getJson('/api/regularizaciones-credito')->assertSuccessful()->assertJsonPath('data.data.0.puede_eliminar', true);
+    $this->deleteJson("/api/regularizaciones-credito/{$primera->id}")->assertSuccessful();
+    expect($this->credito->cuotas()->orderBy('id')->get()->map->only(['monto_abonado', 'mora_pagada', 'pagada_at', 'cobro_id'])->all())->toEqual($original)
+        ->and(CajaMovimiento::query()->count())->toBe($movimientos)
+        ->and(RegularizacionCredito::where('credito_id', $this->credito->id)->count())->toBe(0);
+    $this->deleteJson("/api/regularizaciones-credito/{$primera->id}")->assertNotFound();
+});
+
+it('impone el orden por cliente aunque las regularizaciones pertenezcan a créditos distintos', function () {
+    Sanctum::actingAs($this->adminGeneral, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$this->credito->id}/regularizar", ['monto' => '60', 'motivo' => 'Primera'])->assertSuccessful();
+    $primera = RegularizacionCredito::latest('id')->firstOrFail();
+    $otro = $this->credito->replicate();
+    $otro->codigo = $this->credito->codigo.'-otro';
+    $otro->save();
+    $cuota = $this->credito->cuotas()->firstOrFail()->replicate();
+    $cuota->credito_id = $otro->id;
+    $cuota->monto_abonado = '0.00';
+    $cuota->mora_pagada = null;
+    $cuota->save();
+    $this->postJson("/api/creditos-prendarios/{$otro->id}/regularizar", ['monto' => '10', 'motivo' => 'Segunda'])->assertSuccessful();
+    $segunda = RegularizacionCredito::latest('id')->firstOrFail();
+    $this->deleteJson("/api/regularizaciones-credito/{$primera->id}")->assertUnprocessable();
+    $this->deleteJson("/api/regularizaciones-credito/{$segunda->id}")->assertSuccessful();
+    $this->deleteJson("/api/regularizaciones-credito/{$primera->id}")->assertSuccessful();
+});
+
+it('reabre un crédito liquidado por regularización y retira su carta de no adeudo', function () {
+    Sanctum::actingAs($this->adminGeneral, ['*']);
+    $garantias = $this->credito->garantiasDiarias()->get()->pluck('estado', 'id')->all();
+    $this->postJson("/api/creditos-prendarios/{$this->credito->id}/regularizar", ['numero_cuotas' => 5, 'motivo' => 'Todas'])->assertSuccessful();
+    $registro = RegularizacionCredito::latest('id')->firstOrFail();
+    expect($this->credito->fresh()->estado)->toBe('liquidado');
+    $this->deleteJson("/api/regularizaciones-credito/{$registro->id}")->assertSuccessful();
+    expect($this->credito->fresh()->estado)->toBe('activo')
+        ->and($this->credito->cuotas()->pagadas()->count())->toBe(0)
+        ->and($this->credito->documentos()->where('tipo', 'carta_no_adeudo')->count())->toBe(0)
+        ->and($this->credito->garantiasDiarias()->get()->pluck('estado', 'id')->all())->toBe($garantias);
+});
+
+it('protege pagos reales anteriores y rechaza eliminar mientras existan cobros posteriores', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$this->credito->id}/pagar-cuotas", ['monto_pagado' => '20', 'medio' => 'efectivo'])->assertCreated();
+    $antes = $this->credito->cuotas()->firstOrFail()->only(['monto_abonado', 'mora_pagada', 'pagada_at', 'cobro_id']);
+    Sanctum::actingAs($this->adminGeneral, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$this->credito->id}/regularizar", ['monto' => '60', 'motivo' => 'Parcial'])->assertSuccessful();
+    $registro = RegularizacionCredito::latest('id')->firstOrFail();
+    Sanctum::actingAs($this->asesor, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$this->credito->id}/pagar-cuotas", ['monto_pagado' => '10', 'medio' => 'efectivo'])->assertCreated();
+    $cobro = Cobro::latest('id')->firstOrFail();
+    Sanctum::actingAs($this->adminGeneral, ['*']);
+    $this->deleteJson("/api/regularizaciones-credito/{$registro->id}")->assertUnprocessable();
+    app(CreditoService::class)->anularCobro($cobro, $this->adminGeneral);
+    $this->deleteJson("/api/regularizaciones-credito/{$registro->id}")->assertSuccessful();
+    expect($this->credito->cuotas()->firstOrFail()->only(['monto_abonado', 'mora_pagada', 'pagada_at', 'cobro_id']))->toEqual($antes);
+});
+
+it('restaura regularizaciones antiguas por cuotas sin desglose', function () {
+    $this->freezeTime();
+    Sanctum::actingAs($this->adminGeneral, ['*']);
+    foreach ([1, 2] as $numero) {
+        $this->postJson("/api/creditos-prendarios/{$this->credito->id}/regularizar", ['numero_cuotas' => $numero, 'motivo' => 'Antigua'])->assertSuccessful();
+        RegularizacionCredito::latest('id')->firstOrFail()->update(['reversion' => null]);
+    }
+    foreach (RegularizacionCredito::orderByDesc('id')->get() as $registro) {
+        $this->deleteJson("/api/regularizaciones-credito/{$registro->id}")->assertSuccessful();
+    }
+    expect($this->credito->cuotas()->pagadas()->count())->toBe(0)
+        ->and((string) $this->credito->cuotas()->firstOrFail()->monto_abonado)->toBe('0.00');
+});
+
+it('rechaza reconstruir abonos antiguos ambiguos sin cambiar saldos', function () {
+    Sanctum::actingAs($this->adminGeneral, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$this->credito->id}/regularizar", ['monto' => '60', 'motivo' => 'Sin desglose'])->assertSuccessful();
+    RegularizacionCredito::latest('id')->firstOrFail()->update(['reversion' => null]);
+    $this->postJson("/api/creditos-prendarios/{$this->credito->id}/regularizar", ['monto' => '20', 'motivo' => 'Otro abono sin desglose'])->assertSuccessful();
+    $registro = RegularizacionCredito::latest('id')->firstOrFail();
+    $registro->update(['reversion' => null]);
+    $antes = $this->credito->cuotas()->firstOrFail()->monto_abonado;
+    $this->deleteJson("/api/regularizaciones-credito/{$registro->id}")->assertUnprocessable();
+    expect($registro->fresh())->not->toBeNull()
+        ->and($this->credito->cuotas()->firstOrFail()->monto_abonado)->toBe($antes);
+});
+
+it('restaura un abono antiguo por monto cuando su distribución se identifica sin ambigüedad', function () {
+    Sanctum::actingAs($this->adminGeneral, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$this->credito->id}/regularizar", ['monto' => '60', 'motivo' => 'Antigua por monto'])->assertSuccessful();
+    $registro = RegularizacionCredito::latest('id')->firstOrFail();
+    $registro->update(['reversion' => null]);
+    $this->deleteJson("/api/regularizaciones-credito/{$registro->id}")->assertSuccessful();
+    $cuota = $this->credito->cuotas()->firstOrFail();
+    expect((string) $cuota->monto_abonado)->toBe('0.00')
+        ->and((string) $cuota->mora_pagada)->toBe('0.00');
+});
+
+it('no restaura parcialmente si otra cuota afectada cambió después de regularizar', function () {
+    Sanctum::actingAs($this->adminGeneral, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$this->credito->id}/regularizar", ['numero_cuotas' => 2, 'motivo' => 'Dos cuotas'])->assertSuccessful();
+    $registro = RegularizacionCredito::latest('id')->firstOrFail();
+    $cuotas = $this->credito->cuotas()->orderBy('numero_cuota')->get();
+    $cuotas[1]->update(['monto_total' => '200.00']);
+    $this->deleteJson("/api/regularizaciones-credito/{$registro->id}")->assertUnprocessable();
+    expect((string) $cuotas[0]->fresh()->monto_abonado)->toBe('102.50')
+        ->and($cuotas[0]->fresh()->pagada_at)->not->toBeNull()
+        ->and($registro->fresh())->not->toBeNull();
+});
+
+it('protege la eliminación por rol y por empresa', function () {
+    Sanctum::actingAs($this->adminGeneral, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$this->credito->id}/regularizar", ['monto' => '60', 'motivo' => 'Protegida'])->assertSuccessful();
+    $registro = RegularizacionCredito::latest('id')->firstOrFail();
+    Sanctum::actingAs($this->asesor, ['*']);
+    $this->deleteJson("/api/regularizaciones-credito/{$registro->id}")->assertForbidden();
+    Sanctum::actingAs($this->adminAgencia, ['*']);
+    $this->deleteJson("/api/regularizaciones-credito/{$registro->id}")->assertUnprocessable();
+    $otroAdmin = User::factory()->forEmpresa(Empresa::factory()->create())->create();
+    $otroAdmin->assignRole('administrador_general');
+    Sanctum::actingAs($otroAdmin, ['*']);
+    $this->deleteJson("/api/regularizaciones-credito/{$registro->id}")->assertNotFound();
 });
 
 it('requires a motivo to regularizar', function () {

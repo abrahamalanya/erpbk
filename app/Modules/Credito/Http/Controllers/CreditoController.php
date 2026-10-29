@@ -25,6 +25,7 @@ use App\Modules\Credito\Http\Requests\VenderCreditoRequest;
 use App\Modules\Credito\Models\Credito;
 use App\Modules\Credito\Models\CuotaCredito;
 use App\Modules\Credito\Models\DocumentoCredito;
+use App\Modules\Credito\Models\RegularizacionCredito;
 use App\Modules\Credito\Services\ConfiguracionCreditoService;
 use App\Modules\Credito\Services\CreditoHierarchyService;
 use App\Modules\Credito\Services\CreditoService;
@@ -424,7 +425,13 @@ class CreditoController extends Controller
 
         $data = $request->validated();
 
-        $credito = $this->creditoService->regularizarCuotas($credito, $request->user(), (int) $data['numero_cuotas'], $data['motivo']);
+        $credito = $this->creditoService->regularizarCuotas(
+            $credito,
+            $request->user(),
+            isset($data['numero_cuotas']) ? (int) $data['numero_cuotas'] : null,
+            $data['motivo'],
+            isset($data['monto']) ? (string) $data['monto'] : null,
+        );
 
         return $this->successResponse($credito, 'Crédito regularizado');
     }
@@ -434,6 +441,15 @@ class CreditoController extends Controller
      * que index()/el mapa de asesores. Filtros opcionales: agencia_id,
      * asesor_id (registrado_por del crédito), desde/hasta.
      */
+    public function eliminarRegularizacion(RegularizacionCredito $regularizacion): JsonResponse
+    {
+        Gate::authorize('regularizar', $regularizacion->credito);
+
+        $this->creditoService->eliminarRegularizacion($regularizacion, request()->user());
+
+        return $this->successResponse(null, 'Regularización eliminada y saldos restaurados');
+    }
+
     public function regularizaciones(): JsonResponse
     {
         Gate::authorize('viewAny', Credito::class);

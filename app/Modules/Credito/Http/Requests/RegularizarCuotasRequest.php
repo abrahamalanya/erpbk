@@ -23,7 +23,8 @@ class RegularizarCuotasRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'numero_cuotas' => ['required', 'integer', 'min:1'],
+            'numero_cuotas' => ['required_without:monto', 'prohibits:monto', 'nullable', 'integer', 'min:1'],
+            'monto' => ['required_without:numero_cuotas', 'prohibits:numero_cuotas', 'nullable', 'numeric', 'decimal:0,2', 'min:0.01', 'max:9999999999.99'],
             'motivo' => ['required', 'string', 'max:255'],
         ];
     }

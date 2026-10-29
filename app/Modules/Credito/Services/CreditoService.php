@@ -6,6 +6,7 @@ use App\Modules\Caja\Events\CajaActualizada;
 use App\Modules\Caja\Models\Caja;
 use App\Modules\Caja\Models\CajaCiclo;
 use App\Modules\Caja\Models\CajaMovimiento;
+use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Cobranza\Models\Cobro;
 use App\Modules\Cobranza\Models\CobroCuotaAbono;
 use App\Modules\Credito\Events\CreditoActualizado;
@@ -1983,7 +1984,8 @@ final class CreditoService
 
     /**
      * "Regulariza" un crédito diario atrasado: condona por completo las
-     * `$numeroCuotas` cuotas más antiguas pendientes (capital+interés+mora,
+     * `$numeroCuotas` cuotas más antiguas pendientes, o aplica `$monto`
+     * dejando un abono parcial en la siguiente (capital+interés+mora,
      * mismo cálculo que calcularMontoPagoCuotas()/pagarCuotas()) sin que
      * entre dinero por ese acto — es una corrección administrativa con
      * auditoría (ver RegularizacionCredito), no un cobro: no genera `Cobro`
@@ -1998,7 +2000,18 @@ final class CreditoService
      * recalcularCronogramaInteres()), para que el cronograma quede
      * consistente de punta a punta.
      */
-    public function regularizarCuotas(Credito $credito, User $actor, int $numeroCuotas, string $motivo): Credito
+    public function regularizarCuotas(Credito $credito, User $actor, ?int $numeroCuotas, string $motivo, ?string $monto = null): Credito
+    {
+        return DB::transaction(function () use ($credito, $actor, $numeroCuotas, $motivo, $monto): Credito {
+            Cliente::query()->whereKey($credito->cliente_id)->lockForUpdate()->firstOrFail();
+            $credito = Credito::query()->lockForUpdate()->findOrFail($credito->id);
+            $credito->cuotas()->lockForUpdate()->get();
+
+            return $this->aplicarRegularizacion($credito, $actor, $numeroCuotas, $motivo, $monto);
+        });
+    }
+
+    private function aplicarRegularizacion(Credito $credito, User $actor, ?int $numeroCuotas, string $motivo, ?string $monto): Credito
     {
         if ($credito->tipo_credito !== 'diario') {
             throw new DomainException('Solo se puede regularizar un crédito diario.');
@@ -2012,52 +2025,236 @@ final class CreditoService
             throw new DomainException('Solo se puede regularizar un crédito activo o vencido.');
         }
 
-        $calculo = $this->calcularMontoPagoCuotas($credito, $numeroCuotas);
+        if (($numeroCuotas === null) === ($monto === null)) {
+            throw new DomainException('Indica un monto o un número de cuotas para regularizar.');
+        }
+
+        if ($monto !== null && (! is_numeric($monto) || bccomp($monto, '0', 2) <= 0)) {
+            throw new DomainException('El monto a regularizar debe ser mayor a cero.');
+        }
+
+        $calculo = $numeroCuotas !== null
+            ? $this->calcularMontoPagoCuotas($credito, $numeroCuotas)
+            : $this->calcularAmortizacion($credito, $monto);
+
+        if (bccomp($calculo['vuelto'], '0', 2) > 0) {
+            throw new DomainException('El monto a regularizar supera la deuda pendiente del crédito.');
+        }
+
         $esUltimaCuota = $calculo['es_ultima_cuota'];
+        $numeroCuotas = count(array_filter($calculo['cuotas'], fn (array $fila): bool => $fila['completa']));
+        $reversion = [
+            'estado_anterior' => $credito->estado,
+            'ultimo_cobro_id' => (int) Cobro::query()->where('credito_id', $credito->id)->max('id'),
+            'garantias' => $esUltimaCuota ? $credito->garantiasDiarias()->get()->map->only(['id', 'estado'])->all() : [],
+            'carta_id' => null,
+            'cuotas' => [],
+        ];
 
-        return DB::transaction(function () use ($credito, $actor, $calculo, $esUltimaCuota, $numeroCuotas, $motivo): Credito {
-            if ($esUltimaCuota) {
-                // El diario no tiene garantía física: salta directo a
-                // 'liquidado' + carta de no adeudo, igual que pagarCuotas().
-                $credito->update(['estado' => 'liquidado']);
+        if ($esUltimaCuota) {
+            // El diario no tiene garantía física: salta directo a
+            // 'liquidado' + carta de no adeudo, igual que pagarCuotas().
+            $credito->update(['estado' => 'liquidado']);
 
-                $modeloGarantia = $this->tipos->paraCredito($credito)->garantiaModelo();
-                $modeloGarantia::query()->whereIn('id', $this->garantiasDe($credito)->get()->pluck('id'))->update(['estado' => 'recuperado']);
+            $modeloGarantia = $this->tipos->paraCredito($credito)->garantiaModelo();
+            $modeloGarantia::query()->whereIn('id', $this->garantiasDe($credito)->get()->pluck('id'))->update(['estado' => 'recuperado']);
 
-                $this->documentos->generarCartaNoAdeudo($credito, $actor);
-            }
+            $reversion['carta_id'] = $this->documentos->generarCartaNoAdeudo($credito, $actor)->id;
+        }
 
-            foreach ($calculo['cuotas'] as $fila) {
-                $cuota = $credito->cuotas()->where('numero_cuota', $fila['numero_cuota'])->firstOrFail();
+        foreach ($calculo['cuotas'] as $fila) {
+            $cuota = $credito->cuotas()->where('numero_cuota', $fila['numero_cuota'])->firstOrFail();
+            $reversion['cuotas'][] = [
+                'id' => $cuota->id,
+                'antes' => $cuota->only(['monto_abonado', 'mora_pagada', 'pagada_at', 'cobro_id']),
+            ];
 
-                $cuota->update([
-                    'monto_abonado' => bcadd((string) $cuota->monto_abonado, $fila['abono'], 2),
-                    'mora_pagada' => bcadd((string) ($cuota->mora_pagada ?? 0), $fila['mora'], 2),
-                    'pagada_at' => $fila['completa'] ? now() : $cuota->pagada_at,
-                ]);
-            }
-
-            RegularizacionCredito::query()->create([
-                'empresa_id' => $credito->empresa_id,
-                'agencia_id' => $credito->agencia_id,
-                'credito_id' => $credito->id,
-                'actor_id' => $actor->id,
-                'numero_cuotas' => $numeroCuotas,
-                'monto_condonado' => $calculo['total'],
-                'motivo' => $motivo,
+            $cuota->update([
+                'monto_abonado' => bcadd((string) $cuota->monto_abonado, $fila['abono'], 2),
+                'mora_pagada' => bcadd((string) ($cuota->mora_pagada ?? 0), $fila['mora'], 2),
+                'pagada_at' => $fila['completa'] ? now() : $cuota->pagada_at,
             ]);
+        }
 
-            $this->recalcularCronogramaInteres($credito);
+        $this->recalcularCronogramaInteres($credito);
+        foreach ($reversion['cuotas'] as &$detalle) {
+            $detalle['despues'] = $credito->cuotas()->findOrFail($detalle['id'])
+                ->only(['monto_abonado', 'mora_pagada', 'pagada_at', 'cobro_id', 'monto_total']);
+        }
+        unset($detalle);
 
-            $credito = $credito->fresh(['garantiasDiarias']);
-            $this->notificar($credito);
+        RegularizacionCredito::query()->create([
+            'empresa_id' => $credito->empresa_id,
+            'agencia_id' => $credito->agencia_id,
+            'credito_id' => $credito->id,
+            'actor_id' => $actor->id,
+            'numero_cuotas' => $numeroCuotas,
+            'monto_condonado' => $calculo['total'],
+            'motivo' => $motivo,
+            'reversion' => $reversion,
+        ]);
 
-            if ($esUltimaCuota) {
-                $this->notificaciones->enviar(collect([$credito->registradoPor]), new CreditoLiquidadoNotification($credito));
+        $credito = $credito->fresh(['garantiasDiarias']);
+        $this->notificar($credito);
+
+        if ($esUltimaCuota) {
+            $this->notificaciones->enviar(collect([$credito->registradoPor]), new CreditoLiquidadoNotification($credito));
+        }
+
+        return $credito;
+
+    }
+
+    public function eliminarRegularizacion(RegularizacionCredito $regularizacion, User $actor): void
+    {
+        if (! $actor->hasAnyRole(['administrador_general', 'sistemas'])) {
+            throw new DomainException('Solo el administrador general o sistemas puede eliminar una regularización.');
+        }
+
+        DB::transaction(function () use ($regularizacion, $actor): void {
+            $credito = $regularizacion->credito;
+            Cliente::query()->whereKey($credito->cliente_id)->lockForUpdate()->firstOrFail();
+            $credito = Credito::query()->lockForUpdate()->findOrFail($credito->id);
+            $regularizacion = RegularizacionCredito::query()->lockForUpdate()->findOrFail($regularizacion->id);
+
+            $ultima = RegularizacionCredito::query()
+                ->whereHas('credito', fn (Builder $q) => $q->where('cliente_id', $credito->cliente_id))
+                ->max('id');
+            if ((int) $ultima !== $regularizacion->id) {
+                throw new DomainException('Debes eliminar primero la última regularización registrada de este cliente.');
+            }
+            if ($credito->tipo_credito !== 'diario' || ! in_array($credito->estado, ['activo', 'vencido', 'liquidado'], true)) {
+                throw new DomainException('El estado actual del crédito no permite eliminar esta regularización.');
             }
 
-            return $credito;
+            $cuotas = $credito->cuotas()->orderBy('numero_cuota')->lockForUpdate()->get()->keyBy('id');
+            $reversion = $regularizacion->reversion ?? $this->reconstruirRegularizacion($regularizacion, $credito, $cuotas);
+            $hayCobrosPosteriores = Cobro::query()->where('credito_id', $credito->id)->where('estado', '!=', 'anulado')
+                ->where('id', '>', $reversion['ultimo_cobro_id'])->exists();
+            if ($hayCobrosPosteriores) {
+                throw new DomainException('Primero debes anular los cobros posteriores a esta regularización.');
+            }
+
+            foreach ($reversion['cuotas'] as $detalle) {
+                $cuota = $cuotas->get($detalle['id']);
+                if (! $cuota || json_encode($cuota->only(array_keys($detalle['despues']))) !== json_encode($detalle['despues'])) {
+                    throw new DomainException('Las cuotas cambiaron después de regularizar. No se puede restaurar sus saldos de forma segura.');
+                }
+                $cuota->update($detalle['antes']);
+            }
+
+            if ($credito->estado === 'liquidado') {
+                if (! $reversion['carta_id']) {
+                    throw new DomainException('No se pudo identificar la carta de no adeudo de esta regularización.');
+                }
+                $credito->documentos()->whereKey($reversion['carta_id'])->where('tipo', 'carta_no_adeudo')->delete();
+                foreach ($reversion['garantias'] as $garantia) {
+                    $credito->garantiasDiarias()->whereKey($garantia['id'])->update(['estado' => $garantia['estado']]);
+                }
+                $credito->update(['estado' => $reversion['estado_anterior']]);
+            }
+
+            Log::info('Regularización eliminada', [
+                'actor_id' => $actor->id,
+                'regularizacion' => $regularizacion->toArray(),
+                'reversion' => $reversion,
+            ]);
+            $regularizacion->delete();
+            $this->notificar($credito->fresh());
         });
+    }
+
+    /** Reconstruye registros anteriores al desglose, descontando únicamente abonos ajenos a caja. */
+    private function reconstruirRegularizacion(RegularizacionCredito $regularizacion, Credito $credito, Collection $cuotas): array
+    {
+        $error = 'No se puede reconstruir esta regularización antigua sin alterar pagos. Requiere revisión del historial.';
+        if (Cobro::query()->where('credito_id', $credito->id)->where('estado', '!=', 'anulado')
+            ->where('created_at', '>=', $regularizacion->created_at)->exists()) {
+            throw new DomainException('Primero debes anular los cobros posteriores a esta regularización antigua.');
+        }
+
+        $abonos = CobroCuotaAbono::query()->whereIn('cuota_credito_id', $cuotas->keys())
+            ->whereHas('cobro', fn (Builder $q) => $q->where('estado', '!=', 'anulado'))->get()->groupBy('cuota_credito_id');
+        $residuales = [];
+        $pagosReales = [];
+        $total = '0.00';
+        foreach ($cuotas as $cuota) {
+            $pagos = $abonos->get($cuota->id, collect());
+            $capital = $pagos->reduce(fn (string $s, CobroCuotaAbono $a): string => bcadd($s, $a->monto_cuota, 2), '0.00');
+            $mora = $pagos->reduce(fn (string $s, CobroCuotaAbono $a): string => bcadd($s, $a->monto_mora, 2), '0.00');
+            // Un cobro antiguo sin desglose tampoco puede confundirse con una condonación.
+            if ($cuota->cobro_id && $pagos->isEmpty()) {
+                $capital = (string) $cuota->monto_abonado;
+                $mora = (string) ($cuota->mora_pagada ?? '0.00');
+            }
+            $residuales[$cuota->id] = [
+                'mora' => bcsub((string) ($cuota->mora_pagada ?? '0.00'), $mora, 2),
+                'abono' => bcsub((string) $cuota->monto_abonado, $capital, 2),
+            ];
+            $pagosReales[$cuota->id] = ['abono' => $capital, 'mora' => $mora];
+            foreach ($residuales[$cuota->id] as $importe) {
+                if (bccomp($importe, '0', 2) < 0) {
+                    throw new DomainException($error);
+                }
+                $total = bcadd($total, $importe, 2);
+            }
+        }
+
+        $historial = RegularizacionCredito::query()->where('credito_id', $credito->id)->orderBy('id')->get();
+        $esperado = $historial->reduce(fn (string $s, RegularizacionCredito $r): string => bcadd($s, $r->monto_condonado, 2), '0.00');
+        if (bccomp($total, $esperado, 2) !== 0) {
+            throw new DomainException($error);
+        }
+        // Con un único registro todo el residuo le pertenece. Sin mora,
+        // la distribución por antigüedad también es inequívoca con abonos parciales.
+        $distribucionExacta = $historial->count() === 1
+            || ! collect($residuales)->contains(fn (array $r): bool => bccomp($r['mora'], '0', 2) > 0);
+
+        $detalle = [];
+        foreach ($historial as $registro) {
+            $restante = (string) $registro->monto_condonado;
+            foreach ($cuotas as $cuota) {
+                $aplicado = ['mora' => '0.00', 'abono' => '0.00'];
+                foreach (array_keys($aplicado) as $campo) {
+                    $disponible = $residuales[$cuota->id][$campo];
+                    $aplicado[$campo] = bccomp($restante, $disponible, 2) >= 0 ? $disponible : $restante;
+                    $restante = bcsub($restante, $aplicado[$campo], 2);
+                    $residuales[$cuota->id][$campo] = bcsub($disponible, $aplicado[$campo], 2);
+                }
+                if ($registro->id === $regularizacion->id && bccomp(bcadd($aplicado['mora'], $aplicado['abono'], 2), '0', 2) > 0) {
+                    $antes = $cuota->only(['monto_abonado', 'mora_pagada', 'pagada_at', 'cobro_id']);
+                    $antes['monto_abonado'] = bcsub((string) $cuota->monto_abonado, $aplicado['abono'], 2);
+                    $antes['mora_pagada'] = bcsub((string) ($cuota->mora_pagada ?? '0.00'), $aplicado['mora'], 2);
+                    // Sin desglose no se puede adivinar cuándo se aplicó una mora parcial.
+                    // Si la distribución es ambigua, exige cuotas completas identificables.
+                    if (! $distribucionExacta && (! $cuota->pagada_at || $cuota->cobro_id
+                        || ! $cuota->pagada_at->equalTo($regularizacion->created_at)
+                        || bccomp($antes['monto_abonado'], $pagosReales[$cuota->id]['abono'], 2) !== 0
+                        || bccomp($antes['mora_pagada'], $pagosReales[$cuota->id]['mora'], 2) !== 0)) {
+                        throw new DomainException($error);
+                    }
+                    $antes['pagada_at'] = null;
+                    $detalle[] = ['id' => $cuota->id, 'antes' => $antes,
+                        'despues' => $cuota->only(['monto_abonado', 'mora_pagada', 'pagada_at', 'cobro_id', 'monto_total'])];
+                }
+            }
+            if (bccomp($restante, '0', 2) !== 0) {
+                throw new DomainException($error);
+            }
+        }
+
+        $completas = count(array_filter($detalle, fn (array $d): bool => $cuotas->get($d['id'])->pagada_at !== null));
+        if ($completas !== $regularizacion->numero_cuotas) {
+            throw new DomainException($error);
+        }
+
+        return [
+            'estado_anterior' => 'activo',
+            'ultimo_cobro_id' => (int) Cobro::query()->where('credito_id', $credito->id)->max('id'),
+            'garantias' => $credito->garantiasDiarias()->get()->map(fn (Model $g): array => ['id' => $g->id, 'estado' => 'en_garantia'])->all(),
+            'carta_id' => $credito->documentos()->where('tipo', 'carta_no_adeudo')->latest('id')->value('id'),
+            'cuotas' => $detalle,
+        ];
     }
 
     /**
@@ -2094,7 +2291,18 @@ final class CreditoService
             $query->whereDate('created_at', '<=', $hasta);
         }
 
-        return $query->orderByDesc('created_at')->paginate($porPagina);
+        $reporte = $query->orderByDesc('id')->paginate($porPagina);
+        $clientes = $reporte->getCollection()->pluck('credito.cliente_id')->unique();
+        $ultimas = RegularizacionCredito::query()
+            ->join('creditos_prendarios as credito_cliente', 'credito_cliente.id', '=', 'regularizaciones_credito.credito_id')
+            ->whereIn('credito_cliente.cliente_id', $clientes)
+            ->groupBy('credito_cliente.cliente_id')
+            ->selectRaw('MAX(regularizaciones_credito.id) as ultima_id')->pluck('ultima_id')->all();
+        foreach ($reporte as $registro) {
+            $registro->setAttribute('puede_eliminar', $actor->hasAnyRole(['administrador_general', 'sistemas']) && in_array($registro->id, $ultimas));
+        }
+
+        return $reporte;
     }
 
     /**
