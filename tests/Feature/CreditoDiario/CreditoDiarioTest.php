@@ -41,6 +41,49 @@ beforeEach(function () {
     $this->cliente = Cliente::factory()->forAgencia($this->agencia)->create();
 });
 
+it('aplica meses comerciales al interés diario al previsualizar, desembolsar y actualizar la tasa', function (string $frecuencia, int $numero, string $esperado15, string $esperado10) {
+    Storage::fake('public');
+    $motor = app(CreditoService::class);
+    $preview = $motor->previsualizarCronograma('1000', '15', $frecuencia, $numero, 'simple', 'diario');
+    $suma = fn ($cuotas): string => collect($cuotas)->reduce(fn (string $s, $c): string => bcadd($s, (string) data_get($c, 'monto_interes'), 2), '0.00');
+    expect($suma($preview['cuotas']))->toBe($esperado15);
+
+    Sanctum::actingAs($this->asesor, ['*']);
+    $id = $this->postJson('/api/creditos-diarios', [
+        'cliente_id' => $this->cliente->id, 'monto_prestamo' => 1000,
+        'tipo_cuota' => $frecuencia, 'numero_cuotas' => $numero,
+    ])->assertCreated()->json('data.id');
+    aprobarYFirmarDocumentosDiario($this, $id);
+    Sanctum::actingAs($this->asesor, ['*']);
+    subirEvidenciaDesembolsoDiario($this, $id);
+    $this->postJson("/api/creditos-prendarios/{$id}/desembolsar")->assertSuccessful();
+    $credito = Credito::findOrFail($id);
+    expect($suma($credito->cuotas()->get()))->toBe($esperado15);
+    $fechas = $credito->cuotas()->orderBy('numero_cuota')->pluck('fecha_vencimiento')->all();
+
+    $this->postJson("/api/creditos-prendarios/{$id}/pagar-cuotas", [
+        'monto_pagado' => '20.00', 'medio' => 'efectivo',
+    ])->assertCreated();
+    $abonos = $credito->cuotas()->orderBy('numero_cuota')->get()->map->only(['monto_abonado', 'mora_pagada', 'pagada_at'])->all();
+    $admin = User::factory()->forEmpresa($this->empresa)->create();
+    $admin->assignRole('administrador_general');
+    Sanctum::actingAs($admin, ['*']);
+    foreach (['10' => $esperado10, '15' => $esperado15] as $tasa => $esperado) {
+        $this->postJson("/api/creditos-prendarios/{$id}/actualizar-interes", ['interes' => $tasa])->assertSuccessful();
+        expect($suma($credito->cuotas()->get()))->toBe($esperado)
+            ->and($credito->cuotas()->orderBy('numero_cuota')->pluck('fecha_vencimiento')->all())->toEqual($fechas)
+            ->and($credito->cuotas()->orderBy('numero_cuota')->get()->map->only(['monto_abonado', 'mora_pagada', 'pagada_at'])->all())->toEqual($abonos);
+    }
+})->with([
+    '30 días' => ['diario', 30, '150.00', '100.00'],
+    '4 semanas' => ['semanal', 4, '150.00', '100.00'],
+    '8 semanas' => ['semanal', 8, '300.00', '200.00'],
+    '2 quincenas' => ['quincenal', 2, '150.00', '100.00'],
+    '4 quincenas' => ['quincenal', 4, '300.00', '200.00'],
+    '1 mes' => ['mensual', 1, '150.00', '100.00'],
+    '2 meses' => ['mensual', 2, '300.00', '200.00'],
+]);
+
 function aprobarYFirmarDocumentosDiario(TestCase $test, int $creditoId): void
 {
     Sanctum::actingAs($test->adminAgencia, ['*']);

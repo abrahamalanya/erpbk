@@ -39,7 +39,20 @@ class CajaController extends Controller
         return $this->successResponse([
             ...$caja->toArray(),
             'saldo_actual' => $caja->cicloAbierto?->saldoActual(),
+            'ciclo_abierto_vigente' => $caja->cicloAbierto !== null && $caja->cicloAbierto->fecha->toDateString() === now()->toDateString(),
         ]);
+    }
+
+    /**
+     * Toda caja/bóveda que el actor tiene atascada en un ciclo de un día
+     * anterior — pensado para consultarse al iniciar sesión (y de nuevo
+     * tras cerrar una) tanto en web como en app. Cualquier usuario
+     * autenticado puede llamarlo: para un rol que no participa en Caja
+     * simplemente devuelve una lista vacía.
+     */
+    public function aperturasPendientes(): JsonResponse
+    {
+        return $this->successResponse($this->hierarchy->aperturasPendientesDe(request()->user()));
     }
 
     public function show(Caja $caja): JsonResponse

@@ -231,7 +231,8 @@ it('sums cobranza and desembolso over the whole desde/hasta range, not just toda
     $cliente = clienteEn($this->agencia);
     $credito = créditoDe($cliente);
 
-    cobroHoy(['created_at' => now()->subDay()], $credito, $cliente, $this->asesor, '200.00');
+    $cicloAyer = cicloEnFecha($this->ciclo, now()->subDay()->toDateString());
+    cobroHoy(['caja_ciclo_id' => $cicloAyer->id, 'created_at' => now()->subDay()], $credito, $cliente, $this->asesor, '200.00');
     cobroHoy([], $credito, $cliente, $this->asesor, '100.00');
 
     Sanctum::actingAs($this->admin, ['*']);

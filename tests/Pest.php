@@ -166,11 +166,30 @@ function cobroHoy(array $attrs, Credito $credito, Cliente $cliente, User $regist
         'empresa_id' => $credito->empresa_id,
         'credito_id' => $credito->id,
         'cliente_id' => $cliente->id,
+        'caja_ciclo_id' => test()->ciclo->id,
         'registrado_por' => $registradoPor->id,
         'estado' => 'registrado',
         'monto_pagado' => $monto,
         'created_at' => now(),
         ...$attrs,
+    ]);
+}
+
+/**
+ * Un segundo ciclo (cerrado) para la MISMA caja de $base, fechado en el
+ * pasado — para simular un cobro/movimiento de un día anterior sin violar
+ * el UNIQUE de cajas.user_id creando una Caja nueva para ese día.
+ */
+function cicloEnFecha(CajaCiclo $base, string $fecha): CajaCiclo
+{
+    return CajaCiclo::query()->create([
+        'caja_id' => $base->caja_id,
+        'empresa_id' => $base->empresa_id,
+        'fecha' => $fecha,
+        'estado' => 'cerrada',
+        'saldo_apertura' => 0,
+        'abierta_at' => $fecha,
+        'cerrada_at' => $fecha,
     ]);
 }
 

@@ -96,6 +96,9 @@ final class CreditoService
 
     /**
      * Fixed period length in days for ONE cuota of each tipo_cuota,
+     * used for payment dates. Diario simple interest uses commercial
+     * monthly frequencies instead (see interesSimpleCuota()). For other
+     * credit types,
      * independent of plazo_dias — `interes` is configured as a single
      * monthly-basis rate, and each period's interest is that rate prorated
      * to the period's length (same day-based formula as
@@ -452,8 +455,7 @@ final class CreditoService
      */
     private function recalcularCronogramaInteres(Credito $credito): void
     {
-        $diasPorCuota = self::DIAS_POR_PERIODO[$credito->tipo_cuota];
-        $interesNominal = $this->interesSimplePeriodo((string) $credito->monto_prestamo, (string) $credito->interes, $diasPorCuota);
+        $interesNominal = $this->interesSimpleCuota((string) $credito->monto_prestamo, (string) $credito->interes, $credito->tipo_cuota, $credito->tipo_credito);
 
         $this->recalcularTotalesCuotas($credito->cuotas()->orderBy('numero_cuota')->get(), $interesNominal);
     }
@@ -478,7 +480,8 @@ final class CreditoService
         foreach ($cuotas as $cuota) {
             $capitalTotal = bcadd($capitalTotal, (string) $cuota->monto_capital, 2);
         }
-        $totalExacto = bcadd($capitalTotal, bcmul($interesNominal, (string) $cuotas->count(), 2), 2);
+        $totalInteres = bcadd(bcmul($interesNominal, (string) $cuotas->count(), 10), '0.005', 2);
+        $totalExacto = bcadd($capitalTotal, $totalInteres, 2);
         $totalAcumulado = '0';
         $ultimoIndice = $cuotas->count() - 1;
 
@@ -909,12 +912,21 @@ final class CreditoService
      * el usuario). Mismo formato de tasa mensual prorateada que
      * calcularMontoLiquidacion(), evaluado a un período fijo en vez de días
      * transcurridos.
+     *
+     * Excepción: hipotecario de interés simple usa en su lugar el esquema
+     * "bullet" de filasCronogramaHipotecarioSimple() (solo interés hasta la
+     * última cuota, que concentra todo el capital) — exclusivo de este tipo
+     * de crédito, confirmado con el usuario.
      */
     private function generarCronograma(Credito $credito, int $n, ?int $plazoTotal = null): void
     {
-        $filas = $credito->tipo_interes === 'compuesto'
-            ? $this->filasCronogramaCompuesto($credito->fecha_desembolso->copy(), (string) $credito->monto_prestamo, (string) $credito->interes, $credito->tipo_cuota, $n)
-            : $this->filasCronograma((string) $credito->monto_prestamo, (string) $credito->interes, $n, self::DIAS_POR_PERIODO[$credito->tipo_cuota], $plazoTotal);
+        $interesNominal = $this->interesSimpleCuota((string) $credito->monto_prestamo, (string) $credito->interes, $credito->tipo_cuota, $credito->tipo_credito);
+
+        $filas = match (true) {
+            $credito->tipo_interes === 'compuesto' => $this->filasCronogramaCompuesto($credito->fecha_desembolso->copy(), (string) $credito->monto_prestamo, (string) $credito->interes, $credito->tipo_cuota, $n),
+            $credito->tipo_credito === 'hipotecario' => $this->filasCronogramaHipotecarioSimple((string) $credito->monto_prestamo, $interesNominal, $n, self::DIAS_POR_PERIODO[$credito->tipo_cuota], $plazoTotal),
+            default => $this->filasCronograma((string) $credito->monto_prestamo, $interesNominal, $n, self::DIAS_POR_PERIODO[$credito->tipo_cuota], $plazoTotal),
+        };
 
         foreach ($filas as $fila) {
             CuotaCredito::query()->create([
@@ -934,6 +946,8 @@ final class CreditoService
      * iguales con la última cuota absorbiendo el redondeo, interés fijo por
      * cuota sobre el monto original completo. `dias` es el desfase desde el
      * desembolso hasta el vencimiento de esa cuota.
+     * Recibe el interés nominal ya calculado según la frecuencia comercial;
+     * los días de vencimiento no determinan esa equivalencia mensual.
      *
      * La cuota TOTAL se redondea a los 10 céntimos más cercanos (39.94 ->
      * 39.90), para que el cliente pague un monto práctico en efectivo sin
@@ -954,13 +968,13 @@ final class CreditoService
      *
      * @return list<array{numero_cuota: int, dias: int, monto_capital: string, monto_interes: string, monto_total: string}>
      */
-    private function filasCronograma(string $monto, string $interes, int $n, int $diasPorCuota, ?int $plazoTotal = null): array
+    private function filasCronograma(string $monto, string $interesNominal, int $n, int $diasPorCuota, ?int $plazoTotal = null): array
     {
         $capitalPorCuota = bcdiv($monto, (string) $n, 2);
         $saldoCapital = $monto;
 
-        $interesNominal = $this->interesSimplePeriodo($monto, $interes, $diasPorCuota);
-        $totalExacto = bcadd($monto, bcmul($interesNominal, (string) $n, 2), 2);
+        $totalInteres = bcadd(bcmul($interesNominal, (string) $n, 10), '0.005', 2);
+        $totalExacto = bcadd($monto, $totalInteres, 2);
         $totalAcumulado = '0';
 
         $filas = [];
@@ -980,6 +994,51 @@ final class CreditoService
             ];
 
             $saldoCapital = bcsub($saldoCapital, $capitalCuota, 2);
+            $totalAcumulado = bcadd($totalAcumulado, $totalCuota, 2);
+        }
+
+        return $filas;
+    }
+
+    /**
+     * Cronograma "bullet" exclusivo de hipotecario con interés simple: las
+     * cuotas 1..n-1 cobran únicamente el interés (capital cero) y la ÚLTIMA
+     * cuota concentra el 100% del capital original más su interés del
+     * periodo — a diferencia de filasCronograma(), que amortiza el capital
+     * en partes iguales desde la primera cuota (confirmado con el usuario:
+     * ambos esquemas comparten el mismo interés nominal por cuota — recibido
+     * ya calculado, igual que filasCronograma() — y el mismo criterio de
+     * redondeo; solo cambia cuándo se cobra el capital).
+     *
+     * Mismo redondeo que filasCronograma(): la cuota total se redondea a la
+     * décima más cercana salvo la última, que queda exacta para que la suma
+     * cierre sin sobrante/faltante contra capital + interés real (ver su
+     * docblock).
+     *
+     * @return list<array{numero_cuota: int, dias: int, monto_capital: string, monto_interes: string, monto_total: string}>
+     */
+    private function filasCronogramaHipotecarioSimple(string $monto, string $interesNominal, int $n, int $diasPorCuota, ?int $plazoTotal = null): array
+    {
+        $totalInteres = bcadd(bcmul($interesNominal, (string) $n, 10), '0.005', 2);
+        $totalExacto = bcadd($monto, $totalInteres, 2);
+        $totalAcumulado = '0';
+
+        $filas = [];
+
+        for ($i = 1; $i <= $n; $i++) {
+            $capitalCuota = $i === $n ? bcadd($monto, '0', 2) : '0.00';
+            $totalCuota = $i === $n
+                ? bcsub($totalExacto, $totalAcumulado, 2)
+                : $this->bcRoundDecima($interesNominal);
+
+            $filas[] = [
+                'numero_cuota' => $i,
+                'dias' => $i === $n ? ($plazoTotal ?? $diasPorCuota * $i) : $diasPorCuota * $i,
+                'monto_capital' => $capitalCuota,
+                'monto_interes' => bcsub($totalCuota, $capitalCuota, 2),
+                'monto_total' => $totalCuota,
+            ];
+
             $totalAcumulado = bcadd($totalAcumulado, $totalCuota, 2);
         }
 
@@ -1100,9 +1159,11 @@ final class CreditoService
         $plazoTotal = $this->plazoTotalPara($tipoCredito, $tipoCuota, $n);
         $base = now()->startOfDay();
 
-        $filas = $tipoInteres === 'compuesto'
-            ? $this->filasCronogramaCompuesto($base, $monto, $interes, $tipoCuota, $n, $ajustarUltimaCuota)
-            : $this->filasCronograma($monto, $interes, $n, $diasPorCuota, $plazoTotal);
+        $filas = match (true) {
+            $tipoInteres === 'compuesto' => $this->filasCronogramaCompuesto($base, $monto, $interes, $tipoCuota, $n, $ajustarUltimaCuota),
+            $tipoCredito === 'hipotecario' => $this->filasCronogramaHipotecarioSimple($monto, $this->interesSimpleCuota($monto, $interes, $tipoCuota, $tipoCredito), $n, $diasPorCuota, $plazoTotal),
+            default => $this->filasCronograma($monto, $this->interesSimpleCuota($monto, $interes, $tipoCuota, $tipoCredito), $n, $diasPorCuota, $plazoTotal),
+        };
 
         $cuotas = array_map(fn (array $fila): array => [
             'numero_cuota' => $fila['numero_cuota'],
@@ -1117,6 +1178,18 @@ final class CreditoService
             'plazo_dias' => $plazoTotal,
             'cuotas' => $cuotas,
         ];
+    }
+
+    /** En crédito diario, un mes de interés equivale a 30 días, 4 semanas, 2 quincenas o 1 cuota mensual. */
+    private function interesSimpleCuota(string $monto, string $interes, string $tipoCuota, string $tipoCredito): string
+    {
+        if ($tipoCredito !== 'diario') {
+            return $this->interesSimplePeriodo($monto, $interes, self::DIAS_POR_PERIODO[$tipoCuota]);
+        }
+
+        // La fecha de pago sigue su frecuencia; la tasa se reparte por mes comercial.
+        // La precisión se conserva hasta cerrar el total y ajustar la última cuota.
+        return bcdiv(bcmul($monto, $interes, 10), (string) (self::CUOTAS_POR_TIPO[$tipoCuota] * 100), 10);
     }
 
     private function interesSimplePeriodo(string $monto, string $interes, int $dias): string
@@ -1147,12 +1220,17 @@ final class CreditoService
         $base = now()->startOfDay();
         $saldo = bcadd($monto, '0', 2);
         $r = $this->tasaPorPeriodo($interes, $tipoCuota);
-        $interesSimple = $this->interesSimplePeriodo($monto, $interes, self::DIAS_POR_PERIODO[$tipoCuota]);
+        $interesSimple = $this->interesSimpleCuota($monto, $interes, $tipoCuota, $tipoCredito);
+        $interesSimpleAcumulado = '0.00';
         $cuotas = [];
         for ($i = 1; $i <= $maxCuotas; $i++) {
-            $interesCuota = $tipoInteres === 'compuesto'
-                ? $this->interesSobreSaldo($saldo, $r)
-                : $interesSimple;
+            if ($tipoInteres === 'compuesto') {
+                $interesCuota = $this->interesSobreSaldo($saldo, $r);
+            } else {
+                $acumulado = bcadd(bcmul($interesSimple, (string) $i, 10), '0.005', 2);
+                $interesCuota = bcsub($acumulado, $interesSimpleAcumulado, 2);
+                $interesSimpleAcumulado = $acumulado;
+            }
             if (bccomp($importeCuota, $interesCuota, 2) <= 0) {
                 throw new DomainException('El importe de cuota debe superar los intereses del periodo para amortizar capital.');
             }

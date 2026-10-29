@@ -191,8 +191,7 @@ final class DashboardService
         if ($tipo !== self::TIPO_VENTAS) {
             $cobros = Cobro::query()
                 ->where('estado', 'registrado')
-                ->whereDate('created_at', '>=', $desde)
-                ->whereDate('created_at', '<=', $hasta)
+                ->whereHas('cajaCiclo', fn (Builder $q) => $q->whereDate('fecha', '>=', $desde)->whereDate('fecha', '<=', $hasta))
                 ->whereHas('credito', function (Builder $q) use ($actor, $agenciaId, $tipo): void {
                     $this->creditos->visibleQuery($q, $actor);
 
@@ -223,8 +222,7 @@ final class DashboardService
         if (($tipo === null || $tipo === self::TIPO_VENTAS) && app(ModuloService::class)->perfilPermite($actor, 'ventas')) {
             $pagos = PagoVenta::query()
                 ->whereNull('anulado_at')
-                ->whereDate('created_at', '>=', $desde)
-                ->whereDate('created_at', '<=', $hasta)
+                ->whereHas('cajaCiclo', fn (Builder $q) => $q->whereDate('fecha', '>=', $desde)->whereDate('fecha', '<=', $hasta))
                 ->whereHas('venta', function (Builder $q) use ($actor, $agenciaId): void {
                     $this->acotarVentas($q, $actor);
 
@@ -268,8 +266,8 @@ final class DashboardService
 
         $query = CajaMovimiento::query()
             ->desembolsos()
-            ->whereDate('created_at', '>=', $desde)
-            ->whereDate('created_at', '<=', $hasta)
+            ->whereDate('fecha_caja', '>=', $desde)
+            ->whereDate('fecha_caja', '<=', $hasta)
             ->whereHas('credito', function (Builder $q) use ($actor, $agenciaId, $tipo): void {
                 $this->creditos->visibleQuery($q, $actor);
 
@@ -555,8 +553,7 @@ final class DashboardService
         if ($tipo !== self::TIPO_VENTAS) {
             $cobros = Cobro::query()
                 ->where('estado', 'registrado')
-                ->whereDate('created_at', '>=', $desde)
-                ->whereDate('created_at', '<=', $hasta)
+                ->whereHas('cajaCiclo', fn (Builder $q) => $q->whereDate('fecha', '>=', $desde)->whereDate('fecha', '<=', $hasta))
                 ->whereHas('credito', function (Builder $q) use ($actor, $agenciaId, $tipo): void {
                     $this->creditos->visibleQuery($q, $actor);
 
@@ -584,8 +581,7 @@ final class DashboardService
         if (($tipo === null || $tipo === self::TIPO_VENTAS) && app(ModuloService::class)->perfilPermite($actor, 'ventas')) {
             $pagos = PagoVenta::query()
                 ->whereNull('anulado_at')
-                ->whereDate('created_at', '>=', $desde)
-                ->whereDate('created_at', '<=', $hasta)
+                ->whereHas('cajaCiclo', fn (Builder $q) => $q->whereDate('fecha', '>=', $desde)->whereDate('fecha', '<=', $hasta))
                 ->whereHas('venta', function (Builder $q) use ($actor, $agenciaId): void {
                     $this->acotarVentas($q, $actor);
 
@@ -620,8 +616,8 @@ final class DashboardService
 
         $query = CajaMovimiento::query()
             ->desembolsos()
-            ->whereDate('created_at', '>=', $desde)
-            ->whereDate('created_at', '<=', $hasta)
+            ->whereDate('fecha_caja', '>=', $desde)
+            ->whereDate('fecha_caja', '<=', $hasta)
             ->whereHas('credito', function (Builder $q) use ($actor, $agenciaId, $tipo): void {
                 $this->creditos->visibleQuery($q, $actor);
 
@@ -667,8 +663,8 @@ final class DashboardService
 
         $query = CajaMovimiento::query()
             ->egresosManuales()
-            ->whereDate('created_at', '>=', $desde)
-            ->whereDate('created_at', '<=', $hasta)
+            ->whereDate('fecha_caja', '>=', $desde)
+            ->whereDate('fecha_caja', '<=', $hasta)
             ->whereHas('cajaCiclo.caja', function (Builder $q) use ($actor, $agenciaId): void {
                 $this->cajas->cajasVisibles($q, $actor);
 
@@ -703,8 +699,8 @@ final class DashboardService
 
         $query = CajaMovimiento::query()
             ->ingresosManuales()
-            ->whereDate('created_at', '>=', $desde)
-            ->whereDate('created_at', '<=', $hasta)
+            ->whereDate('fecha_caja', '>=', $desde)
+            ->whereDate('fecha_caja', '<=', $hasta)
             ->whereHas('cajaCiclo.caja', function (Builder $q) use ($actor, $agenciaId): void {
                 $this->cajas->cajasVisibles($q, $actor);
 
@@ -744,8 +740,8 @@ final class DashboardService
 
         $query = CajaMovimiento::query()
             ->billetajes()
-            ->whereDate('created_at', '>=', $desde)
-            ->whereDate('created_at', '<=', $hasta)
+            ->whereDate('fecha_caja', '>=', $desde)
+            ->whereDate('fecha_caja', '<=', $hasta)
             ->whereHas('cajaCiclo.caja', function (Builder $q) use ($actor, $agenciaId, $asesorId): void {
                 $this->cajas->cajasVisibles($q, $actor);
 

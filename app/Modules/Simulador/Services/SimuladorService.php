@@ -67,12 +67,18 @@ final class SimuladorService
         if ($modo === 'importe_cuota') {
             $n = count($preview['cuotas']);
         }
+        // Hipotecario simple en modo numero_cuotas usa el esquema "bullet"
+        // (ver filasCronogramaHipotecarioSimple()): capital cero en todas
+        // las cuotas salvo la última es el comportamiento esperado, no un
+        // parámetro inválido.
+        $permiteCapitalCero = $modo === 'numero_cuotas' && $datos['tipo_credito'] === 'hipotecario' && $tipoInteres === 'simple';
+
         $saldo = bcadd((string) $datos['monto_prestamo'], '0', 2);
         $total = '0.00';
         $totalInteres = '0.00';
         $filas = [];
         foreach ($preview['cuotas'] as $cuota) {
-            if (bccomp($cuota['monto_capital'], '0', 2) <= 0 || bccomp($cuota['monto_interes'], '0', 2) < 0) {
+            if ((! $permiteCapitalCero && bccomp($cuota['monto_capital'], '0', 2) <= 0) || bccomp($cuota['monto_interes'], '0', 2) < 0) {
                 throw ValidationException::withMessages(['numero_cuotas' => 'Los parámetros generan cuotas sin amortización o intereses negativos. Reduce el número de cuotas o revisa el monto.']);
             }
             $saldo = bcsub($saldo, $cuota['monto_capital'], 2);

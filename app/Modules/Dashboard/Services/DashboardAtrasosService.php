@@ -95,8 +95,7 @@ final class DashboardAtrasosService
                 // HasMany, no un Builder (los eager loads no pasan por where()).
                 'cobros' => fn ($q) => $q
                     ->where('estado', 'registrado')
-                    ->whereDate('created_at', '>=', $desde)
-                    ->whereDate('created_at', '<=', $hasta)
+                    ->whereHas('cajaCiclo', fn (Builder $cq) => $cq->whereDate('fecha', '>=', $desde)->whereDate('fecha', '<=', $hasta))
                     ->select(['id', 'credito_id', 'monto_pagado']),
             ])
             ->get(['id', 'fecha_vencimiento']);

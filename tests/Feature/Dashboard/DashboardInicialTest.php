@@ -65,7 +65,8 @@ it('ignores cobros from other days', function () {
     $cliente = clienteEn($this->agencia);
     $credito = créditoDe($cliente);
 
-    cobroHoy(['created_at' => now()->subDay()], $credito, $cliente, $this->asesor, '999.00');
+    $cicloAyer = cicloEnFecha($this->ciclo, now()->subDay()->toDateString());
+    cobroHoy(['caja_ciclo_id' => $cicloAyer->id, 'created_at' => now()->subDay()], $credito, $cliente, $this->asesor, '999.00');
     cobroHoy([], $credito, $cliente, $this->asesor, '100.00');
 
     Sanctum::actingAs($this->admin, ['*']);
@@ -109,7 +110,7 @@ it('sums several egresos manuales of the day and ignores other days', function (
     egresoManualHoy($this->asesor, '100.00');
     egresoManualHoy($this->asesor, '50.00');
     $otroDia = movimientoHoy($this->asesor, 'egreso', '999.00');
-    CajaMovimiento::query()->where('id', $otroDia->id)->update(['created_at' => now()->subDay()]);
+    CajaMovimiento::query()->where('id', $otroDia->id)->update(['fecha_caja' => now()->subDay()->toDateString()]);
 
     Sanctum::actingAs($this->admin, ['*']);
 
@@ -148,7 +149,7 @@ it('sums ingresos manuales of the day, separate from cobranza (a cobro also writ
     ingresoManualHoy($this->asesor, '500.00');
     ingresoManualHoy($this->asesor, '200.00');
     $otroDia = ingresoManualHoy($this->asesor, '999.00');
-    CajaMovimiento::query()->where('id', $otroDia->id)->update(['created_at' => now()->subDay()]);
+    CajaMovimiento::query()->where('id', $otroDia->id)->update(['fecha_caja' => now()->subDay()->toDateString()]);
 
     Sanctum::actingAs($this->admin, ['*']);
 
@@ -274,7 +275,7 @@ it('limits billetajes to the selected dates and includes digital receipts regard
     billetajeHoy($this->ciclo, '120.00', $this->admin);
     billetajeHoy($this->ciclo, '80.00', $this->admin)->update(['medio' => 'cuenta_bancaria']);
     $anterior = billetajeHoy($this->ciclo, '999.00', $this->admin);
-    CajaMovimiento::query()->whereKey($anterior->id)->update(['created_at' => now()->subDay()]);
+    CajaMovimiento::query()->whereKey($anterior->id)->update(['fecha_caja' => now()->subDay()->toDateString()]);
 
     Sanctum::actingAs($this->admin, ['*']);
     $hoy = now()->toDateString();
@@ -619,14 +620,15 @@ it('sums cobranza, desembolso and egresos over the whole desde/hasta range, not 
     $cliente = clienteEn($this->agencia);
     $credito = créditoDe($cliente);
 
-    $ayer = cobroHoy(['created_at' => now()->subDay()], $credito, $cliente, $this->asesor, '200.00');
+    $cicloAyer = cicloEnFecha($this->ciclo, now()->subDay()->toDateString());
+    $ayer = cobroHoy(['caja_ciclo_id' => $cicloAyer->id, 'created_at' => now()->subDay()], $credito, $cliente, $this->asesor, '200.00');
     cobroHoy([], $credito, $cliente, $this->asesor, '100.00');
 
     $desembolsoAyer = desembolsoHoy($credito, $this->asesor, '300.00');
-    CajaMovimiento::query()->where('id', $desembolsoAyer->id)->update(['created_at' => now()->subDay()]);
+    CajaMovimiento::query()->where('id', $desembolsoAyer->id)->update(['fecha_caja' => now()->subDay()->toDateString()]);
 
     $egresoAyer = egresoManualHoy($this->asesor, '50.00');
-    CajaMovimiento::query()->where('id', $egresoAyer->id)->update(['created_at' => now()->subDay()]);
+    CajaMovimiento::query()->where('id', $egresoAyer->id)->update(['fecha_caja' => now()->subDay()->toDateString()]);
 
     Sanctum::actingAs($this->admin, ['*']);
 

@@ -28,6 +28,8 @@ beforeEach(function () {
     $this->cliente = Cliente::factory()->forAgencia($this->agencia)->create(['asesor_id' => $this->asesor->id]);
 
     $this->clienteOtro = Cliente::factory()->forAgencia($this->agencia)->create(['asesor_id' => $this->otroAsesor->id]);
+
+    $this->ciclo = cicloDe($this->asesor, $this->empresa, $this->agencia);
 });
 
 /**
@@ -74,10 +76,28 @@ function cobroDeHoy(Credito $credito, float $monto = 100.0, string $estado = 're
         'empresa_id' => $credito->empresa_id,
         'cliente_id' => $credito->cliente_id,
         'credito_id' => $credito->id,
+        'caja_ciclo_id' => test()->ciclo->id,
         'estado' => $estado,
         'monto_pagado' => $monto,
         'medio' => 'yape',
         'created_at' => now(),
+    ]);
+}
+
+/** Cobro registrado AYER (otro ciclo, misma caja) por el monto indicado. */
+function cobroDeAyer(Credito $credito, float $monto = 100.0): Cobro
+{
+    $cicloAyer = cicloEnFecha(test()->ciclo, now()->subDay()->toDateString());
+
+    return Cobro::factory()->create([
+        'empresa_id' => $credito->empresa_id,
+        'cliente_id' => $credito->cliente_id,
+        'credito_id' => $credito->id,
+        'caja_ciclo_id' => $cicloAyer->id,
+        'estado' => 'registrado',
+        'monto_pagado' => $monto,
+        'medio' => 'yape',
+        'created_at' => now()->subDay(),
     ]);
 }
 
@@ -259,15 +279,7 @@ it('cuenta como cobrado solo lo que se cobro HOY', function () {
     $nunca = creditoEnFranja($this->cliente, $this->asesor, 45);
 
     cobroDeHoy($hoy, 100);
-    Cobro::factory()->create([
-        'empresa_id' => $this->empresa->id,
-        'cliente_id' => $this->cliente->id,
-        'credito_id' => $ayer->id,
-        'estado' => 'registrado',
-        'monto_pagado' => 100,
-        'medio' => 'yape',
-        'created_at' => now()->subDay(),
-    ]);
+    cobroDeAyer($ayer, 100);
 
     Sanctum::actingAs($this->asesor, ['*']);
     $data = $this->getJson('/api/dashboard/linea-de-tiempo-atrasos')->assertSuccessful()->json('data');
@@ -285,15 +297,7 @@ it('cuenta como cobrado lo del rango desde/hasta, no solo hoy', function () {
     $nunca = creditoEnFranja($this->cliente, $this->asesor, 45);
 
     cobroDeHoy($hoy, 100);
-    Cobro::factory()->create([
-        'empresa_id' => $this->empresa->id,
-        'cliente_id' => $this->cliente->id,
-        'credito_id' => $ayer->id,
-        'estado' => 'registrado',
-        'monto_pagado' => 100,
-        'medio' => 'yape',
-        'created_at' => now()->subDay(),
-    ]);
+    cobroDeAyer($ayer, 100);
 
     Sanctum::actingAs($this->asesor, ['*']);
 

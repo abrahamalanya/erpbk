@@ -32,6 +32,30 @@ beforeEach(function () {
     $this->cliente = Cliente::factory()->forAgencia($this->agencia)->create();
 });
 
+it('simula cuatro semanas de crédito diario con el interés mensual completo', function (string $modo) {
+    Sanctum::actingAs($this->asesor, ['*']);
+    $datos = [
+        'tipo_credito' => 'diario', 'cliente_id' => $this->cliente->id,
+        'monto_prestamo' => 1000, 'interes' => 15, 'tipo_cuota' => 'semanal',
+        'tipo_interes' => 'simple', 'modo_calculo' => $modo,
+        ...($modo === 'importe_cuota' ? ['importe_cuota' => '287.50'] : ['numero_cuotas' => 4]),
+    ];
+    $this->postJson('/api/simulaciones-credito', $datos)->assertCreated()
+        ->assertJsonPath('data.monto_total_pagar', '1150.00')
+        ->assertJsonPath('data.cronograma.0.monto_interes', '37.50');
+})->with(['numero_cuotas', 'importe_cuota']);
+
+it('conserva el interés de un mes en treinta cuotas diarias sin perder centavos', function (string $modo) {
+    Sanctum::actingAs($this->asesor, ['*']);
+    $this->postJson('/api/simulaciones-credito', [
+        'tipo_credito' => 'diario', 'cliente_id' => $this->cliente->id,
+        'monto_prestamo' => 1000, 'interes' => 10, 'tipo_cuota' => 'diario',
+        'tipo_interes' => 'simple', 'modo_calculo' => $modo,
+        ...($modo === 'importe_cuota' ? ['importe_cuota' => '36.70'] : ['numero_cuotas' => 30]),
+    ])->assertCreated()->assertJsonPath('data.monto_total_pagar', '1100.00')
+        ->assertJsonCount(30, 'data.cronograma');
+})->with(['numero_cuotas', 'importe_cuota']);
+
 it('registra una simulación de crédito con el cronograma calculado, sin usar los defaults cuando el asesor los sobrescribe', function () {
     Sanctum::actingAs($this->asesor, ['*']);
 

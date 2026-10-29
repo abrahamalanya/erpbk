@@ -50,7 +50,10 @@ class BovedaController extends Controller
         $boveda = $this->hierarchy->bovedaFinanciadoraDe($actor)->load('cicloAbierto');
         $this->adjuntarSaldoActual(new Collection([$boveda]));
 
-        return $this->successResponse($boveda);
+        return $this->successResponse([
+            ...$boveda->toArray(),
+            'ciclo_abierto_vigente' => $boveda->cicloAbierto !== null && $boveda->cicloAbierto->fecha->toDateString() === now()->toDateString(),
+        ]);
     }
 
     public function index(): JsonResponse

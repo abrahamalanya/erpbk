@@ -4,7 +4,9 @@ namespace App\Modules\Caja\Services;
 
 use App\Modules\Caja\Models\Billetaje;
 use App\Modules\Caja\Models\Boveda;
+use App\Modules\Caja\Models\BovedaCiclo;
 use App\Modules\Caja\Models\Caja;
+use App\Modules\Caja\Models\CajaCiclo;
 use App\Modules\Usuario\Models\User;
 use DomainException;
 use Illuminate\Database\Eloquent\Builder;
@@ -43,6 +45,82 @@ final class CajaBovedaHierarchyService
         }
 
         throw new DomainException('El rol del usuario no participa en el módulo de Caja.');
+    }
+
+    /**
+     * Toda apertura (caja propia o bóveda ancestral) que $actor tiene
+     * atascada en un ciclo de un día anterior — fuente única para el aviso
+     * de "apertura pendiente de cierre" al iniciar sesión, tanto en web como
+     * en app. No crea nada (a diferencia de CajaService::cajaDe()/
+     * BovedaService::principalDe()/deAgencia()): una caja/bóveda que nunca
+     * se abrió simplemente no aparece aquí.
+     *
+     * - La caja propia de $actor, si existe y su ciclo abierto es de ayer o
+     *   antes. Siempre `puede_cerrar`: cualquiera cierra su propia caja.
+     * - Cada bóveda ancestral (la financiadora directa y, si es de agencia,
+     *   también la principal — mismo alcance de dos niveles que
+     *   BovedaService::asegurarAbierta() valida al abrir una caja) con un
+     *   ciclo abierto de ayer o antes. `puede_cerrar` según
+     *   puedeControlarBoveda(); si no, `rol_autorizado` dice quién sí puede.
+     *
+     * @return list<array{tipo: 'caja'|'boveda', ciclo: CajaCiclo|BovedaCiclo, puede_cerrar: bool, rol_autorizado: ?string}>
+     */
+    public function aperturasPendientesDe(User $actor): array
+    {
+        $hoy = now()->startOfDay()->toDateString();
+        $pendientes = [];
+
+        $caja = Caja::query()->where('user_id', $actor->id)->with('cicloAbierto')->first();
+
+        if ($caja?->cicloAbierto !== null && $caja->cicloAbierto->fecha->toDateString() < $hoy) {
+            $pendientes[] = [
+                'tipo' => 'caja',
+                'ciclo' => $caja->cicloAbierto->load(['caja.agencia', 'caja.user']),
+                'puede_cerrar' => true,
+                'rol_autorizado' => null,
+            ];
+        }
+
+        foreach ($this->bovedasAncestralesDe($actor) as $boveda) {
+            $ciclo = $boveda->cicloAbierto;
+
+            if ($ciclo !== null && $ciclo->fecha->toDateString() < $hoy) {
+                $pendientes[] = [
+                    'tipo' => 'boveda',
+                    'ciclo' => $ciclo->load('boveda.agencia'),
+                    'puede_cerrar' => $this->puedeControlarBoveda($actor, $boveda),
+                    'rol_autorizado' => $boveda->tipo === 'principal' ? 'administrador_general' : 'administrador_agencia',
+                ];
+            }
+        }
+
+        return $pendientes;
+    }
+
+    /**
+     * Bóvedas ancestrales relevantes para $actor: su financiadora directa
+     * (bovedaFinanciadoraDe()) y, si es de agencia, también la principal de
+     * la empresa — un nivel más arriba en la jerarquía. Nunca crea bóvedas
+     * (a diferencia de bovedaFinanciadoraDe(), que sí vía firstOrCreate en
+     * BovedaService): esto se consulta para cualquier usuario autenticado
+     * al iniciar sesión, así que un rol que no participa en Caja (p.ej.
+     * sistemas) devuelve una colección vacía en vez de lanzar.
+     *
+     * @return Collection<int, Boveda>
+     */
+    private function bovedasAncestralesDe(User $actor): Collection
+    {
+        try {
+            $directa = $this->bovedaFinanciadoraDe($actor)->load('cicloAbierto');
+        } catch (DomainException) {
+            return collect();
+        }
+
+        if ($directa->tipo === 'agencia') {
+            return collect([$directa, $this->bovedaService->principalDe($directa->empresa_id)->load('cicloAbierto')]);
+        }
+
+        return collect([$directa]);
     }
 
     /**

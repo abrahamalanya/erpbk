@@ -172,6 +172,7 @@ Route::middleware(['auth:sanctum', EnsurePerfilAcceso::class, EnsureIdempotency:
     Route::delete('clientes/{cliente}/fotos/{foto}', [ClienteController::class, 'eliminarFoto'])->name('clientes.fotos.destroy');
 
     Route::get('caja', [CajaController::class, 'miCaja'])->name('caja.mia');
+    Route::get('caja/aperturas-pendientes', [CajaController::class, 'aperturasPendientes'])->name('caja.aperturas-pendientes');
     Route::post('caja/aperturar', [CajaController::class, 'aperturar'])->name('caja.aperturar');
     Route::post('caja/cerrar', [CajaController::class, 'cerrar'])->name('caja.cerrar');
     Route::get('caja/cierre/resumen', [CajaController::class, 'resumenCierre'])->name('caja.cierre.resumen');

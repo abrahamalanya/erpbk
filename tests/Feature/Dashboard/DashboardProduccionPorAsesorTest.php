@@ -41,10 +41,10 @@ function filaAsesor(array $filas, int $asesorId): ?array
     return null;
 }
 
-/** Mueve el created_at de un desembolso ya creado a otra fecha, para probar el filtro de período. */
+/** Mueve el fecha_caja (el día del ciclo al que pertenece) de un desembolso ya creado, para probar el filtro de período. */
 function moverDesembolsoA(CajaMovimiento $movimiento, string $fecha): void
 {
-    CajaMovimiento::query()->where('id', $movimiento->id)->update(['created_at' => $fecha]);
+    CajaMovimiento::query()->where('id', $movimiento->id)->update(['fecha_caja' => $fecha]);
 }
 
 it('groups desembolsos by asesor, with the 4 tipos filled within each asesor', function () {

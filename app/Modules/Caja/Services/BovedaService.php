@@ -70,20 +70,41 @@ final class BovedaService
     /**
      * Reopens the bóveda (and, for an agencia bóveda, cascades up to ensure
      * the empresa's principal bóveda is also open) if it's currently closed.
+     *
+     * Antes de cascadear a (o crear un ciclo fresco bajo) una principal ya
+     * abierta, exige que su ciclo sea del día de HOY — si sigue abierta con
+     * un ciclo de un día anterior, una agencia recién cerrada y reabierta no
+     * debe poder "financiarse" silenciosamente de esa principal atascada
+     * (confirmado con el usuario: misma regla que ya bloqueaba la apertura
+     * de caja contra su financiadora directa, pero aquí un nivel más arriba
+     * en la jerarquía). El check-then-create completo va bajo
+     * lockForUpdate() sobre la fila Boveda para que dos aperturas/cascadas
+     * simultáneas de la MISMA bóveda no creen dos ciclos abiertos.
      */
     public function asegurarAbierta(Boveda $boveda, User $actor): BovedaCiclo
     {
-        $abierto = $boveda->cicloAbierto()->first();
+        return DB::transaction(function () use ($boveda, $actor): BovedaCiclo {
+            $bovedaBloqueada = Boveda::query()->whereKey($boveda->id)->lockForUpdate()->firstOrFail();
 
-        if ($abierto) {
-            return $abierto;
-        }
+            $abierto = $bovedaBloqueada->cicloAbierto()->first();
 
-        if ($boveda->tipo === 'agencia') {
-            $this->asegurarAbierta($this->principalDe($boveda->empresa_id), $actor);
-        }
+            if ($abierto) {
+                return $abierto;
+            }
 
-        return $this->crearCiclo($boveda, $actor, $this->saldoInicial($boveda));
+            if ($bovedaBloqueada->tipo === 'agencia') {
+                $principal = $this->principalDe($bovedaBloqueada->empresa_id);
+                $cicloPrincipal = $principal->cicloAbierto()->first();
+
+                if ($cicloPrincipal && $cicloPrincipal->fecha->toDateString() < now()->startOfDay()->toDateString()) {
+                    throw new DomainException("La bóveda principal sigue con un ciclo abierto de un día anterior ({$cicloPrincipal->fecha->toDateString()}). Debe cerrarse antes de continuar con el ciclo actual.");
+                }
+
+                $this->asegurarAbierta($principal, $actor);
+            }
+
+            return $this->crearCiclo($bovedaBloqueada, $actor, $this->saldoInicial($bovedaBloqueada));
+        });
     }
 
     /**

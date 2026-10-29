@@ -57,34 +57,47 @@ final class CajaService
         Caja::query()->where('user_id', $user->id)->update(['agencia_id' => $user->agencia_id]);
     }
 
+    /**
+     * Todo el check-then-create (incluida la cascada a asegurarAbierta()) va
+     * dentro de una sola transacción con lockForUpdate() sobre la fila Caja,
+     * para que dos requests simultáneos del mismo actor no pasen ambos el
+     * `cicloAbierto()->exists()` y terminen creando dos ciclos abiertos —
+     * mismo patrón de lockForUpdate ya usado en CreditoService.
+     */
     public function aperturar(User $actor): CajaCiclo
     {
         $caja = $this->cajaDe($actor);
 
-        if ($caja->cicloAbierto()->exists()) {
-            throw new ConflictoDeEstadoException('Ya tienes un ciclo de caja abierto.', MotivoConflicto::CAJA_ABIERTA);
-        }
+        return DB::transaction(function () use ($caja, $actor): CajaCiclo {
+            $cajaBloqueada = Caja::query()->whereKey($caja->id)->lockForUpdate()->firstOrFail();
 
-        $boveda = $this->hierarchy->bovedaFinanciadoraDe($actor);
-        $cicloBoveda = $boveda->cicloAbierto()->first();
+            if ($cajaBloqueada->cicloAbierto()->exists()) {
+                throw new ConflictoDeEstadoException('Ya tienes un ciclo de caja abierto.', MotivoConflicto::CAJA_ABIERTA);
+            }
 
-        if ($cicloBoveda && $cicloBoveda->fecha->toDateString() < now()->startOfDay()->toDateString()) {
-            throw new ConflictoDeEstadoException('No puedes aperturar tu caja: la bóveda que te financia sigue con un ciclo abierto de un día anterior.', MotivoConflicto::CAJA_ABIERTA);
-        }
+            $boveda = $this->hierarchy->bovedaFinanciadoraDe($actor);
+            $cicloBoveda = $boveda->cicloAbierto()->first();
 
-        $this->bovedaService->asegurarAbierta($boveda, $actor);
+            if ($cicloBoveda && $cicloBoveda->fecha->toDateString() < now()->startOfDay()->toDateString()) {
+                throw new ConflictoDeEstadoException('No puedes aperturar tu caja: la bóveda que te financia sigue con un ciclo abierto de un día anterior.', MotivoConflicto::CAJA_ABIERTA);
+            }
 
-        return DB::transaction(function () use ($caja): CajaCiclo {
+            // asegurarAbierta() también valida (y bloquea) que la bóveda
+            // PRINCIPAL no esté a su vez atascada en un ciclo anterior antes
+            // de cascadear una apertura fresca de la bóveda de agencia — ver
+            // su docblock.
+            $this->bovedaService->asegurarAbierta($boveda, $actor);
+
             $ciclo = CajaCiclo::query()->create([
-                'caja_id' => $caja->id,
-                'empresa_id' => $caja->empresa_id,
+                'caja_id' => $cajaBloqueada->id,
+                'empresa_id' => $cajaBloqueada->empresa_id,
                 'fecha' => now()->toDateString(),
                 'estado' => 'abierta',
                 'saldo_apertura' => 0,
                 'abierta_at' => now(),
             ]);
 
-            $this->notificar($caja->fresh(['cicloAbierto']));
+            $this->notificar($cajaBloqueada->fresh(['cicloAbierto']));
 
             return $ciclo;
         });
