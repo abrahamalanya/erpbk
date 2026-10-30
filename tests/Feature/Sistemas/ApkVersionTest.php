@@ -22,17 +22,75 @@ beforeEach(function () {
 });
 
 /**
- * Construye un ZIP real (no un mock) con la estructura mínima de un APK, para
- * que ApkInspectorService lo inspeccione de verdad.
+ * Codifica un AndroidManifest.xml binario (AXML) mínimo pero real: un pool de
+ * cadenas UTF-16 y un elemento raíz <manifest> con los atributos package,
+ * versionCode y versionName — exactamente lo que ApkInspectorService decodifica
+ * de un APK real. Permite probar la extracción real sin depender de un APK de
+ * verdad a mano.
  */
-function apkDePrueba(bool $esApk = true, bool $firmado = true): UploadedFile
+function axmlManifiesto(string $package, int $versionCode, string $versionName): string
 {
+    $cadenaU16 = function (string $s): string {
+        return pack('v', mb_strlen($s, 'UTF-8')).mb_convert_encoding($s, 'UTF-16LE', 'UTF-8')."\x00\x00";
+    };
+
+    $cadenas = ['manifest', 'package', $package, 'versionCode', 'versionName', $versionName];
+    $datos = '';
+    $offsets = [];
+    foreach ($cadenas as $s) {
+        $offsets[] = strlen($datos);
+        $datos .= $cadenaU16($s);
+    }
+    $headerSizePool = 28;
+    $offsetsBytes = implode('', array_map(fn ($o) => pack('V', $o), $offsets));
+    $stringsStart = $headerSizePool + strlen($offsetsBytes);
+    $cuerpoPool = $offsetsBytes.$datos;
+    while ((strlen($cuerpoPool) + $headerSizePool) % 4 !== 0) {
+        $cuerpoPool .= "\x00";
+    }
+    $tamanoPool = $headerSizePool + strlen($cuerpoPool);
+    $pool = pack('v', 0x0001).pack('v', $headerSizePool).pack('V', $tamanoPool)
+        .pack('V', count($cadenas)).pack('V', 0).pack('V', 0).pack('V', $stringsStart).pack('V', 0)
+        .$cuerpoPool;
+
+    $attr = fn (int $ns, int $nombreIdx, int $rawValueIdx, int $tipo, int $dato) => pack('V', $ns).pack('V', $nombreIdx).pack('V', $rawValueIdx)
+        .pack('v', 8).pack('C', 0).pack('C', $tipo).pack('V', $dato);
+
+    $attributos = $attr(0xFFFFFFFF, 1, 2, 0x03, 2) // package="..."
+        .$attr(0xFFFFFFFF, 3, 0xFFFFFFFF, 0x10, $versionCode) // versionCode=int
+        .$attr(0xFFFFFFFF, 4, 5, 0x03, 5); // versionName="..."
+
+    $attrExt = pack('V', 0xFFFFFFFF).pack('V', 0) // ns, name (0 = "manifest")
+        .pack('v', 20).pack('v', 20).pack('v', 3).pack('v', 0).pack('v', 0).pack('v', 0);
+    $nodo = pack('V', 0).pack('V', 0xFFFFFFFF); // lineNumber, comment
+    $cuerpoElemento = $nodo.$attrExt.$attributos;
+    $elemento = pack('v', 0x0102).pack('v', 16).pack('V', 8 + strlen($cuerpoElemento)).$cuerpoElemento;
+
+    $cuerpo = $pool.$elemento;
+
+    return pack('v', 0x0003).pack('v', 8).pack('V', 8 + strlen($cuerpo)).$cuerpo;
+}
+
+/**
+ * Construye un ZIP real (no un mock) con la estructura mínima de un APK, para
+ * que ApkInspectorService lo inspeccione de verdad. El AndroidManifest.xml es
+ * un AXML real (ver axmlManifiesto) salvo que $manifiestoValido sea false.
+ */
+function apkDePrueba(
+    bool $esApk = true,
+    bool $firmado = true,
+    bool $manifiestoValido = true,
+    string $package = APPLICATION_ID,
+    int $versionCode = 20,
+    string $versionName = '1.4.0',
+): UploadedFile {
     $tmp = tempnam(sys_get_temp_dir(), 'apk_test_');
     $zip = new ZipArchive;
     $zip->open($tmp, ZipArchive::OVERWRITE);
 
     if ($esApk) {
-        $zip->addFromString('AndroidManifest.xml', 'manifest-binario-de-prueba');
+        $manifiesto = $manifiestoValido ? axmlManifiesto($package, $versionCode, $versionName) : 'manifest-binario-invalido';
+        $zip->addFromString('AndroidManifest.xml', $manifiesto);
         $zip->addFromString('classes.dex', 'dex-de-prueba');
     } else {
         $zip->addFromString('readme.txt', 'esto no es un apk');
@@ -65,13 +123,13 @@ function lp(string $bytes): string
  *
  * @return array{0: UploadedFile, 1: string}
  */
-function apkFirmadoV2DePrueba(): array
+function apkFirmadoV2DePrueba(int $versionCode = 1, string $versionName = '1.0.0'): array
 {
     $tmp = tempnam(sys_get_temp_dir(), 'apk_v2_test_');
     $zip = new ZipArchive;
     $zip->open($tmp, ZipArchive::OVERWRITE);
 
-    $zip->addFromString('AndroidManifest.xml', 'manifest-binario-de-prueba');
+    $zip->addFromString('AndroidManifest.xml', axmlManifiesto(APPLICATION_ID, $versionCode, $versionName));
     $zip->addFromString('classes.dex', 'dex-de-prueba');
 
     // Infla el directorio central bastante más allá de 64KB — exactamente lo
@@ -134,12 +192,7 @@ it('impide a quien no es sistemas administrar las versiones de APK', function ()
     Sanctum::actingAs($this->asesor);
 
     $this->getJson('/api/actualizaciones-apk')->assertForbidden();
-    $this->postJson('/api/actualizaciones-apk', [
-        'apk' => apkDePrueba(),
-        'version' => '1.0.0',
-        'build_number' => 1,
-        'application_id' => APPLICATION_ID,
-    ])->assertForbidden();
+    $this->postJson('/api/actualizaciones-apk', ['apk' => apkDePrueba()])->assertForbidden();
 
     $version = ApkVersion::query()->create([
         'application_id' => APPLICATION_ID, 'version' => '1.0.0', 'build_number' => 1,
@@ -150,73 +203,84 @@ it('impide a quien no es sistemas administrar las versiones de APK', function ()
     $this->getJson("/api/actualizaciones-apk/{$version->id}/descargar")->assertForbidden();
 });
 
-it('sube una versión válida y la guarda en el disco privado con su hash', function () {
+it('sube una versión válida y guarda en el disco privado el version/build_number/applicationId reales leídos del APK', function () {
     Sanctum::actingAs($this->sistemas);
 
-    $archivo = apkDePrueba();
+    $archivo = apkDePrueba(versionCode: 20, versionName: '1.4.0');
     $contenidoEsperado = file_get_contents($archivo->getRealPath());
 
-    $this->postJson('/api/actualizaciones-apk', [
-        'apk' => $archivo,
-        'version' => '1.4.0',
-        'build_number' => 20,
-        'application_id' => APPLICATION_ID,
-        'descripcion' => 'Primera subida',
-    ])->assertCreated()->assertJsonPath('data.version', '1.4.0')->assertJsonPath('data.build_number', 20);
+    $this->postJson('/api/actualizaciones-apk', ['apk' => $archivo, 'descripcion' => 'Primera subida'])
+        ->assertCreated()
+        ->assertJsonPath('data.version', '1.4.0')
+        ->assertJsonPath('data.build_number', 20);
 
     $version = ApkVersion::query()->where('build_number', 20)->firstOrFail();
-    expect($version->sha256)->toBe(hash('sha256', $contenidoEsperado))
+    expect($version->application_id)->toBe(APPLICATION_ID)
+        ->and($version->sha256)->toBe(hash('sha256', $contenidoEsperado))
         ->and($version->publicada)->toBeFalse();
     Storage::disk('privado')->assertExists($version->file_path);
 });
 
-it('rechaza un applicationId distinto al configurado', function () {
+it('rechaza un applicationId real (leído del AndroidManifest.xml) distinto al configurado', function () {
     Sanctum::actingAs($this->sistemas);
 
     $this->postJson('/api/actualizaciones-apk', [
-        'apk' => apkDePrueba(),
-        'version' => '1.0.0',
-        'build_number' => 1,
-        'application_id' => 'com.otra.app',
+        'apk' => apkDePrueba(package: 'com.otra.app'),
     ])->assertUnprocessable();
 });
 
-it('rechaza un número de compilación menor o igual al ya registrado', function () {
+it('rechaza un versionCode real menor o igual al ya registrado, aunque el archivo sea distinto', function () {
     Sanctum::actingAs($this->sistemas);
 
-    $this->postJson('/api/actualizaciones-apk', [
-        'apk' => apkDePrueba(), 'version' => '1.0.0', 'build_number' => 20, 'application_id' => APPLICATION_ID,
-    ])->assertCreated();
+    $this->postJson('/api/actualizaciones-apk', ['apk' => apkDePrueba(versionCode: 20, versionName: '1.0.0')])
+        ->assertCreated();
 
-    $this->postJson('/api/actualizaciones-apk', [
-        'apk' => apkDePrueba(), 'version' => '1.0.1', 'build_number' => 20, 'application_id' => APPLICATION_ID,
-    ])->assertUnprocessable();
+    // Simula el bug real: un build local con versionCode viejo (la carpeta
+    // android/ no se regeneró tras bajar app.config.ts) — el backend debe
+    // rechazarlo en vez de confiar en que "debería" ser mayor.
+    $this->postJson('/api/actualizaciones-apk', ['apk' => apkDePrueba(versionCode: 20, versionName: '1.0.1')])
+        ->assertUnprocessable();
 });
 
 it('rechaza un archivo sin estructura de APK', function () {
     Sanctum::actingAs($this->sistemas);
 
-    $this->postJson('/api/actualizaciones-apk', [
-        'apk' => apkDePrueba(esApk: false), 'version' => '1.0.0', 'build_number' => 1, 'application_id' => APPLICATION_ID,
-    ])->assertUnprocessable();
+    $this->postJson('/api/actualizaciones-apk', ['apk' => apkDePrueba(esApk: false)])->assertUnprocessable();
 });
 
 it('rechaza un APK sin firma', function () {
     Sanctum::actingAs($this->sistemas);
 
-    $this->postJson('/api/actualizaciones-apk', [
-        'apk' => apkDePrueba(firmado: false), 'version' => '1.0.0', 'build_number' => 1, 'application_id' => APPLICATION_ID,
-    ])->assertUnprocessable();
+    $this->postJson('/api/actualizaciones-apk', ['apk' => apkDePrueba(firmado: false)])->assertUnprocessable();
+});
+
+it('rechaza un APK cuyo AndroidManifest.xml no se puede decodificar como AXML', function () {
+    Sanctum::actingAs($this->sistemas);
+
+    $this->postJson('/api/actualizaciones-apk', ['apk' => apkDePrueba(manifiestoValido: false)])
+        ->assertUnprocessable();
+});
+
+it('rechaza un APK firmado con un certificado distinto al de la versión vigente', function () {
+    Sanctum::actingAs($this->sistemas);
+
+    [$archivoV1, $huella1] = apkFirmadoV2DePrueba(versionCode: 1, versionName: '1.0.0');
+    $this->postJson('/api/actualizaciones-apk', ['apk' => $archivoV1])->assertCreated();
+    $v1 = ApkVersion::query()->where('build_number', 1)->firstOrFail();
+    $this->postJson("/api/actualizaciones-apk/{$v1->id}/publicar")->assertSuccessful();
+
+    [$archivoV2, $huella2] = apkFirmadoV2DePrueba(versionCode: 2, versionName: '1.0.1');
+    expect($huella2)->not->toBe($huella1); // cada llamada genera un certificado autofirmado distinto
+
+    $this->postJson('/api/actualizaciones-apk', ['apk' => $archivoV2])->assertUnprocessable();
 });
 
 it('detecta como firmado un APK real con bloque de firma v2 fuera de la ventana de 64KB, y extrae la huella del certificado', function () {
     Sanctum::actingAs($this->sistemas);
 
-    [$archivo, $huellaEsperada] = apkFirmadoV2DePrueba();
+    [$archivo, $huellaEsperada] = apkFirmadoV2DePrueba(versionCode: 1, versionName: '1.0.0');
 
-    $response = $this->postJson('/api/actualizaciones-apk', [
-        'apk' => $archivo, 'version' => '1.0.0', 'build_number' => 1, 'application_id' => APPLICATION_ID,
-    ])->assertCreated();
+    $response = $this->postJson('/api/actualizaciones-apk', ['apk' => $archivo])->assertCreated();
 
     expect($response->json('data.certificado_sha256'))->toBe($huellaEsperada);
 

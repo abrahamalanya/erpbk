@@ -36,7 +36,7 @@ class ApkVersionController extends Controller
     {
         Gate::authorize('create', ApkVersion::class);
 
-        $apkVersion = $this->apkVersions->subir($request->user(), $request->validated(), $request->file('apk'));
+        $apkVersion = $this->apkVersions->subir($request->user(), $request->validated('descripcion'), $request->file('apk'));
 
         return $this->successResponse($apkVersion, 'Versión registrada', 201);
     }

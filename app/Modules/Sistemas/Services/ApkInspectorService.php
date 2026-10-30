@@ -6,12 +6,13 @@ use ZipArchive;
 
 /**
  * Inspecciona el contenido real de un APK subido (un APK es, en el fondo, un
- * ZIP). No parsea el binario de AndroidManifest.xml (requeriría un decoder de
- * AXML/ASN.1 que no se puede validar sin un APK real de EAS a mano) — solo
- * confirma estructura (formato/integridad), presencia de firma, y extrae la
- * huella del certificado del firmante cuando el esquema es v2. La
- * compatibilidad de applicationId/versionCode contra la aplicación existente
- * la valida ApkVersionService con la metadata declarada por el admin.
+ * ZIP): confirma estructura (formato/integridad), presencia de firma, extrae
+ * la huella del certificado del firmante cuando el esquema es v2, y decodifica
+ * el AndroidManifest.xml binario (AXML) para leer applicationId/versionCode/
+ * versionName reales — nunca se confía en lo que el admin escriba a mano en
+ * el formulario, porque eso es exactamente lo que permitía publicar una
+ * versión con metadata distinta al contenido real del archivo (causa del
+ * ciclo de "actualización" que nunca se instala).
  */
 final class ApkInspectorService
 {
@@ -26,14 +27,22 @@ final class ApkInspectorService
     /** ID del bloque "APK Signature Scheme v2" dentro del APK Signing Block. */
     private const ID_V2_SIGNATURE = 0x7109871A;
 
+    /** Chunk types del formato binario AXML (ver frameworks/base de AOSP, ResourceTypes.h). */
+    private const RES_STRING_POOL_TYPE = 0x0001;
+
+    private const RES_XML_START_ELEMENT_TYPE = 0x0102;
+
+    /** Res_value::dataType para un valor que es un índice al pool de cadenas. */
+    private const TYPE_STRING = 0x03;
+
     /**
-     * @return array{es_apk: bool, firmado: bool, certificado_sha256: ?string}
+     * @return array{es_apk: bool, firmado: bool, certificado_sha256: ?string, package: ?string, version_code: ?int, version_name: ?string}
      */
     public function inspeccionar(string $path): array
     {
         $zip = new ZipArchive;
         if ($zip->open($path) !== true) {
-            return ['es_apk' => false, 'firmado' => false, 'certificado_sha256' => null];
+            return ['es_apk' => false, 'firmado' => false, 'certificado_sha256' => null, 'package' => null, 'version_code' => null, 'version_name' => null];
         }
 
         $esApk = $zip->locateName('AndroidManifest.xml') !== false && $zip->locateName('classes.dex') !== false;
@@ -45,6 +54,7 @@ final class ApkInspectorService
                 break;
             }
         }
+        $manifiesto = $esApk ? $this->leerManifiesto($zip) : ['package' => null, 'version_code' => null, 'version_name' => null];
         $zip->close();
 
         $bloque = $this->localizarBloqueFirmaV2V3($path);
@@ -53,7 +63,224 @@ final class ApkInspectorService
             'es_apk' => $esApk,
             'firmado' => $firmadoV1 || $bloque !== null,
             'certificado_sha256' => $bloque !== null ? $this->extraerCertificadoSha256($bloque) : null,
+            ...$manifiesto,
         ];
+    }
+
+    /**
+     * Lee el AndroidManifest.xml binario (AXML) del APK y extrae los
+     * atributos reales del elemento raíz `<manifest>`: package, versionCode,
+     * versionName. Nunca lanza: ante cualquier estructura inesperada o
+     * corrupta devuelve valores null, dejando a ApkVersionService decidir si
+     * eso basta para rechazar la subida.
+     *
+     * @return array{package: ?string, version_code: ?int, version_name: ?string}
+     */
+    private function leerManifiesto(ZipArchive $zip): array
+    {
+        $vacio = ['package' => null, 'version_code' => null, 'version_name' => null];
+
+        $binario = $zip->getFromName('AndroidManifest.xml');
+        if ($binario === false || strlen($binario) < 8) {
+            return $vacio;
+        }
+
+        try {
+            return $this->parsearManifiestoBinario($binario) ?? $vacio;
+        } catch (\Throwable) {
+            return $vacio;
+        }
+    }
+
+    /**
+     * @return array{package: ?string, version_code: ?int, version_name: ?string}|null
+     */
+    private function parsearManifiestoBinario(string $d): ?array
+    {
+        // Chunk raíz RES_XML_TYPE: type(u16) + headerSize(u16) + size(u32) = 8 bytes de cabecera.
+        if (strlen($d) < 8 || $this->u16($d, 0) !== 0x0003) {
+            return null;
+        }
+
+        $pos = 8;
+        if ($this->u16($d, $pos) !== self::RES_STRING_POOL_TYPE) {
+            return null;
+        }
+
+        $pool = $this->leerPoolDeCadenas($d, $pos);
+        if ($pool === null) {
+            return null;
+        }
+        [$cadenas, $pos] = $pool;
+
+        // Avanza saltando chunks (resource map, namespaces) hasta el primer
+        // elemento (el elemento raíz <manifest>), usando cada chunk.size para
+        // saltar sin necesitar entender su contenido.
+        $limite = strlen($d);
+        while ($pos + 8 <= $limite) {
+            $tipo = $this->u16($d, $pos);
+            $tamanoChunk = $this->u32($d, $pos + 4);
+            if ($tamanoChunk < 8 || $pos + $tamanoChunk > $limite) {
+                return null;
+            }
+            if ($tipo === self::RES_XML_START_ELEMENT_TYPE) {
+                break;
+            }
+            $pos += $tamanoChunk;
+        }
+        if ($pos + 8 > $limite || $this->u16($d, $pos) !== self::RES_XML_START_ELEMENT_TYPE) {
+            return null;
+        }
+
+        // ResXMLTree_node (8 cabecera + lineNumber u32 + comment u32 = 16) seguido de ResXMLTree_attrExt.
+        $attrExtStart = $pos + 16;
+        if ($attrExtStart + 20 > $limite) {
+            return null;
+        }
+        $attributeStart = $this->u16($d, $attrExtStart + 8);
+        $attributeSize = $this->u16($d, $attrExtStart + 10);
+        $attributeCount = $this->u16($d, $attrExtStart + 12);
+        if ($attributeSize < 20 || $attributeCount > 1000) {
+            return null;
+        }
+
+        $resultado = ['package' => null, 'version_code' => null, 'version_name' => null];
+        $base = $attrExtStart + $attributeStart;
+        for ($i = 0; $i < $attributeCount; $i++) {
+            $offset = $base + $i * $attributeSize;
+            if ($offset + 20 > $limite) {
+                return null;
+            }
+
+            $nombreIdx = $this->u32($d, $offset + 4);
+            $tipoDato = ord($d[$offset + 15]);
+            $dato = $this->u32($d, $offset + 16);
+            $nombre = $cadenas[$nombreIdx] ?? null;
+            if ($nombre === null) {
+                continue;
+            }
+
+            $valor = $tipoDato === self::TYPE_STRING ? ($cadenas[$dato] ?? null) : $dato;
+
+            match ($nombre) {
+                'package' => $resultado['package'] = is_string($valor) ? $valor : null,
+                'versionCode' => $resultado['version_code'] = is_int($valor) ? $valor : null,
+                'versionName' => $resultado['version_name'] = is_string($valor) ? $valor : null,
+                default => null,
+            };
+        }
+
+        return $resultado;
+    }
+
+    /**
+     * Lee el chunk de pool de cadenas (ResStringPool) que sigue siempre a la
+     * cabecera raíz de un AXML, y decodifica todas sus cadenas (UTF-8 o
+     * UTF-16, según el flag del chunk).
+     *
+     * @return array{0: array<int, string>, 1: int}|null [cadenas por índice, offset del siguiente chunk]
+     */
+    private function leerPoolDeCadenas(string $d, int $inicio): ?array
+    {
+        $limite = strlen($d);
+        if ($inicio + 28 > $limite) {
+            return null;
+        }
+
+        $headerSize = $this->u16($d, $inicio + 2);
+        $tamanoChunk = $this->u32($d, $inicio + 4);
+        $cantidad = $this->u32($d, $inicio + 8);
+        $flags = $this->u32($d, $inicio + 16);
+        $stringsStart = $this->u32($d, $inicio + 20);
+        $esUtf8 = ($flags & 0x100) !== 0;
+
+        if ($tamanoChunk < 28 || $inicio + $tamanoChunk > $limite || $cantidad > 10000) {
+            return null;
+        }
+
+        $offsets = [];
+        for ($i = 0; $i < $cantidad; $i++) {
+            $offsetPos = $inicio + $headerSize + $i * 4;
+            if ($offsetPos + 4 > $limite) {
+                return null;
+            }
+            $offsets[] = $this->u32($d, $offsetPos);
+        }
+
+        $cadenas = [];
+        foreach ($offsets as $i => $off) {
+            $abs = $inicio + $stringsStart + $off;
+            if ($abs < 0 || $abs >= $limite) {
+                return null;
+            }
+            $cadenas[$i] = $esUtf8 ? $this->leerCadenaUtf8($d, $abs) : $this->leerCadenaUtf16($d, $abs);
+        }
+
+        return [$cadenas, $inicio + $tamanoChunk];
+    }
+
+    private function leerCadenaUtf16(string $d, int $pos): string
+    {
+        $limite = strlen($d);
+        if ($pos + 2 > $limite) {
+            return '';
+        }
+        $ancho = $this->u16($d, $pos);
+        if (($ancho & 0x8000) !== 0) {
+            if ($pos + 4 > $limite) {
+                return '';
+            }
+            $largo = (($ancho & 0x7FFF) << 16) | $this->u16($d, $pos + 2);
+            $pos += 4;
+        } else {
+            $largo = $ancho;
+            $pos += 2;
+        }
+        if ($largo < 0 || $pos + $largo * 2 > $limite) {
+            return '';
+        }
+
+        return mb_convert_encoding(substr($d, $pos, $largo * 2), 'UTF-8', 'UTF-16LE');
+    }
+
+    private function leerCadenaUtf8(string $d, int $pos): string
+    {
+        $limite = strlen($d);
+        if ($pos + 1 > $limite) {
+            return '';
+        }
+        // Primero el largo en unidades UTF-16 (1-2 bytes), luego el largo real en bytes UTF-8 (1-2 bytes).
+        $b = ord($d[$pos]);
+        $pos += ($b & 0x80) !== 0 ? 2 : 1;
+        if ($pos >= $limite) {
+            return '';
+        }
+        $b2 = ord($d[$pos]);
+        if (($b2 & 0x80) !== 0) {
+            if ($pos + 1 >= $limite) {
+                return '';
+            }
+            $largo = (($b2 & 0x7F) << 8) | ord($d[$pos + 1]);
+            $pos += 2;
+        } else {
+            $largo = $b2;
+            $pos += 1;
+        }
+        if ($largo < 0 || $pos + $largo > $limite) {
+            return '';
+        }
+
+        return substr($d, $pos, $largo);
+    }
+
+    private function u16(string $d, int $o): int
+    {
+        return unpack('v', substr($d, $o, 2))[1];
+    }
+
+    private function u32(string $d, int $o): int
+    {
+        return unpack('V', substr($d, $o, 4))[1];
     }
 
     /**

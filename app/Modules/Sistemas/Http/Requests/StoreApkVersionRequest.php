@@ -25,10 +25,11 @@ class StoreApkVersionRequest extends FormRequest
             // puede salir `application/zip` (un APK es un ZIP) y dar un falso
             // negativo. `extensions:apk` es un chequeo barato de nombre; la
             // validación de contenido real la hace ApkInspectorService.
+            //
+            // version/build_number/application_id NO se piden: se leen del
+            // AndroidManifest.xml real dentro del archivo (ApkVersionService),
+            // nunca de lo que el admin escriba a mano.
             'apk' => ['required', 'file', 'extensions:apk', 'max:'.(config('apk_updates.max_size_mb') * 1024)],
-            'version' => ['required', 'string', 'max:20'],
-            'build_number' => ['required', 'integer', 'min:1'],
-            'application_id' => ['required', 'string', 'max:150'],
             'descripcion' => ['nullable', 'string', 'max:2000'],
         ];
     }
