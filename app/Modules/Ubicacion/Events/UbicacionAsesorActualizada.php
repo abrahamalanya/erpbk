@@ -58,6 +58,8 @@ class UbicacionAsesorActualizada implements ShouldBroadcastNow
     public function broadcastWith(): array
     {
         return [
+            'dispositivo_id' => $this->ubicacion->dispositivo_id,
+            'sesion_activa' => $this->ubicacion->dispositivo?->token_id !== null,
             'asesor_id' => $this->ubicacion->user_id,
             'nombre' => $this->asesor->nombre,
             'apellido' => $this->asesor->apellido,

@@ -4,6 +4,10 @@ namespace App\Modules\Sistemas\Http\Controllers;
 
 use App\Modules\Sistemas\Http\Requests\LoginRequest;
 use App\Modules\Sistemas\Services\UserPresenterService;
+use App\Modules\Ubicacion\Events\UbicacionAsesorActualizada;
+use App\Modules\Ubicacion\Models\DispositivoGps;
+use App\Modules\Ubicacion\Models\UbicacionAsesor;
+use App\Modules\Ubicacion\Services\DispositivoGpsService;
 use App\Modules\Usuario\Models\Impersonacion;
 use App\Modules\Usuario\Models\User;
 use App\Modules\Usuario\Services\ImpersonacionService;
@@ -37,7 +41,11 @@ class AuthController extends Controller
             return $this->errorResponse('Usuario inactivo', 403);
         }
 
-        $token = $user->createToken('erp-token')->plainTextToken;
+        $nuevoToken = $user->createToken('erp-token');
+        $token = $nuevoToken->plainTextToken;
+        if ($request->filled('dispositivo_id')) {
+            app(DispositivoGpsService::class)->vincular($user, $request->string('dispositivo_id')->toString(), $nuevoToken->accessToken->id);
+        }
 
         return $this->successResponse([
             'user' => $this->presenter->decorar($user),
@@ -49,6 +57,7 @@ class AuthController extends Controller
     public function logout(Request $request): JsonResponse
     {
         $token = $request->user()->currentAccessToken();
+        DispositivoGps::where('token_id', $token->id)->update(['token_id' => null]);
         $impersonacion = $this->impersonaciones->activaParaToken($token->id ?? null);
 
         if ($impersonacion !== null) {
@@ -58,6 +67,10 @@ class AuthController extends Controller
             $this->impersonaciones->finalizar($impersonacion);
         } else {
             $token->delete();
+        }
+
+        foreach (UbicacionAsesor::where('user_id', $request->user()->id)->whereHas('dispositivo', fn ($q) => $q->whereNull('token_id'))->get() as $ubicacion) {
+            event(new UbicacionAsesorActualizada($ubicacion, $request->user()));
         }
 
         return $this->successResponse(null, 'Logout exitoso');

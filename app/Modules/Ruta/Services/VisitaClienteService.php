@@ -54,6 +54,7 @@ final class VisitaClienteService
 
         $existentes = VisitaCliente::query()
             ->where('asesor_id', $asesor->id)
+            ->where('dispositivo_id', $ubicacion->dispositivo_id)
             ->whereDate('fecha', $fecha)
             ->whereIn('cliente_id', $clientes->pluck('id'))
             ->get()
@@ -118,6 +119,7 @@ final class VisitaClienteService
             VisitaCliente::query()->create([
                 'cliente_id' => $cliente->id,
                 'asesor_id' => $asesor->id,
+                'dispositivo_id' => $ubicacion->dispositivo_id,
                 'fecha' => $fecha,
                 'empresa_id' => $asesor->empresa_id,
                 'agencia_id' => $asesor->agencia_id,
@@ -170,6 +172,8 @@ final class VisitaClienteService
             ->whereDate('fecha', $hoy)
             ->get()
             ->groupBy('asesor_id')
-            ->map(fn (Collection $visitas): Collection => $visitas->keyBy('cliente_id'));
+            ->map(fn (Collection $visitas): Collection => $visitas->groupBy('cliente_id')->map(
+                fn (Collection $porCliente) => $porCliente->firstWhere('confirmada_en', '!=', null) ?? $porCliente->sortByDesc('ultima_lectura_en')->first()
+            ));
     }
 }

@@ -24,6 +24,7 @@ class UbicacionAsesorHistorial extends Model
      */
     protected $fillable = [
         'user_id',
+        'dispositivo_id',
         'latitud',
         'longitud',
         'precision_metros',

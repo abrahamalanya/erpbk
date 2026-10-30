@@ -6,6 +6,8 @@ use App\Modules\Credito\Models\CuotaCredito;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Ruta\Models\VisitaCliente;
+use App\Modules\Ruta\Services\VisitaClienteService;
+use App\Modules\Ubicacion\Models\DispositivoGps;
 use App\Modules\Ubicacion\Models\UbicacionAsesor;
 use App\Modules\Usuario\Models\User;
 use Carbon\CarbonInterface;
@@ -48,6 +50,9 @@ function creditoEnMoraParaVisita(Empresa $empresa, Agencia $agencia, Cliente $cl
 
 function enviarPing(float $lat, float $lon, CarbonInterface $capturadoEn, float $precision = 10): void
 {
+    if ($capturadoEn->isFuture()) {
+        test()->travelTo($capturadoEn);
+    }
     test()->postJson('/api/ubicaciones-asesores', [
         'latitud' => $lat,
         'longitud' => $lon,
@@ -55,6 +60,29 @@ function enviarPing(float $lat, float $lon, CarbonInterface $capturadoEn, float 
         'capturado_en' => $capturadoEn->toISOString(),
     ])->assertSuccessful();
 }
+
+it('keeps device permanence independent when the same advisor uses two phones', function () {
+    $cliente = Cliente::factory()->forAgencia($this->agencia)->asignadoA($this->asesor)->create(['latitud' => -8.0, 'longitud' => -74.0]);
+    creditoEnMoraParaVisita($this->empresa, $this->agencia, $cliente, $this->asesor);
+    $devices = collect(['phone-a', 'phone-b'])->map(fn ($key) => DispositivoGps::create([
+        'identificador' => hash('sha256', $key), 'user_id' => $this->asesor->id, 'vinculado_en' => now(),
+    ]));
+    $t0 = now()->startOfSecond();
+    $ping = function ($device, $minute, $lat = -8.0) use ($t0) {
+        app(VisitaClienteService::class)->procesarPing($this->asesor, new UbicacionAsesor([
+            'dispositivo_id' => $device->id, 'latitud' => $lat, 'longitud' => -74.0, 'precision_metros' => 10,
+            'capturado_en' => $t0->copy()->addMinutes($minute),
+        ]));
+    };
+    $ping($devices[0], 0);
+    $ping($devices[1], 1);
+    expect(VisitaCliente::count())->toBe(2);
+    $ping($devices[1], 2, -9.0);
+    expect(VisitaCliente::count())->toBe(1);
+    $ping($devices[0], 2);
+    $ping($devices[0], 3);
+    expect(VisitaCliente::where('dispositivo_id', $devices[0]->id)->first()->confirmada_en)->not->toBeNull();
+});
 
 it('confirms the visit after 3 continuous minutes with good precision inside the radius', function () {
     $cliente = Cliente::factory()->forAgencia($this->agencia)->asignadoA($this->asesor)

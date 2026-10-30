@@ -212,8 +212,7 @@ it('returns the route history with points and a computed summary', function () {
 
     $response = $this->getJson('/api/ubicaciones-asesores/historial?'.http_build_query([
         'asesor_id' => $asesor->id,
-        'desde' => $hoy->toDateString(),
-        'hasta' => $hoy->toDateString(),
+        'fecha' => $hoy->toDateString(),
     ]))->assertSuccessful();
 
     expect($response->json('data.puntos'))->toHaveCount(3)
@@ -232,8 +231,7 @@ it('denies access to the history of an asesor outside the actor scope', function
 
     $this->getJson('/api/ubicaciones-asesores/historial?'.http_build_query([
         'asesor_id' => $ajeno->id,
-        'desde' => now()->toDateString(),
-        'hasta' => now()->toDateString(),
+        'fecha' => now()->toDateString(),
     ]))->assertForbidden();
 });
 

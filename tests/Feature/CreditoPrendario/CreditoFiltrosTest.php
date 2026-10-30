@@ -204,30 +204,37 @@ it('ignores a cobro de liquidación anulado when computing fecha_cancelacion', f
 
 it('computes dias_atraso and saldo from cuotas vencidas impagas', function () {
     $bien = Bien::factory()->paraCliente($this->cliente1)->create();
-    $credito = Credito::factory()->paraBien($bien)->activo()->create();
+    // monto_prestamo/interes fijos (no los defaults aleatorios de la factory):
+    // el saldo de un crédito activo/vencido de interés simple ya no es un
+    // resumen estático de cuotas, sino el mismo cálculo que LIQUIDAR
+    // (calcularMontoLiquidacion) — ver CreditoController::index().
+    $credito = Credito::factory()->paraBien($bien)->activo()->create(['monto_prestamo' => 1000, 'interes' => 15]);
 
     CuotaCredito::factory()->paraCredito($credito)->pagada()->create([
         'numero_cuota' => 1,
         'fecha_vencimiento' => now()->subDays(20)->toDateString(),
-        'monto_total' => 100,
-        'monto_abonado' => 100,
+        'monto_capital' => 200, 'monto_interes' => 30, 'monto_total' => 230, 'monto_abonado' => 230,
     ]);
     CuotaCredito::factory()->paraCredito($credito)->create([
         'numero_cuota' => 2,
         'fecha_vencimiento' => now()->subDays(7)->toDateString(),
-        'monto_total' => 150,
-        'monto_abonado' => 0,
+        'monto_capital' => 150, 'monto_interes' => 0, 'monto_total' => 150, 'monto_abonado' => 0,
     ]);
     CuotaCredito::factory()->paraCredito($credito)->create([
         'numero_cuota' => 3,
         'fecha_vencimiento' => now()->addDays(10)->toDateString(),
-        'monto_total' => 150,
-        'monto_abonado' => 0,
+        'monto_capital' => 150, 'monto_interes' => 0, 'monto_total' => 150, 'monto_abonado' => 0,
     ]);
 
     $response = $this->getJson("/api/creditos-prendarios?cliente_id={$this->cliente1->id}")->assertSuccessful();
 
+    // total: sigue siendo el resumen estático del cronograma (230+150+150).
+    // saldo = calcularMontoLiquidacion(): fecha_desembolso=hoy y
+    // dias_minimo_interes=15 ⇒ 15 días cobrados; interés = monto_prestamo *
+    // interes * dias_cobrados / 3000 = 1000*15*15/3000 = 75. capital
+    // (1000-200 ya pagado) + interés (75-30 ya cubierto=45) + mora (0, el
+    // crédito no está vencido) = 800+45 = 845.
     expect($response->json('data.data.0.dias_atraso'))->toBe(7)
-        ->and((float) $response->json('data.data.0.total'))->toBe(400.0)
-        ->and((float) $response->json('data.data.0.saldo'))->toBe(300.0);
+        ->and((float) $response->json('data.data.0.total'))->toBe(530.0)
+        ->and((float) $response->json('data.data.0.saldo'))->toBe(845.0);
 });

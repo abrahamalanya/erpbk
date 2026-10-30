@@ -113,8 +113,18 @@ final class TrazadoRutaService
             return null;
         }
 
+        $coordenadas = $ruta['geometry']['coordinates'] ?? null;
+        if (! is_array($coordenadas) || count($coordenadas) < 2) {
+            return null;
+        }
+        foreach ($coordenadas as $coordenada) {
+            if (! is_array($coordenada) || count($coordenada) < 2 || ! is_numeric($coordenada[0]) || ! is_numeric($coordenada[1]) || abs((float) $coordenada[0]) > 180 || abs((float) $coordenada[1]) > 90) {
+                return null;
+            }
+        }
+
         $resultado = [
-            'trazado' => array_map(fn (array $c): array => [(float) $c[1], (float) $c[0]], $ruta['geometry']['coordinates'] ?? []),
+            'trazado' => array_map(fn (array $c): array => [(float) $c[1], (float) $c[0]], $coordenadas),
             'distancia_m' => (int) round($ruta['properties']['summary']['distance'] ?? 0),
             'duracion_s' => (int) round($ruta['properties']['summary']['duration'] ?? 0),
             'aproximado' => false,

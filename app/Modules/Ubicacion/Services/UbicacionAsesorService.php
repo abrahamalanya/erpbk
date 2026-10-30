@@ -2,7 +2,9 @@
 
 namespace App\Modules\Ubicacion\Services;
 
+use App\Modules\Ruta\Services\TrazadoRutaService;
 use App\Modules\Ubicacion\Events\UbicacionAsesorActualizada;
+use App\Modules\Ubicacion\Models\DispositivoGps;
 use App\Modules\Ubicacion\Models\UbicacionAsesor;
 use App\Modules\Ubicacion\Models\UbicacionAsesorHistorial;
 use App\Modules\Usuario\Models\User;
@@ -33,15 +35,48 @@ final class UbicacionAsesorService
     public function registrar(User $asesor, array $datos): UbicacionAsesor
     {
         return DB::transaction(function () use ($asesor, $datos): UbicacionAsesor {
-            $anterior = UbicacionAsesor::query()->where('user_id', $asesor->id)->first();
+            // Serialize all pings for this user, including legacy clients.
+            User::whereKey($asesor->id)->lockForUpdate()->firstOrFail();
+            $device = null;
+            if (! empty($datos['dispositivo_id'])) {
+                $device = DispositivoGps::where('identificador', $datos['dispositivo_id'])->lockForUpdate()->first();
+                if (! $device) {
+                    $device = DispositivoGps::where('token_id', $datos['token_id'])->lockForUpdate()->first();
+                    if ($device) {
+                        abort_unless($device->identificador === hash('sha256', 'legacy-token:'.$datos['token_id']), 409, 'El token ya esta vinculado a otro dispositivo.');
+                        $device->update(['identificador' => $datos['dispositivo_id']]);
+                    } else {
+                        $device = app(DispositivoGpsService::class)->vincular($asesor, $datos['dispositivo_id'], $datos['token_id']);
+                        $device->update(['vinculado_en' => DB::table('personal_access_tokens')->where('id', $datos['token_id'])->value('created_at') ?? now()]);
+                    }
+                }
+                abort_unless($device->user_id === $asesor->id && $device->token_id === ($datos['token_id'] ?? null), 409, 'El dispositivo pertenece a otra sesion. Inicie sesion nuevamente.');
+            } elseif (! empty($datos['token_id'])) {
+                $device = DispositivoGps::where('token_id', $datos['token_id'])->lockForUpdate()->first();
+                if (! $device) {
+                    $device = app(DispositivoGpsService::class)->vincular($asesor, hash('sha256', 'legacy-token:'.$datos['token_id']), $datos['token_id']);
+                    $device->update(['vinculado_en' => DB::table('personal_access_tokens')->where('id', $datos['token_id'])->value('created_at') ?? now()]);
+                }
+            }
+            $clave = $device ? ['dispositivo_id' => $device->id] : ['user_id' => $asesor->id, 'dispositivo_id' => null];
+            $anterior = UbicacionAsesor::query()->where($clave)->lockForUpdate()->first();
             // La base guarda fechas sin zona horaria en la zona de la app.
             // El móvil envía ISO en UTC: convertir antes de perder ese offset.
             $capturadoEn = CarbonImmutable::parse($datos['capturado_en'] ?? now(), config('app.timezone'))
                 ->setTimezone(config('app.timezone'));
 
+            if ($device && $capturadoEn->lt($device->vinculado_en)) {
+                abort(409, 'La ubicacion es anterior a la sesion del dispositivo.');
+            }
+            if ($anterior && $capturadoEn->lte($anterior->capturado_en)) {
+                return $anterior;
+            }
+
             $ubicacion = UbicacionAsesor::query()->updateOrCreate(
-                ['user_id' => $asesor->id],
+                $clave,
                 [
+                    'user_id' => $asesor->id,
+                    'dispositivo_id' => $device?->id,
                     'latitud' => $datos['latitud'],
                     'longitud' => $datos['longitud'],
                     'precision_metros' => $datos['precision_metros'] ?? null,
@@ -53,6 +88,7 @@ final class UbicacionAsesorService
 
             if (! $anterior || $ubicacion->capturado_en->gt($anterior->capturado_en)) {
                 UbicacionAsesorHistorial::query()->create([
+                    'dispositivo_id' => $device?->id,
                     'user_id' => $asesor->id,
                     'latitud' => $datos['latitud'],
                     'longitud' => $datos['longitud'],
@@ -80,7 +116,7 @@ final class UbicacionAsesorService
      */
     public function visiblesPara(User $actor, ?int $agenciaId = null, ?int $asesorId = null): Collection
     {
-        $query = UbicacionAsesor::query()->with(['asesor', 'agencia']);
+        $query = UbicacionAsesor::query()->with(['asesor', 'agencia', 'dispositivo']);
 
         if ($actor->hasRole('administrador_agencia')) {
             $query->where('agencia_id', $actor->agencia_id);
@@ -102,6 +138,8 @@ final class UbicacionAsesorService
 
         return $query->get()->map(fn (UbicacionAsesor $ubicacion): array => [
             'asesor_id' => $ubicacion->user_id,
+            'dispositivo_id' => $ubicacion->dispositivo_id,
+            'sesion_activa' => $ubicacion->dispositivo?->token_id !== null,
             'nombre' => $ubicacion->asesor->nombre,
             'apellido' => $ubicacion->asesor->apellido,
             'agencia_id' => $ubicacion->agencia_id,
@@ -166,8 +204,23 @@ final class UbicacionAsesorService
             ->orderBy('capturado_en')
             ->get();
 
+        $recorridos = $puntos->groupBy(fn ($p) => $p->dispositivo_id ?? 'legacy')->map(function ($grupo, $id) {
+            $coords = $grupo->map(fn ($p) => [$p->latitud, $p->longitud])->all();
+            $ruta = app(TrazadoRutaService::class)->trazar($coords);
+
+            return [
+                'dispositivo_id' => $id === 'legacy' ? null : (int) $id,
+                'puntos' => $grupo->map(fn ($p) => $p->only(['latitud', 'longitud', 'capturado_en']))->values()->all(),
+                // Never present fallback straight lines as roads.
+                'trazado' => $ruta['aproximado'] ? [] : $ruta['trazado'],
+                'aproximado' => $ruta['aproximado'],
+            ];
+        })->values()->all();
+
         return [
+            'recorridos' => $recorridos,
             'puntos' => $puntos->map(fn (UbicacionAsesorHistorial $p): array => [
+                'dispositivo_id' => $p->dispositivo_id,
                 'latitud' => $p->latitud,
                 'longitud' => $p->longitud,
                 'precision_metros' => $p->precision_metros,
@@ -177,8 +230,8 @@ final class UbicacionAsesorService
             'resumen' => [
                 'inicio' => $puntos->first()?->capturado_en,
                 'fin' => $puntos->last()?->capturado_en,
-                'distancia_m' => $this->distanciaTotalMetros($puntos),
-                'pausas' => $this->detectarPausas($puntos),
+                'distancia_m' => $puntos->groupBy(fn ($p) => $p->dispositivo_id ?? 'legacy')->sum(fn ($g) => $this->distanciaTotalMetros($g)),
+                'pausas' => $puntos->groupBy(fn ($p) => $p->dispositivo_id ?? 'legacy')->flatMap(fn ($g) => $this->detectarPausas($g))->values()->all(),
             ],
         ];
     }

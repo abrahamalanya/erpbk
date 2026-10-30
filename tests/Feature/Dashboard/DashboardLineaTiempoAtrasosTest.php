@@ -2,6 +2,7 @@
 
 use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Cobranza\Models\Cobro;
+use App\Modules\Credito\Models\ConfiguracionCredito;
 use App\Modules\Credito\Models\Credito;
 use App\Modules\Credito\Models\CuotaCredito;
 use App\Modules\Empresa\Models\Agencia;
@@ -18,6 +19,11 @@ beforeEach(function () {
     $this->empresa = Empresa::factory()->create();
     $this->agencia = Agencia::factory()->for($this->empresa)->create();
     $this->otraAgencia = Agencia::factory()->for($this->empresa)->create();
+    // ReporteAtrasosService ahora calcula el saldo de un crédito diario de
+    // interés simple vía calcularMontoLiquidacion(), que exige una
+    // ConfiguracionCredito para el tipo — sin esto, el reporte (consultado en
+    // el test de reconciliación) la rechaza con DomainException.
+    ConfiguracionCredito::factory()->deEmpresa($this->empresa)->create(['tipo_credito' => 'diario']);
 
     $this->asesor = User::factory()->forAgencia($this->agencia)->create();
     $this->asesor->assignRole('asesor');

@@ -79,7 +79,7 @@ class RutaCobranzaController extends Controller
             ->all();
 
         if ($request->desdeUbicacionActual()) {
-            $ubicacionActual = UbicacionAsesor::query()->where('user_id', $asesor->id)->first();
+            $ubicacionActual = UbicacionAsesor::query()->where('user_id', $asesor->id)->latest('capturado_en')->first();
 
             if ($ubicacionActual) {
                 array_unshift($paradas, [(float) $ubicacionActual->latitud, (float) $ubicacionActual->longitud]);

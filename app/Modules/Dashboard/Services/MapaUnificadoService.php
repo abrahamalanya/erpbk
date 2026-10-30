@@ -56,26 +56,29 @@ final class MapaUnificadoService
         $ahora = now();
 
         $asesorIds = $asesoresVisibles->pluck('id')->all();
-        $ubicacionesPorAsesor = UbicacionAsesor::query()->with('agencia')->whereIn('user_id', $asesorIds)->get()->keyBy('user_id');
+        $ubicacionesPorAsesor = UbicacionAsesor::query()->with(['agencia', 'dispositivo'])->whereIn('user_id', $asesorIds)->get()->groupBy('user_id');
         $visitasPorAsesor = $this->visitaClienteService->visitasDeHoyPorAsesor($asesorIds);
 
-        $asesores = $asesoresVisibles->map(function (User $asesorUser) use ($ubicacionesPorAsesor, $ahora, $minutosDesactualizada): array {
-            $ubicacion = $ubicacionesPorAsesor->get($asesorUser->id);
+        $asesores = $asesoresVisibles->flatMap(function (User $asesorUser) use ($ubicacionesPorAsesor, $ahora, $minutosDesactualizada) {
+            return $ubicacionesPorAsesor->get($asesorUser->id, collect([null]))->map(function ($ubicacion) use ($asesorUser, $ahora, $minutosDesactualizada) {
 
-            return [
-                'asesor_id' => $asesorUser->id,
-                'nombre' => $asesorUser->nombre,
-                'apellido' => $asesorUser->apellido,
-                'agencia_id' => $asesorUser->agencia_id,
-                'agencia_nombre' => $ubicacion?->agencia?->nombre ?? $asesorUser->agencia?->nombre,
-                'latitud' => $ubicacion?->latitud,
-                'longitud' => $ubicacion?->longitud,
-                'precision_metros' => $ubicacion?->precision_metros,
-                'capturado_en' => $ubicacion?->capturado_en?->toISOString(),
-                // Sin ningún ping todavía, también se considera "desactualizado": no hay
-                // evidencia de dónde está, igual que una lectura vieja.
-                'desactualizado' => $ubicacion === null || $ubicacion->capturado_en === null || $ubicacion->capturado_en->diffInMinutes($ahora) > $minutosDesactualizada,
-            ];
+                return [
+                    'dispositivo_id' => $ubicacion?->dispositivo_id,
+                    'sesion_activa' => $ubicacion?->dispositivo?->token_id !== null,
+                    'asesor_id' => $asesorUser->id,
+                    'nombre' => $asesorUser->nombre,
+                    'apellido' => $asesorUser->apellido,
+                    'agencia_id' => $asesorUser->agencia_id,
+                    'agencia_nombre' => $ubicacion?->agencia?->nombre ?? $asesorUser->agencia?->nombre,
+                    'latitud' => $ubicacion?->latitud,
+                    'longitud' => $ubicacion?->longitud,
+                    'precision_metros' => $ubicacion?->precision_metros,
+                    'capturado_en' => $ubicacion?->capturado_en?->toISOString(),
+                    // Sin ningún ping todavía, también se considera "desactualizado": no hay
+                    // evidencia de dónde está, igual que una lectura vieja.
+                    'desactualizado' => $ubicacion === null || ($ubicacion->dispositivo_id !== null && $ubicacion->dispositivo?->token_id === null) || $ubicacion->capturado_en === null || $ubicacion->capturado_en->diffInMinutes($ahora) > $minutosDesactualizada,
+                ];
+            });
         })->values();
 
         $clientes = collect();

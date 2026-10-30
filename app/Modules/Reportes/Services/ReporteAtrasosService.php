@@ -5,6 +5,7 @@ namespace App\Modules\Reportes\Services;
 use App\Modules\Credito\Models\Credito;
 use App\Modules\Credito\Models\CuotaCredito;
 use App\Modules\Credito\Services\CreditoHierarchyService;
+use App\Modules\Credito\Services\CreditoService;
 use App\Modules\Reportes\Tipos\AtrasoCuota;
 use App\Modules\Reportes\Tipos\AtrasoVencimiento;
 use App\Modules\Usuario\Models\User;
@@ -13,7 +14,10 @@ use Illuminate\Support\Collection;
 
 final class ReporteAtrasosService
 {
-    public function __construct(private readonly CreditoHierarchyService $hierarchy) {}
+    public function __construct(
+        private readonly CreditoHierarchyService $hierarchy,
+        private readonly CreditoService $creditoService,
+    ) {}
 
     /**
      * Reporte diario de atrasos: una fila por crédito activo o vencido con
@@ -46,7 +50,7 @@ final class ReporteAtrasosService
         $creditos = $this->hierarchy
             ->visibleQuery(Credito::query(), $actor)
             ->whereIn('estado', ['activo', 'vencido'])
-            ->with(['cliente.asesor'])
+            ->with(['cliente.asesor', 'agencia'])
             ->get()
             ->load([
                 'cuotas',
@@ -155,7 +159,14 @@ final class ReporteAtrasosService
             'monto_prestamo' => (float) $credito->monto_prestamo,
             'interes_prestamo' => (float) $credito->interes,
             'total' => $total,
-            'saldo' => max($total - $abonado, 0),
+            // Mismo criterio que CreditoController::index(): el saldo de un
+            // crédito de interés simple (único tipo que admite liquidar) debe
+            // coincidir con calcularMontoLiquidacion(), no con el estático
+            // monto_total-monto_abonado — ver el docblock allá para la causa.
+            // El compuesto (sin liquidar/refrendo) sigue con la fórmula vieja.
+            'saldo' => $credito->tipo_interes === 'simple'
+                ? (float) $this->creditoService->calcularMontoLiquidacion($credito)['total']
+                : max($total - $abonado, 0),
         ];
     }
 }

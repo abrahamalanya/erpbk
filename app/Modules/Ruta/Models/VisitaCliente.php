@@ -22,6 +22,7 @@ class VisitaCliente extends Model
     protected $fillable = [
         'cliente_id',
         'asesor_id',
+        'dispositivo_id',
         'empresa_id',
         'agencia_id',
         'fecha',

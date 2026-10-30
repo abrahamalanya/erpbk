@@ -12,6 +12,7 @@ use App\Nucleo\Http\Controllers\Controller;
 use App\Nucleo\Traits\ApiResponse;
 use Carbon\CarbonImmutable;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Gate;
 
 /**
@@ -39,8 +40,14 @@ class UbicacionAsesorController extends Controller
     {
         abort_unless($request->user()->hasRole('asesor'), 403);
 
-        $ubicacion = $this->ubicacionAsesorService->registrar($request->user(), $request->validated());
-        $this->visitaClienteService->procesarPing($request->user(), $ubicacion);
+        $ubicacion = DB::transaction(function () use ($request) {
+            $ubicacion = $this->ubicacionAsesorService->registrar($request->user(), [...$request->validated(), 'token_id' => $request->user()->currentAccessToken()->id ?? null]);
+            if ($ubicacion->wasRecentlyCreated || $ubicacion->wasChanged('capturado_en')) {
+                $this->visitaClienteService->procesarPing($request->user(), $ubicacion);
+            }
+
+            return $ubicacion;
+        });
 
         return $this->successResponse([
             'id' => $ubicacion->id,
@@ -97,8 +104,8 @@ class UbicacionAsesorController extends Controller
 
         return $this->successResponse($this->ubicacionAsesorService->historialDe(
             $asesor,
-            CarbonImmutable::parse($request->desde()),
-            CarbonImmutable::parse($request->hasta()),
+            CarbonImmutable::parse($request->fecha()),
+            CarbonImmutable::parse($request->fecha()),
         ));
     }
 }

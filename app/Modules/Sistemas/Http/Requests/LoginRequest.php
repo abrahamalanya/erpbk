@@ -23,6 +23,7 @@ class LoginRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'dispositivo_id' => ['nullable', 'string', 'regex:/^[a-f0-9]{64}$/'],
             'email' => 'required|string',
             'password' => 'required|min:6',
         ];

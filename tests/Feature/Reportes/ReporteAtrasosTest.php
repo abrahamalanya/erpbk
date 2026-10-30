@@ -204,15 +204,27 @@ it('coloca al final los créditos sin clasificar, detrás de los que sí tienen 
         ->and($data[1]['atraso_venc_categoria'])->toBeNull();
 });
 
-it('calcula Total como el cronograma y Saldo como lo que falta abonar', function () {
+it('calcula Total como el cronograma y Saldo como lo que cobraría LIQUIDAR', function () {
+    // monto_prestamo/interes fijos (no los aleatorios de la factory): el
+    // saldo de interés simple ya no es un resumen estático de cuotas, sino
+    // el mismo cálculo que LIQUIDAR (calcularMontoLiquidacion) — ver
+    // ReporteAtrasosService::mapearFila().
     $credito = creditoDelReporte($this->empresa, $this->agencia, $this->cliente, $this->asesor);
+    $credito->update(['monto_prestamo' => 300, 'interes' => 15]);
+    // Sin pagada_at: estas cuotas quedan "pendientes" con abono parcial, no
+    // "pagadas" — solo afectan el descuento de abonos, no capital/interés ya
+    // cubierto (mismo criterio que calcularMontoLiquidacion()/cubiertoPorCuotasPagadas()).
     $credito->cuotas()->where('numero_cuota', '<=', 10)->update(['monto_abonado' => 11]);
 
     Sanctum::actingAs($this->asesor, ['*']);
     $fila = $this->getJson('/api/reportes/atrasos-diarios')->assertSuccessful()->json('data.0');
 
+    // total: resumen estático del cronograma (30 cuotas de 11 = 330), sin cambios.
+    // saldo: fecha_desembolso=hace 30 días, dias_minimo_interes=15 ⇒ 30 días
+    // cobrados; interés = 300*15*30/3000 = 45. capital 300 (nada formalmente
+    // pagado) + interés 45 - abonos ya registrados en pendientes (10*11=110) = 235.
     expect((float) $fila['total'])->toBe(330.0)
-        ->and((float) $fila['saldo'])->toBe(220.0);
+        ->and((float) $fila['saldo'])->toBe(235.0);
 });
 
 it('trae el último abono, el asesor y la periodicidad de la cuota', function () {

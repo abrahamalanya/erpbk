@@ -18,11 +18,12 @@ class StoreUbicacionAsesorRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'dispositivo_id' => ['nullable', 'string', 'regex:/^[a-f0-9]{64}$/'],
             'latitud' => ['required', 'numeric', 'between:-90,90'],
             'longitud' => ['required', 'numeric', 'between:-180,180'],
             'precision_metros' => ['nullable', 'numeric', 'min:0'],
             'velocidad_ms' => ['nullable', 'numeric', 'min:0'],
-            'capturado_en' => ['nullable', 'date'],
+            'capturado_en' => ['nullable', 'date', 'before_or_equal:now'],
         ];
     }
 }

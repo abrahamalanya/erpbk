@@ -22,6 +22,7 @@ class UbicacionAsesor extends Model
      */
     protected $fillable = [
         'user_id',
+        'dispositivo_id',
         'latitud',
         'longitud',
         'precision_metros',
@@ -48,5 +49,10 @@ class UbicacionAsesor extends Model
     public function agencia(): BelongsTo
     {
         return $this->belongsTo(Agencia::class);
+    }
+
+    public function dispositivo(): BelongsTo
+    {
+        return $this->belongsTo(DispositivoGps::class, 'dispositivo_id');
     }
 }

@@ -196,7 +196,21 @@ class CreditoController extends Controller
 
             $credito->setAttribute('dias_atraso', $diasAtraso);
             $credito->setAttribute('total', $total);
-            $credito->setAttribute('saldo', max($total - $abonado, 0));
+            // Mientras el crédito sigue activo/vencido, el saldo mostrado debe
+            // ser EXACTAMENTE lo que cobraría LIQUIDAR (calcularMontoLiquidacion:
+            // interés prorateado por días + mora, descontando lo ya cubierto por
+            // cuotas pagadas) — no `cuotas.monto_total - monto_abonado`, que es
+            // estático y no incluye mora ni reprorratea el interés. Esos dos
+            // montos coincidían por casualidad mientras la tasa nunca cambiaba
+            // después del desembolso; al editar la tasa de un crédito ya
+            // desembolsado (actualizarInteres(), incluida una corrección masiva
+            // por SQL) el monto_total de las cuotas YA PAGADAS cambia pero su
+            // monto_abonado histórico no, así que la fórmula estática deja de
+            // reflejar la realidad. Ver calcularMontoLiquidacion().
+            $credito->setAttribute('saldo',
+                $credito->tipo_interes === 'simple' && in_array($credito->estado, ['activo', 'vencido'], true)
+                    ? (float) $this->creditoService->calcularMontoLiquidacion($credito)['total']
+                    : max($total - $abonado, 0));
             $credito->setAttribute('asesor', $credito->cliente?->asesor);
             $credito->setAttribute('fecha_cancelacion', $fechaCancelacion);
 
