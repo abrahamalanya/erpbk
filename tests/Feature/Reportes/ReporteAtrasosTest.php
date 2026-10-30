@@ -220,11 +220,13 @@ it('calcula Total como el cronograma y Saldo como lo que cobraría LIQUIDAR', fu
     $fila = $this->getJson('/api/reportes/atrasos-diarios')->assertSuccessful()->json('data.0');
 
     // total: resumen estático del cronograma (30 cuotas de 11 = 330), sin cambios.
-    // saldo: fecha_desembolso=hace 30 días, dias_minimo_interes=15 ⇒ 30 días
-    // cobrados; interés = 300*15*30/3000 = 45. capital 300 (nada formalmente
-    // pagado) + interés 45 - abonos ya registrados en pendientes (10*11=110) = 235.
+    // saldo: diario no da descuento por pago anticipado — cobra el interés de
+    // TODAS las cuotas pendientes (ninguna tiene pagada_at, así que las 30
+    // cuentan: 30*1=30), no solo de los días transcurridos. capital 300
+    // (nada formalmente pagado) + interés 30 - abonos ya registrados en
+    // pendientes (10*11=110) = 220.
     expect((float) $fila['total'])->toBe(330.0)
-        ->and((float) $fila['saldo'])->toBe(235.0);
+        ->and((float) $fila['saldo'])->toBe(220.0);
 });
 
 it('trae el último abono, el asesor y la periodicidad de la cuota', function () {

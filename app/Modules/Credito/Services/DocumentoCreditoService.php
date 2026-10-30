@@ -240,6 +240,8 @@ final class DocumentoCreditoService
                 $credito->tipo_cuota,
                 $credito->numero_cuotas,
                 tipoCredito: $credito->tipo_credito,
+                tipoInteres: $credito->tipo_interes,
+                fechaDesembolso: $credito->fecha_desembolso?->toDateString(),
             );
 
             $credito->setRelation('cuotas', collect($preview['cuotas'])->map(fn (array $fila): CuotaCredito => new CuotaCredito([

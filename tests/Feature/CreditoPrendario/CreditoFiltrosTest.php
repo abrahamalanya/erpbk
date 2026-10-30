@@ -135,6 +135,62 @@ it('filters créditos by fecha_desembolso range', function () {
         ->and(Carbon::parse($response->json('data.data.0.fecha_desembolso'))->toDateString())->toBe(now()->toDateString());
 });
 
+it('finds a credit by full or partial code and combines it with disbursement dates', function () {
+    $bien = Bien::factory()->paraCliente($this->cliente1)->create();
+    $credito = Credito::factory()->paraBien($bien)->activo()->create(['fecha_desembolso' => '2026-10-20']);
+    Credito::factory()->paraBien($bien)->activo()->create(['fecha_desembolso' => '2026-10-21']);
+    $codigo = $credito->fresh()->codigo;
+    foreach ([$codigo, substr($codigo, 2), ' '.$codigo.' '] as $busqueda) {
+        $response = $this->getJson('/api/creditos-prendarios?'.http_build_query([
+            'codigo' => $busqueda,
+            'fecha_desembolso_desde' => '2026-10-20',
+            'fecha_desembolso_hasta' => '2026-10-20',
+        ]))->assertSuccessful();
+        expect($response->json('data.data'))->toHaveCount(1)
+            ->and($response->json('data.data.0.id'))->toBe($credito->id);
+    }
+    $this->getJson('/api/creditos-prendarios?'.http_build_query([
+        'codigo' => $codigo, 'fecha_desembolso_desde' => '2026-10-21',
+    ]))->assertSuccessful()->assertJsonCount(0, 'data.data');
+});
+
+it('treats code search wildcards as literal characters', function (string $codigo) {
+    $bien = Bien::factory()->paraCliente($this->cliente1)->create();
+    Credito::factory()->paraBien($bien)->activo()->create();
+    $this->getJson('/api/creditos-prendarios?'.http_build_query(['codigo' => $codigo]))
+        ->assertSuccessful()->assertJsonCount(0, 'data.data');
+})->with(['%', '_', '!']);
+
+it('validates code and disbursement date filters', function (array $filters) {
+    $this->getJson('/api/creditos-prendarios?'.http_build_query($filters))->assertUnprocessable();
+})->with([
+    [['codigo' => ['C-000001']]],
+    [['codigo' => str_repeat('x', 51)]],
+    [['fecha_desembolso_desde' => '2026-02-30']],
+    [['fecha_desembolso_hasta' => 'invalid']],
+    [['fecha_desembolso_desde' => '2026-10-21', 'fecha_desembolso_hasta' => '2026-10-20']],
+]);
+
+it('accepts a standalone upper date bound and excludes undisbursed credits', function () {
+    $bien = Bien::factory()->paraCliente($this->cliente1)->create();
+    $credito = Credito::factory()->paraBien($bien)->activo()->create(['fecha_desembolso' => '2026-10-20']);
+    Credito::factory()->paraBien($bien)->create(['fecha_desembolso' => null]);
+    Credito::factory()->paraBien($bien)->activo()->create(['fecha_desembolso' => '2026-10-21']);
+    $this->getJson('/api/creditos-prendarios?fecha_desembolso_hasta=2026-10-20')->assertSuccessful()
+        ->assertJsonCount(1, 'data.data')->assertJsonPath('data.data.0.id', $credito->id);
+});
+
+it('does not broaden advisor visibility when searching by code', function () {
+    $asesor = User::factory()->forAgencia($this->agencia)->create();
+    $asesor->assignRole('asesor');
+    $bien = Bien::factory()->paraCliente($this->cliente1)->create();
+    $propio = Credito::factory()->paraBien($bien)->create(['registrado_por' => $asesor->id]);
+    $ajeno = Credito::factory()->paraBien($bien)->create(['registrado_por' => $this->admin->id]);
+    Sanctum::actingAs($asesor);
+    $this->getJson('/api/creditos-prendarios?codigo='.$ajeno->fresh()->codigo)->assertSuccessful()->assertJsonCount(0, 'data.data');
+    $this->getJson('/api/creditos-prendarios?codigo='.$propio->fresh()->codigo)->assertSuccessful()->assertJsonPath('data.data.0.id', $propio->id);
+});
+
 it('filters créditos by fecha_vencimiento range', function () {
     $bien = Bien::factory()->paraCliente($this->cliente1)->create();
     Credito::factory()->paraBien($bien)->activo()->create(['fecha_vencimiento' => now()->addDays(5)->toDateString()]);

@@ -19,6 +19,7 @@ class PreviewCronogramaRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'fecha_desembolso' => ['nullable', 'date_format:Y-m-d', 'before_or_equal:today'],
             'monto_prestamo' => ['required', 'numeric', 'min:0.01'],
             'interes' => ['required', 'numeric', 'min:0'],
             'tipo_cuota' => ['required', Rule::in(['diario', 'semanal', 'quincenal', 'mensual'])],

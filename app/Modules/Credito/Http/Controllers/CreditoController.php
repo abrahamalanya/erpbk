@@ -103,6 +103,7 @@ class CreditoController extends Controller
             isset($data['numero_cuotas']) ? (int) $data['numero_cuotas'] : null,
             $data['tipo_interes'] ?? 'simple',
             $data['tipo_credito'] ?? 'prendario',
+            fechaDesembolso: $data['fecha_desembolso'] ?? null,
         );
 
         return $this->successResponse($preview);
@@ -112,8 +113,22 @@ class CreditoController extends Controller
     {
         Gate::authorize('viewAny', Credito::class);
 
+        $filtros = request()->validate([
+            'codigo' => ['nullable', 'string', 'max:50'],
+            'fecha_desembolso_desde' => ['nullable', 'date_format:Y-m-d'],
+            'fecha_desembolso_hasta' => [
+                'nullable', 'date_format:Y-m-d',
+                ...(request()->filled('fecha_desembolso_desde') ? ['after_or_equal:fecha_desembolso_desde'] : []),
+            ],
+        ]);
+
         $query = Credito::query()->with(['bienes', 'vehiculos', 'inmuebles', 'cliente.asesor', 'registradoPor', 'agencia']);
         $query = $this->hierarchy->visibleQuery($query, request()->user());
+
+        $codigo = trim($filtros['codigo'] ?? '');
+        if ($codigo !== '') {
+            $query->whereRaw("codigo LIKE ? ESCAPE '!'", ['%'.strtr($codigo, ['!' => '!!', '%' => '!%', '_' => '!_']).'%']);
+        }
 
         if (request()->filled('tipo_credito')) {
             $query->where('tipo_credito', (string) request()->string('tipo_credito'));
@@ -655,7 +670,7 @@ class CreditoController extends Controller
         }
 
         // Aún sin cuotas persistidas (antes del desembolso): cronograma
-        // tentativo con la misma fórmula, tomando hoy como fecha de desembolso
+        // tentativo con la misma fórmula y la fecha de desembolso planificada
         // y el número de cuotas elegido al registrar (si el tipo lo permite).
         $preview = $this->creditoService->previsualizarCronograma(
             (string) $credito->monto_prestamo,
@@ -663,6 +678,8 @@ class CreditoController extends Controller
             $credito->tipo_cuota,
             $credito->numero_cuotas,
             tipoCredito: $credito->tipo_credito,
+            tipoInteres: $credito->tipo_interes,
+            fechaDesembolso: $credito->fecha_desembolso?->toDateString(),
         );
 
         return $this->documentoService->renderizarCronogramaTentativo($credito, $preview);

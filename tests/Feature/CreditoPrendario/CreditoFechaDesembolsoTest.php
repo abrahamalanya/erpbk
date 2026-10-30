@@ -10,9 +10,12 @@ use App\Modules\CreditoPrendario\Models\Bien;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Usuario\Models\User;
+use App\Nucleo\Services\PdfGeneratorService;
+use Carbon\Carbon;
 use Database\Seeders\PermissionSeeder;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
 
@@ -219,4 +222,70 @@ it('denies asesor from editing the fecha de desembolso', function () {
     $this->postJson("/api/creditos-prendarios/{$creditoId}/actualizar-fecha-desembolso", [
         'fecha_desembolso' => now()->subDays(10)->toDateString(),
     ])->assertForbidden();
+});
+
+it('previews every daily installment from the edited date instead of today', function () {
+    $this->travelTo(Carbon::parse('2026-10-30 12:00:00'));
+    Sanctum::actingAs($this->adminAgencia);
+    $this->postJson('/api/creditos-prendarios/cronograma-preview', [
+        'monto_prestamo' => 500, 'interes' => 15, 'tipo_cuota' => 'diario', 'tipo_credito' => 'diario',
+        'numero_cuotas' => 4, 'fecha_desembolso' => '2026-10-20',
+    ])->assertSuccessful()->assertJsonPath('data.fecha_base', '2026-10-20')
+        ->assertJsonPath('data.cuotas.0.fecha_vencimiento', '2026-10-21')
+        ->assertJsonPath('data.cuotas.1.fecha_vencimiento', '2026-10-22')
+        ->assertJsonPath('data.cuotas.2.fecha_vencimiento', '2026-10-23')
+        ->assertJsonPath('data.cuotas.3.fecha_vencimiento', '2026-10-24');
+});
+
+it('corrects every persisted date while preserving installments, payments and unrelated credits', function ($frecuencia, $tipoInteres, $plazo, $esperadas) {
+    $this->travelTo(Carbon::parse('2026-10-30 12:00:00'));
+    $credito = Credito::factory()->diario()->create([
+        'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id, 'registrado_por' => $this->asesor->id,
+        'cliente_id' => $this->cliente->id, 'estado' => 'activo', 'tipo_cuota' => $frecuencia, 'tipo_interes' => $tipoInteres,
+        'tipo_credito' => $tipoInteres === 'compuesto' ? 'hipotecario' : 'diario',
+        'monto_prestamo' => 500, 'interes' => 15, 'numero_cuotas' => 4, 'plazo_dias' => $plazo,
+        'fecha_desembolso' => '2026-10-30', 'fecha_vencimiento' => now()->addDays($plazo),
+    ]);
+    $preview = app(CreditoService::class)->previsualizarCronograma('500', '15', $frecuencia, 4, $tipoInteres, $credito->tipo_credito, fechaDesembolso: '2026-10-30');
+    foreach ($preview['cuotas'] as $fila) {
+        $credito->cuotas()->create([...$fila, 'empresa_id' => $this->empresa->id, 'monto_abonado' => $fila['numero_cuota'] === 2 ? '10.00' : '0.00', 'pagada_at' => $fila['numero_cuota'] === 1 ? now() : null]);
+    }
+    $datosProtegidos = fn ($c) => Arr::except($c->getAttributes(), ['fecha_vencimiento', 'updated_at']);
+    $originales = $credito->cuotas()->orderBy('numero_cuota')->get()->map($datosProtegidos)->all();
+    $otro = Credito::factory()->create(['empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id]);
+    $historico = $otro->fresh()->getAttributes();
+    Sanctum::actingAs($this->adminAgencia);
+    $response = $this->postJson("/api/creditos-prendarios/{$credito->id}/actualizar-fecha-desembolso", ['fecha_desembolso' => '2026-10-20'])->assertSuccessful();
+    $cuotas = $credito->cuotas()->orderBy('numero_cuota')->get();
+    expect($cuotas->map(fn ($c) => $c->fecha_vencimiento->toDateString())->all())->toBe($esperadas)
+        ->and($cuotas->map($datosProtegidos)->all())->toBe($originales)
+        ->and($otro->fresh()->getAttributes())->toBe($historico);
+    foreach ($response->json('data.cuotas') as $fila) {
+        expect(substr($fila['fecha_vencimiento'], 0, 10))->toBe($esperadas[$fila['numero_cuota'] - 1]);
+    }
+})->with([
+    'diario' => ['diario', 'simple', 4, ['2026-10-21', '2026-10-22', '2026-10-23', '2026-10-24']],
+    'semanal con ultima cuota a 30 dias' => ['semanal', 'simple', 30, ['2026-10-27', '2026-11-03', '2026-11-10', '2026-11-19']],
+    'quincenal' => ['quincenal', 'simple', 60, ['2026-11-04', '2026-11-19', '2026-12-04', '2026-12-19']],
+    'mensual compuesto' => ['mensual', 'compuesto', 120, ['2026-11-20', '2026-12-20', '2027-01-20', '2027-02-20']],
+]);
+
+it('uses the planned date in the PDF shared by web and app without persisting tentative installments', function () {
+    $this->travelTo(Carbon::parse('2026-10-30 12:00:00'));
+    $credito = Credito::factory()->diario()->create([
+        'empresa_id' => $this->empresa->id, 'agencia_id' => $this->agencia->id, 'registrado_por' => $this->asesor->id,
+        'cliente_id' => $this->cliente->id, 'monto_prestamo' => 500, 'interes' => 15, 'numero_cuotas' => 4,
+    ]);
+    Sanctum::actingAs($this->adminAgencia);
+    $this->postJson("/api/creditos-prendarios/{$credito->id}/actualizar-fecha-desembolso", ['fecha_desembolso' => '2026-10-20'])->assertSuccessful();
+    $this->mock(PdfGeneratorService::class, function ($mock) {
+        $mock->shouldReceive('renderizarDesdeVista')->once()->withArgs(function ($vista, $datos) {
+            expect($datos['tentativo'])->toBeTrue()
+                ->and($datos['credito']->cuotas->map(fn ($c) => $c->fecha_vencimiento->toDateString())->all())->toBe(['2026-10-21', '2026-10-22', '2026-10-23', '2026-10-24']);
+
+            return true;
+        })->andReturn(response('cronograma'));
+    });
+    $this->get("/api/creditos-prendarios/{$credito->id}/cronograma/ver")->assertSuccessful();
+    expect($credito->cuotas()->exists())->toBeFalse();
 });

@@ -626,10 +626,11 @@ final class CreditoService
                     'fecha_vencimiento' => $nuevaFechaVencimiento->toDateString(),
                 ]);
 
+                $ultimaCuota = $credito->cuotas->max('numero_cuota');
                 foreach ($credito->cuotas as $cuota) {
                     $fechaCuota = $credito->tipo_interes === 'compuesto'
                         ? $this->fechaCuotaCompuesta($nuevaFecha, $credito->tipo_cuota, $cuota->numero_cuota)
-                        : $nuevaFecha->copy()->addDays($diasPorCuota * $cuota->numero_cuota);
+                        : $nuevaFecha->copy()->addDays($cuota->numero_cuota === $ultimaCuota ? $credito->plazo_dias : $diasPorCuota * $cuota->numero_cuota);
 
                     $cuota->update(['fecha_vencimiento' => $fechaCuota->toDateString()]);
                 }
@@ -1142,13 +1143,14 @@ final class CreditoService
 
     /**
      * Cronograma tentativo para mostrar al registrar el crédito, cuando aún
-     * no hay cuotas persistidas: usa la fecha de hoy como desembolso y el
+     * no hay cuotas persistidas: usa la fecha de desembolso indicada (hoy si
+     * no se ha fijado ninguna) y el
      * número de cuotas por defecto del tipo (misma fórmula que
      * generarCronograma()). No toca la base de datos.
      *
      * @return array{fecha_base: string, plazo_dias: int, cuotas: list<array{numero_cuota: int, fecha_vencimiento: string, monto_capital: string, monto_interes: string, monto_total: string}>}
      */
-    public function previsualizarCronograma(string $monto, string $interes, string $tipoCuota, ?int $numeroCuotas = null, string $tipoInteres = 'simple', string $tipoCredito = 'prendario', bool $ajustarUltimaCuota = false): array
+    public function previsualizarCronograma(string $monto, string $interes, string $tipoCuota, ?int $numeroCuotas = null, string $tipoInteres = 'simple', string $tipoCredito = 'prendario', bool $ajustarUltimaCuota = false, ?string $fechaDesembolso = null): array
     {
         if (! isset(self::CUOTAS_POR_TIPO[$tipoCuota])) {
             throw new DomainException("Tipo de cuota inválido: {$tipoCuota}");
@@ -1157,7 +1159,7 @@ final class CreditoService
         $n = $numeroCuotas ?? self::CUOTAS_POR_TIPO[$tipoCuota];
         $diasPorCuota = self::DIAS_POR_PERIODO[$tipoCuota];
         $plazoTotal = $this->plazoTotalPara($tipoCredito, $tipoCuota, $n);
-        $base = now()->startOfDay();
+        $base = $fechaDesembolso !== null ? Carbon::parse($fechaDesembolso)->startOfDay() : now()->startOfDay();
 
         $filas = match (true) {
             $tipoInteres === 'compuesto' => $this->filasCronogramaCompuesto($base, $monto, $interes, $tipoCuota, $n, $ajustarUltimaCuota),
@@ -2843,9 +2845,13 @@ final class CreditoService
      * at least N days of interest) — confirmed with the user via a worked
      * example: monto_prestamo=1000, interés=20% mensual, mínimo=15 días;
      * canceling at day 5 still charges as if 15 days passed, canceling at
-     * day 17 charges for the actual 17. Shared by calcularMontoLiquidacion()
-     * (capital + this interest) and calcularMontoRefrendo() (this interest
-     * alone — refrendar keeps the capital outstanding).
+     * day 17 charges for the actual 17. Used by calcularMontoRefrendo()
+     * (this interest alone — refrendar keeps the capital outstanding) and by
+     * calcularMontoLiquidacion() for todos los tipos EXCEPTO diario — diario
+     * no da descuento por pago anticipado (confirmado explícitamente) y
+     * calcula su interés directo de las cuotas pendientes, no de este
+     * prorrateo; solo le reutiliza dias_transcurridos/dias_minimo/
+     * dias_cobrados/tasa_interes como metadata informativa.
      *
      * @return array{interes: string, dias_transcurridos: int, dias_minimo: int, dias_cobrados: int, tasa_interes: string}
      */
@@ -2895,20 +2901,34 @@ final class CreditoService
      */
     public function calcularMontoLiquidacion(Credito $credito): array
     {
+        $esDiario = $credito->tipo_credito === 'diario';
         $prorateo = $this->calcularInteresProrateado($credito);
         // Diario acumula mora por cuota individual desde que CADA una vence
         // (ver moraDeCuota()), no solo cuando el plazo completo del crédito
         // vence — calcularMora() (mora "a nivel crédito") subestimaría la
         // mora real de un diario con cuotas intermedias ya atrasadas.
-        $mora = $credito->tipo_credito === 'diario' ? $this->moraPendienteDiario($credito) : $this->calcularMora($credito);
+        $mora = $esDiario ? $this->moraPendienteDiario($credito) : $this->calcularMora($credito);
 
         // Lo que ya cubrieron las cuotas pagadas dentro del mismo crédito
         // (pago por cuotas) no se vuelve a cobrar: se descuenta el capital y
         // el interés de esas cuotas, y los abonos parciales a las pendientes.
         $cubierto = $this->cubiertoPorCuotasPagadas($credito);
         $capital = bcsub((string) $credito->monto_prestamo, $cubierto['capital'], 2);
-        $interesRestante = bcsub($prorateo['interes'], $cubierto['interes'], 2);
-        $interes = bccomp($interesRestante, '0', 2) > 0 ? $interesRestante : '0.00';
+
+        if ($esDiario) {
+            // Diario NO da descuento por pago anticipado — confirmado
+            // explícitamente, a diferencia de los demás tipos de interés
+            // simple (prendario/vehicular/hipotecario), que sí prorratean por
+            // días transcurridos. Si liquida en el día 20 de un cronograma de
+            // 30, paga igual el interés de las 30 cuotas completas: el monto
+            // es el mismo que pagaría regularizando TODO el cronograma
+            // pendiente (ver calcularAmortizacion()), nunca menos.
+            $interes = bcadd((string) $credito->cuotas()->pendientes()->sum('monto_interes'), '0', 2);
+        } else {
+            $interesRestante = bcsub($prorateo['interes'], $cubierto['interes'], 2);
+            $interes = bccomp($interesRestante, '0', 2) > 0 ? $interesRestante : '0.00';
+        }
+
         $total = bcsub(bcadd(bcadd($capital, $interes, 2), $mora, 2), $cubierto['abonos'], 2);
 
         return [
