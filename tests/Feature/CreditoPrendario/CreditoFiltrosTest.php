@@ -294,3 +294,51 @@ it('computes dias_atraso and saldo from cuotas vencidas impagas', function () {
         ->and((float) $response->json('data.data.0.total'))->toBe(530.0)
         ->and((float) $response->json('data.data.0.saldo'))->toBe(845.0);
 });
+
+it('congela dias_atraso de un crédito liquidado al día en que se liquidó, sin seguir creciendo', function () {
+    // liquidar() no marca las cuotas pagadas (a diferencia de pagar por
+    // cuotas): la cuota sigue "impaga" en la base para siempre. Calcular su
+    // atraso contra "hoy" (como un crédito activo) haría que un crédito
+    // liquidado hace tiempo se viera cada vez más atrasado.
+    $bien = Bien::factory()->paraCliente($this->cliente1)->create();
+    $credito = Credito::factory()->paraBien($bien)->create(['estado' => 'liquidado_pendiente']);
+    CuotaCredito::factory()->paraCredito($credito)->create([
+        'numero_cuota' => 1,
+        'fecha_vencimiento' => now()->subDays(40)->toDateString(),
+        'monto_capital' => 100, 'monto_interes' => 10, 'monto_total' => 110, 'monto_abonado' => 0,
+    ]);
+    Cobro::factory()->create([
+        'empresa_id' => $credito->empresa_id,
+        'cliente_id' => $credito->cliente_id,
+        'credito_id' => $credito->id,
+        'operacion' => 'liquidacion',
+        'created_at' => now()->subDays(10),
+    ]);
+
+    $response = $this->getJson("/api/creditos-prendarios?cliente_id={$this->cliente1->id}")->assertSuccessful();
+
+    // La cuota vencía hace 40 días, pero se liquidó cuando llevaba solo 30
+    // días de atraso (10 días atrás) — no los 40 que ya pasaron hasta hoy.
+    expect($response->json('data.data.0.dias_atraso'))->toBe(30);
+});
+
+it('un crédito liquidado antes de que su cuota más antigua impaga venza no tiene días de atraso', function () {
+    $bien = Bien::factory()->paraCliente($this->cliente1)->create();
+    $credito = Credito::factory()->paraBien($bien)->create(['estado' => 'liquidado']);
+    CuotaCredito::factory()->paraCredito($credito)->create([
+        'numero_cuota' => 1,
+        'fecha_vencimiento' => now()->subDays(5)->toDateString(),
+        'monto_capital' => 100, 'monto_interes' => 10, 'monto_total' => 110, 'monto_abonado' => 0,
+    ]);
+    Cobro::factory()->create([
+        'empresa_id' => $credito->empresa_id,
+        'cliente_id' => $credito->cliente_id,
+        'credito_id' => $credito->id,
+        'operacion' => 'liquidacion',
+        'created_at' => now()->subDays(6),
+    ]);
+
+    $response = $this->getJson("/api/creditos-prendarios?cliente_id={$this->cliente1->id}")->assertSuccessful();
+
+    expect($response->json('data.data.0.dias_atraso'))->toBe(0);
+});

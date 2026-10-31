@@ -3,6 +3,7 @@
 use App\Modules\Caja\Models\Caja;
 use App\Modules\Caja\Models\CajaCiclo;
 use App\Modules\Cliente\Models\Cliente;
+use App\Modules\Cobranza\Models\Cobro;
 use App\Modules\Credito\Models\ConfiguracionCredito;
 use App\Modules\Credito\Models\Credito;
 use App\Modules\CreditoPrendario\Models\Bien;
@@ -232,3 +233,68 @@ it('sigue devolviendo 422 (sin motivo) para errores de validación de datos', fu
         ->assertStatus(422)
         ->assertJsonPath('reason', null);
 });
+
+it('refrenda la deuda neta reconociendo los pagos anteriores sin volver a cobrarlos', function (string $abono, string $pago, string $minimo, string $capital, string $descuento) {
+    $this->travelTo(now()->startOfDay());
+    ConfiguracionCredito::factory()->deEmpresa($this->empresa)->create([
+        'plazo_dias' => 30, 'dias_minimo_interes' => 30, 'max_refrendos' => null,
+    ]);
+    $original = Credito::factory()->paraBien($this->bien)->activo()->create([
+        'registrado_por' => $this->asesor->id, 'monto_prestamo' => 3000,
+        'interes' => '21.50', 'tipo_cuota' => 'mensual', 'numero_cuotas' => 1,
+        'fecha_desembolso' => now()->toDateString(),
+    ]);
+    $original->cuotas()->create([
+        'empresa_id' => $this->empresa->id, 'numero_cuota' => 1,
+        'fecha_vencimiento' => now()->addDays(30)->toDateString(),
+        'monto_capital' => 3000, 'monto_interes' => 645, 'monto_total' => 3645,
+    ]);
+    Sanctum::actingAs($this->asesor, ['*']);
+    $cobroAnterior = $this->postJson("/api/creditos-prendarios/{$original->id}/pagar-cuotas", [
+        'monto_pagado' => $abono, 'medio' => 'efectivo',
+    ])->assertSuccessful()->json('data.cobro_id');
+
+    $detalle = $this->getJson("/api/creditos-prendarios/{$original->id}")->assertSuccessful();
+    $detalle->assertJsonPath('data.monto_refrendo_sugerido.total', $minimo);
+    $saldo = $detalle->json('data.monto_liquidacion_sugerido.total');
+    $lista = $this->getJson('/api/creditos-prendarios?codigo='.$original->codigo)->assertSuccessful();
+    expect((float) $lista->json('data.data.0.saldo'))->toBe((float) $saldo);
+
+    // Pagar la deuda neta completa es liquidar, incluso si el capital original era mayor.
+    $this->postJson("/api/creditos-prendarios/{$original->id}/refrendar", [
+        'monto_pagado' => $saldo, 'medio' => 'efectivo',
+    ])->assertConflict();
+    if (bccomp($minimo, '0', 2) > 0) {
+        $this->postJson("/api/creditos-prendarios/{$original->id}/refrendar", [
+            'monto_pagado' => bcsub($minimo, '0.01', 2), 'medio' => 'efectivo',
+        ])->assertUnprocessable();
+    }
+    $refrendo = $this->postJson("/api/creditos-prendarios/{$original->id}/refrendar", [
+        'monto_pagado' => $pago, 'medio' => 'efectivo',
+        'descuento' => $descuento, 'motivo_descuento' => 'Regularización',
+    ])->assertCreated()->assertJsonPath('data.monto_prestamo', $capital);
+    expect($capital)->toBe(bcsub(bcsub($saldo, $pago, 2), $descuento, 2))
+        ->and(bcadd((string) Credito::findOrFail($refrendo->json('data.id'))->cuotas()->sum('monto_capital'), '0', 2))->toBe($capital)
+        ->and((string) Cobro::findOrFail($refrendo->json('data.cobro_id'))->monto_pagado)->toBe($pago);
+    $voucher = $original->documentos()->where('tipo', 'voucher_pago')->latest('id')->firstOrFail();
+    expect($voucher->datos['saldo_capital'])->toBe($capital)
+        ->and($voucher->datos['interes'])->toBe($minimo)
+        ->and($voucher->datos['abono_capital'])->toBe(bcsub($pago, bcsub($minimo, $descuento, 2), 2));
+
+    // El pago anterior ya forma parte del capital del sucesor: no se puede quitar primero.
+    $this->postJson("/api/cobros/{$cobroAnterior}/anular", ['motivo' => 'Error'])->assertUnprocessable();
+    $this->postJson('/api/cobros/'.$refrendo->json('data.cobro_id').'/anular', ['motivo' => 'Error'])->assertSuccessful();
+    expect(Credito::find($refrendo->json('data.id')))->toBeNull()
+        ->and((string) $original->cuotas()->firstOrFail()->monto_abonado)->toBe($abono)
+        ->and($original->documentos()->where('tipo', 'voucher_pago')->where('cobro_id', $cobroAnterior)->exists())->toBeTrue()
+        ->and($voucher->fresh())->toBeNull();
+    $this->getJson("/api/creditos-prendarios/{$original->id}")
+        ->assertJsonPath('data.monto_liquidacion_sugerido.total', $saldo)
+        ->assertJsonPath('data.monto_refrendo_sugerido.total', $minimo);
+    $this->postJson("/api/cobros/{$cobroAnterior}/anular", ['motivo' => 'Error'])->assertSuccessful();
+    expect((string) $original->cuotas()->firstOrFail()->monto_abonado)->toBe('0.00');
+})->with([
+    'caso reportado: 3195 menos 1195 deja 2000' => ['450.00', '1195.00', '195.00', '2000.00', '0.00'],
+    'abono anterior mayor al interés reduce también capital' => ['800.00', '200.00', '0.00', '2645.00', '0.00'],
+    'descuento sobre el interés pendiente' => ['450.00', '1195.00', '195.00', '1950.00', '50.00'],
+]);

@@ -42,7 +42,7 @@ class FotocheckRequest extends FormRequest
 
     /**
      * Ids únicos y en el orden en que se mandaron: ese orden es el del
-     * imprentaje (3 arriba, 3 abajo), no el del id.
+     * imprentaje (2 usuarios por fila x 2 filas por hoja), no el del id.
      *
      * @return list<int>
      */

@@ -1281,8 +1281,6 @@ final class CreditoService
         ?string $descuento = null,
         ?string $motivoDescuento = null,
     ): Credito {
-        $this->asegurarSinCuotasPagadas($credito, 'refrendar');
-
         if (! in_array($credito->estado, ['activo', 'vencido'], true)) {
             throw new ConflictoDeEstadoException('Solo se puede refrendar un crédito activo o vencido.', MotivoConflicto::CREDITO_ESTADO_INVALIDO);
         }
@@ -1300,7 +1298,7 @@ final class CreditoService
         $mora = $calculo['mora'];
         $descuento = $this->resolverDescuento($calculo['total'], $descuento, $motivoDescuento);
         $interesConMora = bcsub($calculo['total'], $descuento, 2);
-        $total = bcadd((string) $credito->monto_prestamo, $interesConMora, 2);
+        $total = bcadd($calculo['capital'], $interesConMora, 2);
 
         if (bccomp($montoPagado, $interesConMora, 2) < 0) {
             throw new DomainException("El monto pagado ({$montoPagado}) es menor al interés + mora a refrendar calculado ({$interesConMora}).");
@@ -1311,7 +1309,7 @@ final class CreditoService
         }
 
         $abonoCapital = bcsub($montoPagado, $interesConMora, 2);
-        $nuevoCapital = bcsub((string) $credito->monto_prestamo, $abonoCapital, 2);
+        $nuevoCapital = bcsub($calculo['capital'], $abonoCapital, 2);
 
         $configuracion = $this->configuracion->resolverPara($credito->agencia, $credito->tipo_credito);
         $siguienteNumero = $credito->numero_refrendo + 1;
@@ -1448,7 +1446,7 @@ final class CreditoService
         $mora = $calculo['mora'];
         $descuento = $this->resolverDescuento($calculo['total'], $descuento, $motivoDescuento);
         $interesConMora = bcsub($calculo['total'], $descuento, 2);
-        $total = bcadd((string) $credito->monto_prestamo, $interesConMora, 2);
+        $total = bcadd($calculo['capital'], $interesConMora, 2);
 
         if (bccomp($montoPagado, $interesConMora, 2) < 0) {
             throw new DomainException("El monto pagado ({$montoPagado}) es menor al interés + mora calculado ({$interesConMora}).");
@@ -1459,7 +1457,7 @@ final class CreditoService
         }
 
         $abonoCapital = bcsub($montoPagado, $interesConMora, 2);
-        $nuevoCapital = bcsub((string) $credito->monto_prestamo, $abonoCapital, 2);
+        $nuevoCapital = bcsub($calculo['capital'], $abonoCapital, 2);
         $configuracion = $this->configuracion->resolverPara($credito->agencia, $credito->tipo_credito);
         $tipo = $this->tipos->paraCredito($credito);
         $modeloGarantia = $tipo->garantiaModelo();
@@ -1776,7 +1774,7 @@ final class CreditoService
 
         $admitePagoPorCuotas = $this->admitePagoPorCuotas($credito);
         $esCompuesto = $credito->tipo_interes === 'compuesto';
-        $permiteRefrendo = $credito->tipo_credito !== 'diario' && ! $esCompuesto && ! $credito->cuotas()->pagadas()->exists();
+        $permiteRefrendo = $credito->tipo_credito !== 'diario' && ! $esCompuesto;
 
         $credito->setAttribute('permite_pago_cuotas', $admitePagoPorCuotas);
         $credito->setAttribute('permite_refrendo', $permiteRefrendo);
@@ -2697,7 +2695,7 @@ final class CreditoService
         $sucesor->cuotas()->delete();
         $sucesor->delete();
 
-        $credito->documentos()->where('tipo', 'voucher_pago')->latest()->first()?->delete();
+        $this->documentos->voucherDeCobro($cobro)?->delete();
     }
 
     /**
@@ -2738,6 +2736,10 @@ final class CreditoService
      */
     private function deshacerPagoCuotas(Cobro $cobro, Credito $credito): void
     {
+        if (in_array($credito->estado, ['refrendado', 'adendado', 'refinanciado'], true)) {
+            throw new DomainException('No se puede anular este pago: primero debes anular la operación que generó el crédito sucesor.');
+        }
+
         $abonos = $cobro->abonosCuotas()->with('cuota')->get();
 
         if ($abonos->isNotEmpty()) {
@@ -2952,21 +2954,34 @@ final class CreditoService
      * solo el interés, sin penalidad por el atraso — confirmado explícitamente
      * que la mora debe cobrarse también en estos dos flujos, no solo al liquidar.
      *
-     * @return array{interes: string, mora: string, total: string, dias_transcurridos: int, dias_minimo: int, dias_cobrados: int, tasa_interes: string}
+     * @return array{capital: string, interes: string, mora: string, total: string, dias_transcurridos: int, dias_minimo: int, dias_cobrados: int, tasa_interes: string}
      */
     public function calcularMontoRefrendo(Credito $credito): array
     {
-        $prorateo = $this->calcularInteresProrateado($credito);
-        $mora = $this->calcularMora($credito);
+        $liquidacion = $this->calcularMontoLiquidacion($credito);
+
+        // La misma deuda neta que muestra el saldo: las cuotas completas ya
+        // descontaron capital e interés en liquidación. Los abonos parciales
+        // cubren primero interés, luego mora y finalmente capital.
+        $abonos = $liquidacion['abonos_cuotas'];
+        $pendiente = [];
+        foreach (['interes', 'mora', 'capital'] as $concepto) {
+            $aplicado = bccomp($abonos, $liquidacion[$concepto], 2) > 0
+                ? $liquidacion[$concepto]
+                : $abonos;
+            $pendiente[$concepto] = bcsub($liquidacion[$concepto], $aplicado, 2);
+            $abonos = bcsub($abonos, $aplicado, 2);
+        }
 
         return [
-            'interes' => $prorateo['interes'],
-            'mora' => $mora,
-            'total' => bcadd($prorateo['interes'], $mora, 2),
-            'dias_transcurridos' => $prorateo['dias_transcurridos'],
-            'dias_minimo' => $prorateo['dias_minimo'],
-            'dias_cobrados' => $prorateo['dias_cobrados'],
-            'tasa_interes' => $prorateo['tasa_interes'],
+            'capital' => $pendiente['capital'],
+            'interes' => $pendiente['interes'],
+            'mora' => $pendiente['mora'],
+            'total' => bcadd($pendiente['interes'], $pendiente['mora'], 2),
+            'dias_transcurridos' => $liquidacion['dias_transcurridos'],
+            'dias_minimo' => $liquidacion['dias_minimo'],
+            'dias_cobrados' => $liquidacion['dias_cobrados'],
+            'tasa_interes' => $liquidacion['tasa_interes'],
         ];
     }
 

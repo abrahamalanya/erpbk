@@ -199,15 +199,26 @@ class CreditoController extends Controller
                 $credito->setAttribute('puede_enviar_tienda', $this->creditoService->superaEsperaMora($credito));
             }
 
+            $cobroLiquidacion = $credito->cobros->first();
+            $fechaCancelacion = $cobroLiquidacion?->created_at?->toDateString();
+
+            // liquidar() no marca las cuotas como pagadas (a diferencia de
+            // pagar por cuotas): un crédito liquidado de un pago conserva sus
+            // cuotas impagas en la base para siempre. Comparar contra "hoy"
+            // como abajo haría que el atraso de un crédito ya liquidado
+            // siguiera subiendo sin parar. Para uno liquidado se congela la
+            // comparación al día en que se liquidó, no al momento de la consulta.
+            $referencia = (in_array($credito->estado, ['liquidado', 'liquidado_pendiente'], true) && $cobroLiquidacion !== null)
+                ? $cobroLiquidacion->created_at->copy()->startOfDay()
+                : $hoy;
+
             $cuotasAtrasadas = $credito->cuotas
-                ->filter(fn (CuotaCredito $cuota): bool => $cuota->pagada_at === null && $cuota->fecha_vencimiento->lt($hoy))
+                ->filter(fn (CuotaCredito $cuota): bool => $cuota->pagada_at === null && $cuota->fecha_vencimiento->lt($referencia))
                 ->sortBy(fn (CuotaCredito $cuota): int => $cuota->fecha_vencimiento->getTimestamp());
-            $diasAtraso = $cuotasAtrasadas->isEmpty() ? 0 : (int) $cuotasAtrasadas->first()->fecha_vencimiento->diffInDays($hoy);
+            $diasAtraso = $cuotasAtrasadas->isEmpty() ? 0 : (int) $cuotasAtrasadas->first()->fecha_vencimiento->diffInDays($referencia);
 
             $total = (float) $credito->cuotas->sum('monto_total');
             $abonado = (float) $credito->cuotas->sum('monto_abonado');
-
-            $fechaCancelacion = $credito->cobros->first()?->created_at?->toDateString();
 
             $credito->setAttribute('dias_atraso', $diasAtraso);
             $credito->setAttribute('total', $total);

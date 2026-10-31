@@ -91,7 +91,35 @@ it('embeds one photo and one QR image per tarjeta', function () {
         ->and($cuenta($soloQr))->toBeGreaterThanOrEqual(1);
 });
 
-it('paginates 6 tarjetas per sheet and breaks the rest into new sheets', function (int $usuarios, int $hojas) {
+it('embeds the empresa logo when it is set', function () {
+    $user = usuarioFotocheck($this->agencia, $this->empresa);
+
+    Sanctum::actingAs($this->admin, ['*']);
+
+    $cuenta = fn (string $pdf): int => preg_match_all('/\/Subtype\s*\/Image/', $pdf);
+    $sinLogo = $cuenta(pdfFotocheck([$user->id]));
+
+    $path = UploadedFile::fake()->image('logo.png', 400, 200)->store('empresas', 'public');
+    $this->empresa->forceFill(['logo_path' => $path])->save();
+
+    $conLogo = $cuenta(pdfFotocheck([$user->id]));
+
+    expect($conLogo)->toBeGreaterThan($sinLogo);
+});
+
+it('renders two separate 5.4x8.5cm tarjetas per usuario, side by side', function () {
+    $user = usuarioFotocheck($this->agencia, $this->empresa);
+
+    $tarjetas = app(FotocheckService::class)->tarjetas(
+        User::query()->whereKey($user->id)->with(['roles', 'agencia', 'empresa'])->get()->all()
+    );
+
+    $html = view('usuario.fotocheck', ['hojas' => $tarjetas->chunk(4), 'porHoja' => 4])->render();
+
+    expect(substr_count($html, 'class="tarjeta"'))->toBe(2);
+});
+
+it('paginates 4 usuarios per sheet and breaks the rest into new sheets', function (int $usuarios, int $hojas) {
     Sanctum::actingAs($this->admin, ['*']);
 
     $ids = collect(range(1, $usuarios))
@@ -102,10 +130,10 @@ it('paginates 6 tarjetas per sheet and breaks the rest into new sheets', functio
 
     expect($paginas)->toBe($hojas);
 })->with([
-    '1 tarjeta' => [1, 1],
-    '6 tarjetas llenan una hoja' => [6, 1],
-    '7 tarjetas necesitan 2 hojas' => [7, 2],
-    '13 tarjetas necesitan 3 hojas' => [13, 3],
+    '1 usuario' => [1, 1],
+    '4 usuarios llenan una hoja' => [4, 1],
+    '5 usuarios necesitan 2 hojas' => [5, 2],
+    '9 usuarios necesitan 3 hojas' => [9, 3],
 ]);
 
 it('renders a page in A4 landscape', function () {
@@ -169,7 +197,7 @@ it('keeps the requested order of the usuarios', function () {
     expect($tarjetas->pluck('id')->all())->toBe([$b->id, $a->id]);
 });
 
-it('exposes the agencia nombre, telefono and the readable roles', function () {
+it('exposes the agencia nombre, telefono and the cargo principal', function () {
     $user = usuarioFotocheck($this->agencia, $this->empresa, 'supervisor');
     $user->assignRole('asesor');
 
@@ -183,7 +211,7 @@ it('exposes the agencia nombre, telefono and the readable roles', function () {
         ->and($tarjeta['telefono'])->toBe('511234567')
         ->and($tarjeta['dni'])->toBe($user->dni)
         // supervisor va antes que asesor según la jerarquía del módulo
-        ->and($tarjeta['roles'])->toBe(['supervisor', 'asesor']);
+        ->and($tarjeta['cargo'])->toBe('Supervisor');
 });
 
 it('falls back to the empresa celular when the agencia has no telefono', function () {

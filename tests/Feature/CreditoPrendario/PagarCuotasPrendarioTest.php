@@ -128,7 +128,7 @@ it('amortizes a pago a cuenta over the cuotas, leaving an adelanto on the next o
         ->and((string) $cuotas[1]->monto_abonado)->toBe(bcdiv($cuotaTotal, '2', 2));
 });
 
-it('blocks refrendar and adendar once cuotas were paid, and liquidation only charges what is still owed', function () {
+it('refrenda el saldo después de cuotas completas, mantiene el bloqueo de adenda y liquida solo lo pendiente', function () {
     $creditoId = desembolsarPrendarioConCuotas($this, 4);
 
     $sinPagar = $this->getJson("/api/creditos-prendarios/{$creditoId}")->json('data.monto_liquidacion_sugerido');
@@ -142,14 +142,15 @@ it('blocks refrendar and adendar once cuotas were paid, and liquidation only cha
     $capitalPagado = (string) CuotaCredito::where('credito_id', $creditoId)->pagadas()->sum('monto_capital');
 
     $detalle = $this->getJson("/api/creditos-prendarios/{$creditoId}")
-        ->assertJsonPath('data.permite_refrendo', false)
+        ->assertJsonPath('data.permite_refrendo', true)
         ->assertJsonPath('data.permite_pago_cuotas', true)
         ->json('data.monto_liquidacion_sugerido');
 
     expect($detalle['capital'])->toBe(bcsub('1200.00', $capitalPagado, 2));
 
-    $this->postJson("/api/creditos-prendarios/{$creditoId}/refrendar", ['monto_pagado' => 500, 'medio' => 'efectivo'])->assertUnprocessable();
-    $this->postJson("/api/creditos-prendarios/{$creditoId}/adendar", ['monto_pagado' => 500, 'medio' => 'efectivo'])->assertUnprocessable();
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/adendar", ['monto_pagado' => 500, 'medio' => 'efectivo'])->assertConflict();
+    $refrendo = $this->postJson("/api/creditos-prendarios/{$creditoId}/refrendar", ['monto_pagado' => 500, 'medio' => 'efectivo'])->assertCreated();
+    expect($refrendo->json('data.monto_prestamo'))->toBe(bcsub($detalle['total'], '500', 2));
 });
 
 it('moves to liquidado_pendiente with an acta de devolución when the last cuota is paid', function () {

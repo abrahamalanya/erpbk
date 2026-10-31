@@ -13,8 +13,9 @@ use Symfony\Component\HttpFoundation\Response;
 
 /**
  * Fotocheck (tarjeta de identificación del personal): hoja A4 horizontal con
- * hasta 6 tarjetas por página, cada una con la parte frontal (foto, nombre,
- * rol, dni) y el aviso de intransferibilidad con QR del dni.
+ * hasta 4 usuarios por página. Cada usuario imprime DOS tarjetas de 5.4x8.5cm
+ * lado a lado — la identidad (logo de la empresa, foto, nombre, cargo, dni,
+ * agencia) y el aviso de intransferibilidad con QR del dni.
  */
 class FotocheckController extends Controller
 {
