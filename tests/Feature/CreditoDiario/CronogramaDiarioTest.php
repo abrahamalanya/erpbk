@@ -67,6 +67,11 @@ it('renders the diario cronograma with abono/saldo/firma columns instead of capi
     ])->assertCreated()->json('data.id');
 
     Sanctum::actingAs($this->adminAgencia, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/preaprobar")->assertSuccessful();
+
+    $adminGeneral = User::factory()->forEmpresa($this->empresa)->create();
+    $adminGeneral->assignRole('administrador_general');
+    Sanctum::actingAs($adminGeneral, ['*']);
     $this->postJson("/api/creditos-prendarios/{$creditoId}/aprobar")->assertSuccessful();
 
     Sanctum::actingAs($this->asesor, ['*']);

@@ -88,7 +88,7 @@ trait EsGarantia
         return $query->whereDoesntHave(
             'creditos',
             fn (Builder $q) => $q->withoutGlobalScope(PerfilCreditoScope::class)
-                ->whereIn('estado', ['pendiente', 'aprobado', 'activo', 'vencido', 'pendiente_conformidad', 'en_venta', 'liquidado_pendiente'])
+                ->whereIn('estado', ['pendiente', 'preaprobado', 'aprobado', 'activo', 'vencido', 'pendiente_conformidad', 'en_venta', 'liquidado_pendiente'])
         );
     }
 

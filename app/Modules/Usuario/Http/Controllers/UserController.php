@@ -3,6 +3,7 @@
 namespace App\Modules\Usuario\Http\Controllers;
 
 use App\Modules\Caja\Services\CajaService;
+use App\Modules\Cliente\Services\ClienteService;
 use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Sistemas\Models\PerfilAcceso;
 use App\Modules\Usuario\Http\Requests\StoreUserRequest;
@@ -43,6 +44,7 @@ class UserController extends Controller
         private readonly UserHierarchyService $hierarchy,
         private readonly ConsultaDniService $consultaDni,
         private readonly CajaService $cajaService,
+        private readonly ClienteService $clienteService,
     ) {}
 
     public function consultarDni(string $dni): JsonResponse
@@ -210,11 +212,13 @@ class UserController extends Controller
             $user->syncRoles($roles);
         }
 
-        // Si la agencia cambió, su Caja (si ya tenía una) se queda con la
-        // vieja para siempre a menos que se la refresque explícitamente —
-        // ver CajaService::sincronizarAgencia().
+        // Si la agencia cambió, su Caja (si ya tenía una) y sus clientes
+        // asignados se quedan con la vieja para siempre a menos que se
+        // refresquen explícitamente — ver CajaService::sincronizarAgencia()
+        // y ClienteService::sincronizarAgencia().
         if ($user->agencia_id !== $agenciaAnterior) {
             $this->cajaService->sincronizarAgencia($user);
+            $this->clienteService->sincronizarAgencia($user);
         }
 
         $this->storeImagenes($request, $user, self::IMAGENES, 'usuarios');

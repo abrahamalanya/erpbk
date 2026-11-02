@@ -1,6 +1,7 @@
 <?php
 
 use App\Modules\Caja\Services\CajaService;
+use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Usuario\Models\User;
@@ -183,6 +184,30 @@ it('keeps an asesor Caja agencia in sync when reassigned to a different agencia'
 
     expect($target->fresh()->agencia_id)->toBe($agenciaNueva->id)
         ->and($caja->fresh()->agencia_id)->toBe($agenciaNueva->id);
+});
+
+it('keeps a cliente agencia in sync with their asesor when reassigned to a different agencia', function () {
+    $empresa = Empresa::factory()->create();
+    $agenciaVieja = Agencia::factory()->for($empresa)->create();
+    $agenciaNueva = Agencia::factory()->for($empresa)->create();
+
+    $admin = User::factory()->forEmpresa($empresa)->create();
+    $admin->assignRole('administrador_general');
+    Sanctum::actingAs($admin, ['*']);
+
+    $target = User::factory()->forAgencia($agenciaVieja)->create();
+    $target->assignRole('asesor');
+    $cliente = Cliente::factory()->asignadoA($target)->create();
+    $clienteSinAsesor = Cliente::factory()->forAgencia($agenciaVieja)->create();
+    expect($cliente->agencia_id)->toBe($agenciaVieja->id);
+
+    $this->putJson("/api/usuarios/{$target->id}", [
+        'agencia_id' => $agenciaNueva->id,
+    ])->assertSuccessful();
+
+    expect($target->fresh()->agencia_id)->toBe($agenciaNueva->id)
+        ->and($cliente->fresh()->agencia_id)->toBe($agenciaNueva->id)
+        ->and($clienteSinAsesor->fresh()->agencia_id)->toBe($agenciaVieja->id);
 });
 
 it('leaves the Caja agencia untouched when the update does not change it', function () {

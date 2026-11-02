@@ -75,6 +75,11 @@ function crearCreditoDiarioAprobado(TestCase $test): int
     ])->assertCreated()->json('data.id');
 
     Sanctum::actingAs($test->adminAgencia, ['*']);
+    $test->postJson("/api/creditos-prendarios/{$creditoId}/preaprobar")->assertSuccessful();
+
+    $adminGeneral = User::factory()->forEmpresa($test->empresa)->create();
+    $adminGeneral->assignRole('administrador_general');
+    Sanctum::actingAs($adminGeneral, ['*']);
     $test->postJson("/api/creditos-prendarios/{$creditoId}/aprobar")->assertSuccessful();
 
     Sanctum::actingAs($test->asesor, ['*']);

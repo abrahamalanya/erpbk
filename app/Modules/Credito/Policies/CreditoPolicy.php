@@ -51,11 +51,34 @@ class CreditoPolicy
         return ! $user->hasRole('asesor') || ! in_array($credito->estado, ['pendiente', 'rechazado'], true);
     }
 
-    public function aprobar(User $user, Credito $credito): bool
+    /**
+     * Primer filtro, exclusivo de créditos diarios — el admin de agencia (o
+     * general) revisa un 'pendiente' antes de que el admin general dé la
+     * aprobación final. Ver CreditoHierarchyService::puedeAprobarFinal().
+     */
+    public function preaprobar(User $user, Credito $credito): bool
     {
-        return $user->can('creditos_prendarios.aprobar') && $this->hierarchy->puedeAprobar($user, $credito);
+        return $credito->tipo_credito === 'diario'
+            && $user->can('creditos_prendarios.preaprobar')
+            && $this->hierarchy->puedeAprobar($user, $credito);
     }
 
+    /**
+     * Aprobación final. Para diario, solo el administrador general (ver
+     * puedeAprobarFinal()) y solo tras la preaprobación de agencia; para los
+     * demás tipos, misma autoridad amplia de siempre (agencia o general).
+     */
+    public function aprobar(User $user, Credito $credito): bool
+    {
+        return $user->can('creditos_prendarios.aprobar') && $this->hierarchy->puedeAprobarFinal($user, $credito);
+    }
+
+    /**
+     * Mismo alcance amplio en ambas etapas: un diario puede rechazarse ya
+     * sea en 'pendiente' (antes de preaprobar) o en 'preaprobado' (al
+     * revisar la aprobación final) — CreditoService::rechazar() es quien
+     * valida en cuál de esos dos estados está.
+     */
     public function rechazar(User $user, Credito $credito): bool
     {
         return $user->can('creditos_prendarios.rechazar') && $this->hierarchy->puedeAprobar($user, $credito);
@@ -164,6 +187,18 @@ class CreditoPolicy
     public function revertirAprobacion(User $user, Credito $credito): bool
     {
         return $user->can('creditos_prendarios.revertir_aprobacion') && $this->hierarchy->puedeAprobar($user, $credito);
+    }
+
+    /**
+     * Deshace una preaprobación por error — vuelve a 'pendiente'. Misma
+     * autoridad amplia que revertirAprobacion(), exclusiva de diario (único
+     * tipo que pasa por 'preaprobado').
+     */
+    public function revertirPreaprobacion(User $user, Credito $credito): bool
+    {
+        return $credito->tipo_credito === 'diario'
+            && $user->can('creditos_prendarios.revertir_preaprobacion')
+            && $this->hierarchy->puedeAprobar($user, $credito);
     }
 
     /**

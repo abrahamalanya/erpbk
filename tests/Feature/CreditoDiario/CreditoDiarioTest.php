@@ -87,6 +87,11 @@ it('aplica meses comerciales al interés diario al previsualizar, desembolsar y 
 function aprobarYFirmarDocumentosDiario(TestCase $test, int $creditoId): void
 {
     Sanctum::actingAs($test->adminAgencia, ['*']);
+    $test->postJson("/api/creditos-prendarios/{$creditoId}/preaprobar")->assertSuccessful();
+
+    $adminGeneral = User::factory()->forEmpresa($test->empresa)->create();
+    $adminGeneral->assignRole('administrador_general');
+    Sanctum::actingAs($adminGeneral, ['*']);
     $test->postJson("/api/creditos-prendarios/{$creditoId}/aprobar")->assertSuccessful();
 
     Sanctum::actingAs($test->asesor, ['*']);

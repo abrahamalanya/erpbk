@@ -76,6 +76,8 @@ class Credito extends Model
         'numero_cuotas',
         'plazo_dias',
         'estado',
+        'preaprobado_por',
+        'fecha_preaprobacion',
         'aprobado_por',
         'fecha_aprobacion',
         'motivo_rechazo',
@@ -97,6 +99,7 @@ class Credito extends Model
             'interes' => 'decimal:2',
             'numero_cuotas' => 'integer',
             'interes_solicitud_especial' => 'boolean',
+            'fecha_preaprobacion' => 'datetime',
             'fecha_aprobacion' => 'datetime',
             'fecha_desembolso' => 'date',
             'fecha_vencimiento' => 'date',
@@ -214,6 +217,12 @@ class Credito extends Model
     public function aprobadoPor(): BelongsTo
     {
         return $this->belongsTo(User::class, 'aprobado_por');
+    }
+
+    /** Admin de agencia (o general) que dio el primer filtro de un crédito diario — ver CreditoService::preaprobar(). */
+    public function preaprobadoPor(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'preaprobado_por');
     }
 
     public function refrendoDe(): BelongsTo

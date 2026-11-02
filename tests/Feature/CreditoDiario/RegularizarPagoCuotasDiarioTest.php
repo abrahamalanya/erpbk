@@ -57,6 +57,9 @@ beforeEach(function () {
     ])->assertCreated()->json('data.id');
 
     Sanctum::actingAs($this->adminAgencia, ['*']);
+    $this->postJson("/api/creditos-prendarios/{$creditoId}/preaprobar")->assertSuccessful();
+
+    Sanctum::actingAs($this->adminGeneral, ['*']);
     $this->postJson("/api/creditos-prendarios/{$creditoId}/aprobar")->assertSuccessful();
 
     Sanctum::actingAs($this->asesor, ['*']);

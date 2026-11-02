@@ -29,6 +29,8 @@ use App\Modules\Credito\Notifications\CreditoInteresActualizadoNotification;
 use App\Modules\Credito\Notifications\CreditoLiquidadoNotification;
 use App\Modules\Credito\Notifications\CreditoNumeroCuotasActualizadoNotification;
 use App\Modules\Credito\Notifications\CreditoPendienteConformidadNotification;
+use App\Modules\Credito\Notifications\CreditoPreaprobacionRevertidaNotification;
+use App\Modules\Credito\Notifications\CreditoPreaprobadoNotification;
 use App\Modules\Credito\Notifications\CreditoRechazadoNotification;
 use App\Modules\Credito\Notifications\CreditoRefinanciadoNotification;
 use App\Modules\Credito\Notifications\CreditoRefrendadoNotification;
@@ -270,9 +272,41 @@ final class CreditoService
         });
     }
 
+    /**
+     * Primer filtro, exclusivo de créditos diarios: el admin de agencia (o
+     * general, actuando él mismo) revisa un 'pendiente' y lo deja listo para
+     * la aprobación final del administrador general — ver aprobar() y
+     * CreditoHierarchyService::puedeAprobarFinal(). Los demás tipos de
+     * crédito nunca pasan por aquí (su Policy lo bloquea).
+     */
+    public function preaprobar(Credito $credito, User $actor): Credito
+    {
+        abort_unless($credito->tipo_credito === 'diario', 422, 'Solo los créditos diarios requieren preaprobación.');
+        $this->asegurarEstado($credito, 'pendiente');
+
+        return DB::transaction(function () use ($credito, $actor): Credito {
+            $credito->update([
+                'estado' => 'preaprobado',
+                'preaprobado_por' => $actor->id,
+                'fecha_preaprobacion' => now(),
+            ]);
+
+            $credito = $credito->fresh();
+            $this->notificar($credito);
+            $this->notificaciones->enviar($this->hierarchy->aprobadoresFinalesDe($credito), new CreditoPreaprobadoNotification($credito));
+
+            return $credito;
+        });
+    }
+
+    /**
+     * Aprobación final. Un crédito diario debe estar 'preaprobado' primero
+     * (ver preaprobar()); los demás tipos se aprueban directo desde
+     * 'pendiente', igual que siempre.
+     */
     public function aprobar(Credito $credito, User $aprobador): Credito
     {
-        $this->asegurarEstado($credito, 'pendiente');
+        $this->asegurarEstado($credito, $credito->tipo_credito === 'diario' ? 'preaprobado' : 'pendiente');
 
         return DB::transaction(function () use ($credito, $aprobador): Credito {
             $credito->update([
@@ -289,9 +323,14 @@ final class CreditoService
         });
     }
 
+    /**
+     * Un diario puede rechazarse en cualquiera de sus dos etapas de revisión
+     * — 'pendiente' (antes de preaprobar) o 'preaprobado' (en la aprobación
+     * final) —; los demás tipos solo llegan aquí desde 'pendiente'.
+     */
     public function rechazar(Credito $credito, User $aprobador, string $motivo): Credito
     {
-        $this->asegurarEstado($credito, 'pendiente');
+        $this->asegurarEstado($credito, ['pendiente', 'preaprobado']);
 
         $credito->update([
             'estado' => 'rechazado',
@@ -325,7 +364,15 @@ final class CreditoService
             throw new DomainException('Una o más garantías de este crédito ya están respaldando otro crédito activo.');
         }
 
-        $credito->update(['estado' => 'pendiente']);
+        // Limpia preaprobado_por/fecha_preaprobacion (no-op para los tipos
+        // que nunca las usan): un diario subsanado debe volver a pasar por
+        // el ciclo completo de preaprobación + aprobación, no conservar una
+        // preaprobación que ya no corresponde a lo que el asesor corrigió.
+        $credito->update([
+            'estado' => 'pendiente',
+            'preaprobado_por' => null,
+            'fecha_preaprobacion' => null,
+        ]);
 
         $credito = $credito->fresh();
         $this->notificar($credito);
@@ -335,18 +382,22 @@ final class CreditoService
     }
 
     /**
-     * Undoes an accidental aprobar() — back to pendiente, clearing
-     * aprobado_por/fecha_aprobacion so a subsequent aprobar() sets them
-     * fresh. Only while still 'aprobado': once firmado, fecha_desembolso/
-     * fecha_vencimiento are already computed and real disbursement may have
-     * happened, so there's nothing sensible left to revert.
+     * Undoes an accidental aprobar() — clearing aprobado_por/fecha_aprobacion
+     * so a subsequent aprobar() sets them fresh. Only while still 'aprobado':
+     * once firmado, fecha_desembolso/fecha_vencimiento are already computed
+     * and real disbursement may have happened, so there's nothing sensible
+     * left to revert.
+     *
+     * Un diario vuelve a 'preaprobado' (no a 'pendiente'): su preaprobación ya
+     * es válida, solo se deshace el último paso. Los demás tipos, que nunca
+     * pasan por 'preaprobado', vuelven directo a 'pendiente' como siempre.
      */
     public function revertirAprobacion(Credito $credito, User $actor): Credito
     {
         $this->asegurarEstado($credito, 'aprobado');
 
         $credito->update([
-            'estado' => 'pendiente',
+            'estado' => $credito->tipo_credito === 'diario' ? 'preaprobado' : 'pendiente',
             'aprobado_por' => null,
             'fecha_aprobacion' => null,
         ]);
@@ -354,6 +405,28 @@ final class CreditoService
         $credito = $credito->fresh();
         $this->notificar($credito);
         $this->notificaciones->enviar(collect([$credito->registradoPor]), new CreditoAprobacionRevertidaNotification($credito));
+
+        return $credito;
+    }
+
+    /**
+     * Deshace una preaprobación por error — vuelve a 'pendiente', limpiando
+     * preaprobado_por/fecha_preaprobacion. Exclusivo de diario, un paso antes
+     * de revertirAprobacion().
+     */
+    public function revertirPreaprobacion(Credito $credito, User $actor): Credito
+    {
+        $this->asegurarEstado($credito, 'preaprobado');
+
+        $credito->update([
+            'estado' => 'pendiente',
+            'preaprobado_por' => null,
+            'fecha_preaprobacion' => null,
+        ]);
+
+        $credito = $credito->fresh();
+        $this->notificar($credito);
+        $this->notificaciones->enviar(collect([$credito->registradoPor]), new CreditoPreaprobacionRevertidaNotification($credito));
 
         return $credito;
     }
@@ -509,7 +582,7 @@ final class CreditoService
      */
     private function asegurarPuedeEditarInteres(Credito $credito, User $actor): void
     {
-        if (in_array($credito->estado, ['pendiente', 'aprobado'], true)) {
+        if (in_array($credito->estado, ['pendiente', 'preaprobado', 'aprobado'], true)) {
             return;
         }
 
@@ -535,8 +608,8 @@ final class CreditoService
      */
     public function actualizarCondiciones(Credito $credito, User $actor, ?string $tipoInteres, ?string $tipoCuota, ?string $montoPrestamo): Credito
     {
-        if (! in_array($credito->estado, ['pendiente', 'aprobado'], true)) {
-            throw new DomainException('Solo se pueden editar estas condiciones mientras el crédito está pendiente o aprobado.');
+        if (! in_array($credito->estado, ['pendiente', 'preaprobado', 'aprobado'], true)) {
+            throw new DomainException('Solo se pueden editar estas condiciones mientras el crédito está pendiente, preaprobado o aprobado.');
         }
 
         if ($credito->cuotas()->exists()) {
@@ -604,8 +677,8 @@ final class CreditoService
      */
     public function actualizarFechaDesembolso(Credito $credito, User $actor, string $fecha): Credito
     {
-        if (! in_array($credito->estado, ['pendiente', 'aprobado', 'activo', 'vencido'], true)) {
-            throw new DomainException('Solo se puede fijar la fecha de desembolso mientras el crédito está pendiente, aprobado, activo o vencido.');
+        if (! in_array($credito->estado, ['pendiente', 'preaprobado', 'aprobado', 'activo', 'vencido'], true)) {
+            throw new DomainException('Solo se puede fijar la fecha de desembolso mientras el crédito está pendiente, preaprobado, aprobado, activo o vencido.');
         }
 
         $nuevaFecha = Carbon::parse($fecha)->startOfDay();
@@ -674,8 +747,8 @@ final class CreditoService
      */
     public function actualizarNumeroCuotas(Credito $credito, User $actor, int $numeroCuotas): Credito
     {
-        if (! in_array($credito->estado, ['pendiente', 'aprobado', 'activo', 'vencido'], true)) {
-            throw new DomainException('Solo se puede corregir el número de cuotas mientras el crédito está pendiente, aprobado, activo o vencido.');
+        if (! in_array($credito->estado, ['pendiente', 'preaprobado', 'aprobado', 'activo', 'vencido'], true)) {
+            throw new DomainException('Solo se puede corregir el número de cuotas mientras el crédito está pendiente, preaprobado, aprobado, activo o vencido.');
         }
 
         $diasPorCuota = self::DIAS_POR_PERIODO[$credito->tipo_cuota];
@@ -3299,10 +3372,16 @@ final class CreditoService
         return bcmul(bcmul((string) $credito->monto_prestamo, $tasaDiaria, 4), (string) $dias, 2);
     }
 
-    private function asegurarEstado(Credito $credito, string $esperado): void
+    /**
+     * @param  string|list<string>  $esperado  Uno o varios estados válidos — p. ej. rechazar() acepta tanto 'pendiente' como 'preaprobado'.
+     */
+    private function asegurarEstado(Credito $credito, string|array $esperado): void
     {
-        if ($credito->estado !== $esperado) {
-            throw new DomainException("El crédito debe estar en estado '{$esperado}' para esta acción (actual: '{$credito->estado}').");
+        $esperados = is_array($esperado) ? $esperado : [$esperado];
+
+        if (! in_array($credito->estado, $esperados, true)) {
+            $lista = implode("' o '", $esperados);
+            throw new DomainException("El crédito debe estar en estado '{$lista}' para esta acción (actual: '{$credito->estado}').");
         }
     }
 

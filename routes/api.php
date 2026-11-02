@@ -227,6 +227,7 @@ Route::middleware(['auth:sanctum', EnsurePerfilAcceso::class, EnsureIdempotency:
     Route::get('creditos-prendarios/configuracion', [CreditoController::class, 'configuracion'])->name('creditos-prendarios.configuracion');
     Route::post('creditos-prendarios/cronograma-preview', [CreditoController::class, 'cronogramaPreview'])->name('creditos-prendarios.cronograma-preview');
     Route::apiResource('creditos-prendarios', CreditoController::class)->only(['index', 'store', 'show', 'destroy'])->parameters(['creditos-prendarios' => 'credito']);
+    Route::post('creditos-prendarios/{credito}/preaprobar', [CreditoController::class, 'preaprobar'])->name('creditos-prendarios.preaprobar');
     Route::post('creditos-prendarios/{credito}/aprobar', [CreditoController::class, 'aprobar'])->name('creditos-prendarios.aprobar');
     Route::post('creditos-prendarios/{credito}/rechazar', [CreditoController::class, 'rechazar'])->name('creditos-prendarios.rechazar');
     Route::post('creditos-prendarios/{credito}/subsanar', [CreditoController::class, 'subsanar'])->name('creditos-prendarios.subsanar');
@@ -250,6 +251,7 @@ Route::middleware(['auth:sanctum', EnsurePerfilAcceso::class, EnsureIdempotency:
     Route::post('creditos-prendarios/{credito}/cambiar-registrado-por', [CreditoController::class, 'cambiarRegistradoPor'])->name('creditos-prendarios.cambiar-registrado-por');
     Route::post('creditos-prendarios/{credito}/actualizar-numero-cuotas', [CreditoController::class, 'actualizarNumeroCuotas'])->name('creditos-prendarios.actualizar-numero-cuotas');
     Route::post('creditos-prendarios/{credito}/revertir-aprobacion', [CreditoController::class, 'revertirAprobacion'])->name('creditos-prendarios.revertir-aprobacion');
+    Route::post('creditos-prendarios/{credito}/revertir-preaprobacion', [CreditoController::class, 'revertirPreaprobacion'])->name('creditos-prendarios.revertir-preaprobacion');
     Route::post('creditos-prendarios/{credito}/enviar-tienda', [CreditoController::class, 'enviarATienda'])->name('creditos-prendarios.enviar-tienda');
     Route::post('creditos-prendarios/{credito}/conformidad', [CreditoController::class, 'confirmarConformidad'])->name('creditos-prendarios.conformidad');
     Route::post('creditos-prendarios/{credito}/vender', [CreditoController::class, 'vender'])->name('creditos-prendarios.vender');

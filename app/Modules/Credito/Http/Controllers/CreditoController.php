@@ -343,6 +343,19 @@ class CreditoController extends Controller
         return $this->successResponse(null, 'Crédito eliminado');
     }
 
+    /**
+     * Primer filtro, exclusivo de créditos diarios — ver
+     * CreditoService::preaprobar().
+     */
+    public function preaprobar(Credito $credito): JsonResponse
+    {
+        Gate::authorize('preaprobar', $credito);
+
+        $credito = $this->creditoService->preaprobar($credito, request()->user());
+
+        return $this->successResponse($credito, 'Crédito preaprobado, pendiente de la aprobación final');
+    }
+
     public function aprobar(Credito $credito): JsonResponse
     {
         Gate::authorize('aprobar', $credito);
@@ -621,7 +634,24 @@ class CreditoController extends Controller
 
         $credito = $this->creditoService->revertirAprobacion($credito, request()->user());
 
-        return $this->successResponse($credito, 'Aprobación revertida, el crédito vuelve a pendiente');
+        $mensaje = $credito->estado === 'preaprobado'
+            ? 'Aprobación revertida, el crédito vuelve a preaprobado'
+            : 'Aprobación revertida, el crédito vuelve a pendiente';
+
+        return $this->successResponse($credito, $mensaje);
+    }
+
+    /**
+     * Deshace una preaprobación por error — ver
+     * CreditoService::revertirPreaprobacion().
+     */
+    public function revertirPreaprobacion(Credito $credito): JsonResponse
+    {
+        Gate::authorize('revertirPreaprobacion', $credito);
+
+        $credito = $this->creditoService->revertirPreaprobacion($credito, request()->user());
+
+        return $this->successResponse($credito, 'Preaprobación revertida, el crédito vuelve a pendiente');
     }
 
     public function enviarATienda(EnviarATiendaRequest $request, Credito $credito): JsonResponse
