@@ -76,13 +76,15 @@ abstract class CreditoTipoSupervisado implements CreditoTipo
      * Documentos con plantilla propia del módulo del tipo. El contrato tiene
      * texto y campos propios; la ficha socioeconómica solo la genera
      * hipotecario (ver CreditoService::registrar()); el contrato de
-     * transferencia solo lo genera vehicular (ver CreditoService::vender()).
-     * Declaración, fotos, devolución, cronograma y adenda son genéricos y se
-     * reutilizan de prendario.
+     * transferencia y la compraventa de moto solo los genera vehicular, y la
+     * compraventa de inmueble solo hipotecario (ver CreditoService::vender()
+     * y DocumentoCreditoService::tiposPlantilla()). Declaración, fotos,
+     * devolución, cronograma y adenda son genéricos y se reutilizan de
+     * prendario.
      *
      * @var list<string>
      */
-    private const VISTAS_PROPIAS = ['contrato', 'ficha_socioeconomica', 'notificacion_pago', 'aviso_prejudicial', 'saldo_deudor', 'expediente', 'contrato_transferencia'];
+    private const VISTAS_PROPIAS = ['contrato', 'compraventa_moto', 'compraventa_inmueble', 'ficha_socioeconomica', 'notificacion_pago', 'aviso_prejudicial', 'saldo_deudor', 'expediente', 'contrato_transferencia'];
 
     public function vistaDocumento(string $tipoDocumento): string
     {

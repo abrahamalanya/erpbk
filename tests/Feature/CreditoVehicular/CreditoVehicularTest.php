@@ -104,6 +104,62 @@ it('generates an acta de recepción de vehículos on registration, only for vehi
     expect(Credito::find($prendarioId)->documentos()->where('tipo', 'recepcion_vehiculos')->exists())->toBeFalse();
 });
 
+it('generates a compraventa_moto document right below contrato, only for vehicular créditos, and renders it as PDF', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $vehicularId = $this->postJson('/api/creditos-vehiculares', [
+        'vehiculo_ids' => [$this->vehiculo->id],
+        'supervisado_por' => $this->adminAgencia->id,
+        'monto_prestamo' => 8000,
+        'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+
+    $credito = Credito::find($vehicularId);
+    $tipos = $credito->documentos()->pluck('tipo')->all();
+    expect(array_search('compraventa_moto', $tipos, true))->toBe(array_search('contrato', $tipos, true) + 1);
+
+    $compraventa = $credito->documentos()->where('tipo', 'compraventa_moto')->first();
+
+    Sanctum::actingAs($this->adminAgencia, ['*']);
+    $pdf = $this->get("/api/creditos-prendarios/{$vehicularId}/documentos/{$compraventa->id}/ver")->assertOk();
+    expect($pdf->headers->get('content-type'))->toContain('application/pdf');
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    // Un crédito prendario NO genera este documento.
+    $bien = Bien::factory()->paraCliente($this->cliente)->create(['valorizacion' => 1000]);
+    $prendarioId = $this->postJson('/api/creditos-prendarios', [
+        'bien_ids' => [$bien->id],
+        'monto_prestamo' => 500,
+        'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+
+    expect(Credito::find($prendarioId)->documentos()->where('tipo', 'compraventa_moto')->exists())->toBeFalse();
+});
+
+it('shows the empresa firma where it corresponds in the compraventa_moto', function () {
+    $this->empresa->update(['firma_path' => 'empresas/firma.png']);
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $vehicularId = $this->postJson('/api/creditos-vehiculares', [
+        'vehiculo_ids' => [$this->vehiculo->id],
+        'supervisado_por' => $this->adminAgencia->id,
+        'monto_prestamo' => 8000,
+        'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+
+    $credito = Credito::find($vehicularId)->load(['cliente', 'empresa', 'agencia', 'cuotas']);
+    $documento = $credito->documentos()->where('tipo', 'compraventa_moto')->first();
+
+    $html = view('modules.credito-vehicular.documentos.compraventa_moto', [
+        'credito' => $credito,
+        'documento' => $documento,
+        'garantias' => $credito->vehiculos,
+        'fotoDataUri' => fn (?string $path): string => "data:image/png;base64,{$path}",
+    ])->render();
+
+    expect($html)->toContain('data:image/png;base64,empresas/firma.png');
+});
+
 it('lists admin de agencia y supervisores of the actor agencia as supervisado_por options', function () {
     $supervisor = User::factory()->forAgencia($this->agencia)->create();
     $supervisor->assignRole('supervisor');

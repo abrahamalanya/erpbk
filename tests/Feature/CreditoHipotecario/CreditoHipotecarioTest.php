@@ -102,6 +102,42 @@ it('generates the hipotecario-only documentos when registering (ficha + cobranza
         ->and($tipos)->not->toContain('sticker');
 });
 
+it('generates a compraventa_inmueble document right below contrato, only for hipotecario créditos, and renders it as PDF', function () {
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    $creditoId = $this->postJson('/api/creditos-hipotecarios', [
+        'inmueble_ids' => [$this->inmueble->id],
+        'supervisado_por' => $this->adminAgencia->id,
+        'monto_prestamo' => 90000,
+        'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+
+    $credito = Credito::find($creditoId);
+    $tipos = $credito->documentos()->pluck('tipo')->all();
+    expect(array_search('compraventa_inmueble', $tipos, true))->toBe(array_search('contrato', $tipos, true) + 1);
+
+    $compraventa = $credito->documentos()->where('tipo', 'compraventa_inmueble')->first();
+
+    Sanctum::actingAs($this->adminAgencia, ['*']);
+    $pdf = $this->get("/api/creditos-prendarios/{$creditoId}/documentos/{$compraventa->id}/ver")->assertOk();
+    expect($pdf->headers->get('content-type'))->toContain('application/pdf');
+    Sanctum::actingAs($this->asesor, ['*']);
+
+    // Un crédito prendario NO genera este documento.
+    ConfiguracionCredito::factory()->deEmpresa($this->empresa)->create([
+        'tipo_credito' => 'prendario',
+        'interes_default' => 10, 'plazo_dias' => 30, 'dias_espera_mora' => 30, 'dias_minimo_interes' => 15, 'tasa_mora_diaria' => 1,
+    ]);
+    $bien = Bien::factory()->paraCliente($this->cliente)->create(['valorizacion' => 1000]);
+    $prendarioId = $this->postJson('/api/creditos-prendarios', [
+        'bien_ids' => [$bien->id],
+        'monto_prestamo' => 500,
+        'tipo_cuota' => 'mensual',
+    ])->assertCreated()->json('data.id');
+
+    expect(Credito::find($prendarioId)->documentos()->where('tipo', 'compraventa_inmueble')->exists())->toBeFalse();
+});
+
 it('persists a second aval and returns it in the detail', function () {
     $aval1 = Cliente::factory()->forAgencia($this->agencia)->create(['nombre' => 'Ana', 'apellido' => 'Uno']);
     $aval2 = Cliente::factory()->forAgencia($this->agencia)->create(['nombre' => 'Beto', 'apellido' => 'Dos']);

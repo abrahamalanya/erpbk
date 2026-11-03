@@ -8,6 +8,7 @@ use App\Modules\Credito\Models\CuotaCredito;
 use App\Modules\Credito\Models\DocumentoCredito;
 use App\Modules\Credito\Tipos\CreditoTipoManager;
 use App\Modules\Usuario\Models\User;
+use App\Nucleo\Services\FotoDataUriService;
 use App\Nucleo\Services\PdfGeneratorService;
 use DomainException;
 use Endroid\QrCode\QrCode;
@@ -25,7 +26,7 @@ final class DocumentoCreditoService
      * @var list<string>
      */
     private const TIPOS_DOCUMENTO = [
-        'contrato', 'declaracion', 'adenda', 'fotos', 'devolucion',
+        'contrato', 'compraventa_moto', 'compraventa_inmueble', 'declaracion', 'adenda', 'fotos', 'devolucion',
         'voucher_desembolso', 'voucher_pago', 'sticker',
         'carta_no_adeudo', 'recepcion_vehiculos', 'ficha_socioeconomica',
         'notificacion_pago', 'aviso_prejudicial', 'saldo_deudor', 'expediente',
@@ -37,6 +38,7 @@ final class DocumentoCreditoService
         private readonly CreditoTipoManager $tipos,
         private readonly ConfiguracionCreditoService $configuracion,
         private readonly LiquidacionSaldoDeudorService $liquidacion,
+        private readonly FotoDataUriService $fotoDataUriService,
     ) {}
 
     /**
@@ -48,6 +50,11 @@ final class DocumentoCreditoService
      * falta — ver documentosDe().
      *
      * - contrato + declaración: todos menos diario.
+     * - compraventa_moto / compraventa_inmueble: solo vehicular / hipotecario
+     *   respectivamente, justo debajo de contrato — mismo crédito, framing de
+     *   compraventa financiada en paralelo al préstamo con garantía (ver
+     *   resources/views/modules/credito-vehicular/documentos/compraventa_moto.blade.php
+     *   y su equivalente credito-hipotecario/documentos/compraventa_inmueble.blade.php).
      * - pagaré: solo diario, y recién desembolsado — necesita el cronograma
      *   real (montos y fechas exactos de cada cuota), no uno tentativo.
      * - fotos: la constancia fotográfica de las garantías, para los tipos con
@@ -71,6 +78,8 @@ final class DocumentoCreditoService
 
         return array_values(array_filter([
             $credito->tipo_credito !== 'diario' ? 'contrato' : null,
+            $credito->tipo_credito === 'vehicular' ? 'compraventa_moto' : null,
+            $credito->tipo_credito === 'hipotecario' ? 'compraventa_inmueble' : null,
             $credito->tipo_credito !== 'diario' ? 'declaracion' : null,
             $credito->tipo_credito === 'diario' && $credito->fecha_desembolso ? 'pagare' : null,
             $tipo->generaFotosGarantia() ? 'fotos' : null,
@@ -261,7 +270,7 @@ final class DocumentoCreditoService
             'garantias' => $garantias,
             'datos' => $documento->datos ?? [],
             'tentativo' => $cronogramaTentativo,
-            'fotoDataUri' => fn (?string $path, int $maxAncho = 900): ?string => $this->fotoDataUri($path, $maxAncho),
+            'fotoDataUri' => fn (?string $path, int $maxAncho = 900): ?string => $this->fotoDataUriService->generar($path, $maxAncho),
         ];
 
         if ($documento->tipo === 'saldo_deudor') {
@@ -296,7 +305,7 @@ final class DocumentoCreditoService
 
     /**
      * QR (PNG) del código de la garantía, como data URI embebible en un
-     * <img> del PDF — mismo patrón que fotoDataUri(). Null si la garantía
+     * <img> del PDF — mismo patrón que FotoDataUriService. Null si la garantía
      * no tiene código (dato legado antes de EsGarantia::bootEsGarantia(),
      * o una fila cargada con WithoutModelEvents sin backfill) — la vista
      * cae a un texto de reemplazo en vez de romper el sticker entero.
@@ -314,56 +323,6 @@ final class DocumentoCreditoService
     }
 
     /**
-     * Downscales and re-encodes an uploaded foto into an embeddable data URI
-     * for the "fotos" documento — real client uploads run up to 8MB each
-     * (see StoreClienteRequest/StoreBienRequest), and a bien can have several,
-     * so embedding them at original size would bloat the PDF into tens of MB
-     * and risk exhausting memory_limit while dompdf assembles it. Shrinking
-     * to 900px wide, quality 75 keeps a legible print while the resulting
-     * PDF stays a reasonable size.
-     */
-    private function fotoDataUri(?string $path, int $maxAncho = 900): ?string
-    {
-        if (! $path || ! Storage::disk('public')->exists($path)) {
-            return null;
-        }
-
-        $absoluto = Storage::disk('public')->path($path);
-        $info = @getimagesize($absoluto);
-
-        if (! $info) {
-            return null;
-        }
-
-        [$ancho, $alto, $tipo] = $info;
-
-        $origen = match ($tipo) {
-            IMAGETYPE_JPEG => imagecreatefromjpeg($absoluto),
-            IMAGETYPE_PNG => imagecreatefrompng($absoluto),
-            default => null,
-        };
-
-        if (! $origen) {
-            return null;
-        }
-
-        if ($ancho > $maxAncho) {
-            $nuevoAlto = (int) round($alto * ($maxAncho / $ancho));
-            $redimensionada = imagecreatetruecolor($maxAncho, $nuevoAlto);
-            imagecopyresampled($redimensionada, $origen, 0, 0, 0, 0, $maxAncho, $nuevoAlto, $ancho, $alto);
-            imagedestroy($origen);
-            $origen = $redimensionada;
-        }
-
-        ob_start();
-        imagejpeg($origen, null, 75);
-        $bytes = ob_get_clean();
-        imagedestroy($origen);
-
-        return 'data:image/jpeg;base64,'.base64_encode($bytes);
-    }
-
-    /**
      * The cronograma isn't a DocumentoCredito (no print/sign
      * lifecycle to track) — rendered straight from the crédito's cuotas,
      * same never-persisted pattern as renderizar().
@@ -377,7 +336,7 @@ final class DocumentoCreditoService
         return $this->pdfGenerator->renderizarDesdeVista($tipo->vistaDocumento('cronograma'), [
             'credito' => $credito,
             'tentativo' => false,
-            'fotoDataUri' => fn (?string $path, int $maxAncho = 900): ?string => $this->fotoDataUri($path, $maxAncho),
+            'fotoDataUri' => fn (?string $path, int $maxAncho = 900): ?string => $this->fotoDataUriService->generar($path, $maxAncho),
         ]);
     }
 
@@ -409,7 +368,7 @@ final class DocumentoCreditoService
         return $this->pdfGenerator->renderizarDesdeVista($tipo->vistaDocumento('cronograma'), [
             'credito' => $credito,
             'tentativo' => true,
-            'fotoDataUri' => fn (?string $path, int $maxAncho = 900): ?string => $this->fotoDataUri($path, $maxAncho),
+            'fotoDataUri' => fn (?string $path, int $maxAncho = 900): ?string => $this->fotoDataUriService->generar($path, $maxAncho),
         ]);
     }
 

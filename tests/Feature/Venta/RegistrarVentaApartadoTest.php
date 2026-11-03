@@ -64,6 +64,28 @@ it('registers an apartado, reserving the artículo until it is paid off with fre
     expect($venta->fresh()->documentos->pluck('tipo')->all())->toBe(['contrato_apartado', 'voucher']);
 });
 
+it('renders the contrato_apartado PDF for a venta of a bien', function () {
+    $cliente = Cliente::factory()->forAgencia($this->agencia)->create();
+    $bien = Bien::factory()->forAgencia($this->agencia)->create(['estado' => 'disponible_venta', 'precio_venta' => 600]);
+
+    $response = $this->postJson('/api/ventas', [
+        'tipo' => 'bien',
+        'articulo_id' => $bien->id,
+        'cliente_id' => $cliente->id,
+        'forma_venta' => 'apartado',
+        'inicial' => 100,
+        'fecha_limite' => now()->addDays(15)->toDateString(),
+        'medio' => 'efectivo',
+    ])->assertCreated();
+
+    $venta = Venta::findOrFail($response->json('data.id'))->load('documentos');
+    $contrato = $venta->documentos->firstWhere('tipo', 'contrato_apartado');
+
+    $this->get("/api/ventas/{$venta->id}/documentos/{$contrato->id}")
+        ->assertSuccessful()
+        ->assertHeader('content-type', 'application/pdf');
+});
+
 it('rejects an abono that exceeds the remaining saldo', function () {
     $cliente = Cliente::factory()->forAgencia($this->agencia)->create();
     $bien = Bien::factory()->forAgencia($this->agencia)->create(['estado' => 'disponible_venta', 'precio_venta' => 600]);

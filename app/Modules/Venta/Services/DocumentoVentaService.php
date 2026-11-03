@@ -5,6 +5,7 @@ namespace App\Modules\Venta\Services;
 use App\Modules\Usuario\Models\User;
 use App\Modules\Venta\Models\DocumentoVenta;
 use App\Modules\Venta\Models\Venta;
+use App\Nucleo\Services\FotoDataUriService;
 use App\Nucleo\Services\PdfGeneratorService;
 use DomainException;
 use Symfony\Component\HttpFoundation\Response;
@@ -27,7 +28,10 @@ final class DocumentoVentaService
         'notarial' => 'modules.venta.documentos.notarial',
     ];
 
-    public function __construct(private readonly PdfGeneratorService $pdfGenerator) {}
+    public function __construct(
+        private readonly PdfGeneratorService $pdfGenerator,
+        private readonly FotoDataUriService $fotoDataUriService,
+    ) {}
 
     /**
      * Documentos que corresponden a una venta registrada (antes de quedar
@@ -115,6 +119,7 @@ final class DocumentoVentaService
             'venta' => $venta,
             'documento' => $documento,
             'articulo' => $venta->articulo,
+            'fotoDataUri' => fn (?string $path, int $maxAncho = 900): ?string => $this->fotoDataUriService->generar($path, $maxAncho),
         ]);
     }
 }

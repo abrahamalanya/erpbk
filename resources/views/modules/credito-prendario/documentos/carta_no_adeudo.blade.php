@@ -43,10 +43,13 @@
     <p>A quien corresponda:</p>
 
     <p>
-        Por medio de la presente, <strong>{{ strtoupper($empresaNombre) }}</strong>
+        <strong>{{ strtoupper($empresaNombre) }}</strong>
         @if ($credito->empresa->ruc) con RUC N&deg; {{ $credito->empresa->ruc }} @endif
+        @if ($credito->empresa->domicilio_legal) con domicilio en {{ strtoupper($credito->empresa->domicilio_legal) }} @endif,
         deja constancia de que el(la) se&ntilde;or(a) <strong>{{ $clienteNombre }}</strong>, identificado(a) con
-        {{ $tipoDoc }} N&deg; {{ $credito->cliente->numero_documento }}, ha <strong>cancelado en su integridad</strong>
+        {{ $tipoDoc }} N&deg; {{ $credito->cliente->numero_documento }}
+        @if ($credito->cliente->direccion) domiciliado(a) en {{ strtoupper($credito->cliente->direccion) }} @endif,
+        es/fue cliente de nuestra oficina de {{ $ciudad }}, y ha <strong>cancelado en su integridad</strong>
         el cr&eacute;dito {{ strtoupper($credito->tipo_credito) }} N&deg;
         {{ str_pad((string) $credito->id, 6, '0', STR_PAD_LEFT) }}, otorgado por la suma de
         S/ {{ number_format($credito->monto_prestamo, 2) }}
@@ -56,9 +59,9 @@
     </p>
 
     <p>
-        En consecuencia, a la fecha el(la) cliente <strong>no mantiene deuda ni obligaci&oacute;n pendiente alguna</strong>
-        con {{ strtoupper($empresaNombre) }} derivada del cr&eacute;dito antes referido, quedando &eacute;ste
-        totalmente extinguido.
+        Manifestamos que, a la fecha de la emisi&oacute;n de la presente, el cr&eacute;dito antes referido se
+        encuentra <strong>cancelado</strong>, por lo que el(la) cliente <strong>no mantiene deuda ni obligaci&oacute;n
+        pendiente alguna</strong> con {{ strtoupper($empresaNombre) }}, quedando &eacute;ste totalmente extinguido.
     </p>
 
     @if ($garantias->isNotEmpty())
@@ -76,6 +79,8 @@
     @endif
 
     <p>Se expide la presente carta a solicitud del interesado para los fines que estime convenientes.</p>
+
+    <p>Atentamente,</p>
 
     <div class="firma">
         @if ($credito->empresa->firma_path)

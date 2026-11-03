@@ -41,7 +41,7 @@ it('lists the template documentos of an imported crédito that has no rows', fun
 
     $tipos = collect($this->getJson("/api/creditos-prendarios/{$credito->id}")->assertOk()->json('data.documentos'))->pluck('tipo')->all();
 
-    expect($tipos)->toBe(['contrato', 'declaracion', 'fotos', 'ficha_socioeconomica', 'notificacion_pago', 'aviso_prejudicial', 'saldo_deudor', 'expediente']);
+    expect($tipos)->toBe(['contrato', 'compraventa_inmueble', 'declaracion', 'fotos', 'ficha_socioeconomica', 'notificacion_pago', 'aviso_prejudicial', 'saldo_deudor', 'expediente']);
 });
 
 it('does not duplicate template documentos and keeps the event ones', function () {
@@ -57,7 +57,7 @@ it('does not duplicate template documentos and keeps the event ones', function (
 
     expect(collect($documentos)->countBy('tipo')->max())->toBe(1)
         ->and(collect($documentos)->pluck('tipo'))->toContain('voucher_pago')
-        ->and($documentos)->toHaveCount(9);
+        ->and($documentos)->toHaveCount(10);
 });
 
 it('gives the recepción de vehículos only to the original vehicular crédito', function () {

@@ -340,6 +340,10 @@ it('liquidates a diario crédito straight to liquidado, skipping the acta de dev
         ->and($tipos)->not->toContain('devolucion');
 
     expect($garantia->fresh()->estado)->toBe('recuperado');
+
+    $carta = $credito->fresh()->documentos()->where('tipo', 'carta_no_adeudo')->firstOrFail();
+    $pdf = $this->get("/api/creditos-prendarios/{$credito->id}/documentos/{$carta->id}/ver")->assertOk();
+    expect($pdf->headers->get('content-type'))->toContain('application/pdf');
 });
 
 it('keeps a vencido diario crédito past its período de espera in vencido — never moves to en_venta', function () {

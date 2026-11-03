@@ -62,6 +62,59 @@ it('registers a crédito sale with a cronograma using the configured default int
     expect($venta->documentos->pluck('tipo')->all())->toBe(['contrato_credito']);
 });
 
+it('renders the contrato_credito PDF for a venta of a bien', function () {
+    $cliente = Cliente::factory()->forAgencia($this->agencia)->create();
+    $bien = Bien::factory()->forAgencia($this->agencia)->create(['estado' => 'disponible_venta', 'precio_venta' => 1000]);
+
+    $response = $this->postJson('/api/ventas', [
+        'tipo' => 'bien',
+        'articulo_id' => $bien->id,
+        'cliente_id' => $cliente->id,
+        'forma_venta' => 'credito',
+        'inicial' => 200,
+        'numero_cuotas' => 4,
+        'tipo_cuota' => 'mensual',
+        'medio' => 'efectivo',
+    ])->assertCreated();
+
+    $venta = Venta::findOrFail($response->json('data.id'))->load('documentos');
+    $contrato = $venta->documentos->firstWhere('tipo', 'contrato_credito');
+
+    $this->get("/api/ventas/{$venta->id}/documentos/{$contrato->id}")
+        ->assertSuccessful()
+        ->assertHeader('content-type', 'application/pdf');
+});
+
+it('shows the empresa firma where it corresponds in the contrato_credito', function () {
+    $this->empresa->update(['firma_path' => 'empresas/firma.png']);
+
+    $cliente = Cliente::factory()->forAgencia($this->agencia)->create();
+    $bien = Bien::factory()->forAgencia($this->agencia)->create(['estado' => 'disponible_venta', 'precio_venta' => 1000]);
+
+    $response = $this->postJson('/api/ventas', [
+        'tipo' => 'bien',
+        'articulo_id' => $bien->id,
+        'cliente_id' => $cliente->id,
+        'forma_venta' => 'credito',
+        'inicial' => 200,
+        'numero_cuotas' => 4,
+        'tipo_cuota' => 'mensual',
+        'medio' => 'efectivo',
+    ])->assertCreated();
+
+    $venta = Venta::findOrFail($response->json('data.id'))->load(['documentos', 'cliente', 'empresa', 'cuotas']);
+    $contrato = $venta->documentos->firstWhere('tipo', 'contrato_credito');
+
+    $html = view('modules.venta.documentos.contrato_credito', [
+        'venta' => $venta,
+        'documento' => $contrato,
+        'articulo' => $bien,
+        'fotoDataUri' => fn (?string $path): string => "data:image/png;base64,{$path}",
+    ])->render();
+
+    expect($html)->toContain('data:image/png;base64,empresas/firma.png');
+});
+
 it('allows a 0 interest rate override (venta a crédito sin interés)', function () {
     $cliente = Cliente::factory()->forAgencia($this->agencia)->create();
     $bien = Bien::factory()->forAgencia($this->agencia)->create(['estado' => 'disponible_venta', 'precio_venta' => 500]);
