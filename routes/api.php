@@ -144,6 +144,8 @@ Route::middleware(['auth:sanctum', EnsurePerfilAcceso::class, EnsureIdempotency:
     Route::get('dashboard/cartera-activa-por-tipo', [DashboardController::class, 'carteraActivaPorTipo'])->name('dashboard.cartera-activa-por-tipo');
     Route::get('dashboard/produccion-por-asesor', [DashboardController::class, 'produccionPorAsesor'])->name('dashboard.produccion-por-asesor');
     Route::get('dashboard/avance-cobranza-hoy', [DashboardController::class, 'avanceCobranzaHoy'])->name('dashboard.avance-cobranza-hoy');
+    Route::get('dashboard/avance-clientes-hoy', [DashboardController::class, 'avanceClientesHoy'])->name('dashboard.avance-clientes-hoy');
+    Route::get('dashboard/clientes-cobrados-hoy', [DashboardController::class, 'clientesCobradosHoy'])->name('dashboard.clientes-cobrados-hoy');
     Route::get('dashboard/mapa-clientes', [DashboardController::class, 'mapaClientes'])->name('dashboard.mapa-clientes');
     Route::get('dashboard/mapa-unificado', [DashboardController::class, 'mapaUnificado'])->name('dashboard.mapa-unificado');
 

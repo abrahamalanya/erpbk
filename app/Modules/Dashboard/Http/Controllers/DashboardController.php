@@ -5,6 +5,7 @@ namespace App\Modules\Dashboard\Http\Controllers;
 use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Cliente\Services\ClienteHierarchyService;
 use App\Modules\Credito\Models\Credito;
+use App\Modules\Dashboard\Http\Requests\DashboardClientesCobradosHoyRequest;
 use App\Modules\Dashboard\Http\Requests\DashboardInicialRequest;
 use App\Modules\Dashboard\Http\Requests\DashboardProduccionRequest;
 use App\Modules\Dashboard\Http\Requests\MapaUnificadoRequest;
@@ -161,6 +162,43 @@ class DashboardController extends Controller
             $request->agenciaId(),
             $request->asesorId(),
         ));
+    }
+
+    /**
+     * Avance de cobranza de HOY por asesor, en cantidad de CLIENTES en vez
+     * de dinero (ver avanceCobranzaHoy() para la versión en soles): cuántos
+     * clientes tiene en total, a cuántos les toca cobrar hoy y a cuántos ya
+     * les cobró algo hoy. Mismos filtros y mismo alcance que
+     * avanceCobranzaHoy — es su contraparte en personas.
+     */
+    public function avanceClientesHoy(DashboardInicialRequest $request): JsonResponse
+    {
+        $actor = $request->user();
+
+        abort_unless($actor->can('dashboard.ver'), 403);
+
+        return $this->successResponse($this->dashboard->avanceClientesHoy(
+            $actor,
+            $request->agenciaId(),
+            $request->asesorId(),
+        ));
+    }
+
+    /**
+     * "Ver detalle" de avanceClientesHoy(): los clientes a los que ESE
+     * asesor le cobró algo hoy, con el crédito y el abono de cada cobro.
+     * `asesor_id` debe estar dentro del alcance del actor — mismo criterio
+     * de visibilidad que el resto del dashboard
+     * (RutaCobranzaService::asesoresVisibles()).
+     */
+    public function clientesCobradosHoy(DashboardClientesCobradosHoyRequest $request): JsonResponse
+    {
+        $actor = $request->user();
+
+        abort_unless($actor->can('dashboard.ver'), 403);
+        abort_unless($this->dashboard->asesorVisibleEnDashboard($actor, $request->asesorId()), 403, 'No tienes acceso a este asesor.');
+
+        return $this->successResponse($this->dashboard->clientesCobradosHoyDetalle($request->asesorId()));
     }
 
     /**

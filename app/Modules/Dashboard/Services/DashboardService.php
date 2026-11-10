@@ -4,6 +4,7 @@ namespace App\Modules\Dashboard\Services;
 
 use App\Modules\Caja\Models\CajaMovimiento;
 use App\Modules\Caja\Services\CajaBovedaHierarchyService;
+use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Cobranza\Models\Cobro;
 use App\Modules\Credito\Models\Credito;
 use App\Modules\Credito\Models\CuotaCredito;
@@ -893,19 +894,7 @@ final class DashboardService
     {
         $hoy = now()->toDateString();
 
-        $asesores = ($actor->hasRole('asesor')
-            ? $actor->newCollection([$actor])
-            : $this->rutaCobranza->asesoresVisibles($actor))
-            ->load('agencia:id,nombre');
-
-        if ($asesorId) {
-            $asesores = $asesores->where('id', $asesorId)->values();
-        }
-
-        if ($agenciaId) {
-            $asesores = $asesores->where('agencia_id', $agenciaId)->values();
-        }
-
+        $asesores = $this->asesoresDelDashboard($actor, $agenciaId, $asesorId);
         $asesorIds = $asesores->pluck('id');
 
         $cuotas = CuotaCredito::query()
@@ -952,6 +941,196 @@ final class DashboardService
             ->all();
 
         return ['fecha' => $hoy, 'filas' => $filas];
+    }
+
+    /**
+     * Asesores visibles para los desgloses "de HOY" por asesor del panel
+     * inicial (avanceCobranzaHoy/avanceClientesHoy): un asesor puro solo se
+     * ve a sí mismo (asesoresVisibles() devuelve vacío para ese rol a
+     * propósito — está pensada para el selector de otra pantalla); el resto
+     * usa RutaCobranzaService::asesoresVisibles() (mismo alcance por rol que
+     * la Ruta de Cobranza). agencia_id/asesor_id solo recortan esa lista,
+     * nunca la amplían.
+     */
+    private function asesoresDelDashboard(User $actor, ?int $agenciaId, ?int $asesorId): Collection
+    {
+        $asesores = ($actor->hasRole('asesor')
+            ? $actor->newCollection([$actor])
+            : $this->rutaCobranza->asesoresVisibles($actor))
+            ->load('agencia:id,nombre');
+
+        if ($asesorId) {
+            $asesores = $asesores->where('id', $asesorId)->values();
+        }
+
+        if ($agenciaId) {
+            $asesores = $asesores->where('agencia_id', $agenciaId)->values();
+        }
+
+        return $asesores;
+    }
+
+    /**
+     * Si $asesorId está dentro del alcance que $actor puede ver en los
+     * desgloses de HOY por asesor (mismo criterio que asesoresDelDashboard) —
+     * para autorizar clientesCobradosHoyDetalle(), que a diferencia del resto
+     * del dashboard recibe un asesor puntual en vez de listar varios.
+     */
+    public function asesorVisibleEnDashboard(User $actor, int $asesorId): bool
+    {
+        return $this->asesoresDelDashboard($actor, null, $asesorId)->isNotEmpty();
+    }
+
+    /**
+     * Avance de cobranza de HOY por asesor, en CANTIDAD DE CLIENTES en vez de
+     * dinero (ver avanceCobranzaHoy() para la versión en soles): cuántos
+     * clientes tiene en su cartera, a cuántos les toca cobrar hoy y a
+     * cuántos ya les cobró algo hoy. Mismo dueño de la obligación
+     * (cliente.asesor_id) y mismo alcance que avanceCobranzaHoy().
+     *
+     * "Total de clientes" es el roster activo del asesor (Cliente.estado =
+     * activo), tenga o no crédito vigente en este momento — no solo la
+     * cartera con deuda, a diferencia de "a_cobrar".
+     *
+     * "A cobrar" cuenta clientes DISTINTOS con al menos una cuota pendiente
+     * vencida hasta hoy (mismo criterio de "programado" que
+     * avanceCobranzaHoy: cuotas sin pagada_at con fecha_vencimiento <= hoy)
+     * — un cliente con dos créditos vencidos hoy cuenta una sola vez.
+     *
+     * "Cobrados" cuenta clientes DISTINTOS con al menos un Cobro registrado
+     * (no anulado) con created_at de HOY — a diferencia de "cobrado" en
+     * avanceCobranzaHoy() (que lee el progreso acumulado de la cuota), acá sí
+     * es el evento del día: es lo que alimenta el detalle de
+     * clientesCobradosHoyDetalle(). Por eso puede, en casos raros (p. ej. un
+     * pago adelantado sin cuota vencida hoy), superar a "a_cobrar" — el
+     * porcentaje se recorta a 100 igual que en avanceCobranzaHoy().
+     *
+     * @return array<string, mixed>
+     */
+    public function avanceClientesHoy(User $actor, ?int $agenciaId, ?int $asesorId): array
+    {
+        $hoy = now()->toDateString();
+
+        $asesores = $this->asesoresDelDashboard($actor, $agenciaId, $asesorId);
+        $asesorIds = $asesores->pluck('id');
+
+        $totalClientesPorAsesor = Cliente::query()
+            ->where('estado', 'activo')
+            ->whereIn('asesor_id', $asesorIds)
+            ->selectRaw('asesor_id, count(*) as total')
+            ->groupBy('asesor_id')
+            ->pluck('total', 'asesor_id');
+
+        $cuotas = CuotaCredito::query()
+            ->pendientes()
+            ->whereDate('fecha_vencimiento', '<=', $hoy)
+            ->whereHas('credito', function (Builder $q) use ($asesorIds, $agenciaId): void {
+                $q->whereIn('estado', ['activo', 'vencido'])
+                    ->whereHas('cliente', fn (Builder $c) => $c->whereIn('asesor_id', $asesorIds));
+
+                if ($agenciaId) {
+                    $q->where('agencia_id', $agenciaId);
+                }
+            })
+            ->with('credito.cliente:id,asesor_id')
+            ->get();
+
+        $aCobrarPorAsesor = $cuotas
+            ->groupBy(fn (CuotaCredito $c): ?int => $c->credito->cliente->asesor_id)
+            ->map(fn (Collection $c): int => $c->pluck('credito.cliente_id')->unique()->count());
+
+        $cobros = Cobro::query()
+            ->where('estado', 'registrado')
+            ->whereDate('created_at', $hoy)
+            ->whereHas('credito', function (Builder $q) use ($asesorIds, $agenciaId): void {
+                $q->whereHas('cliente', fn (Builder $c) => $c->whereIn('asesor_id', $asesorIds));
+
+                if ($agenciaId) {
+                    $q->where('agencia_id', $agenciaId);
+                }
+            })
+            ->with('credito.cliente:id,asesor_id')
+            ->get();
+
+        $cobradosPorAsesor = $cobros
+            ->groupBy(fn (Cobro $c): ?int => $c->credito->cliente->asesor_id)
+            ->map(fn (Collection $c): int => $c->pluck('cliente_id')->unique()->count());
+
+        $filas = $asesores
+            ->map(function (User $asesor) use ($totalClientesPorAsesor, $aCobrarPorAsesor, $cobradosPorAsesor): array {
+                $totalClientes = (int) ($totalClientesPorAsesor->get($asesor->id) ?? 0);
+                $aCobrar = (int) ($aCobrarPorAsesor->get($asesor->id) ?? 0);
+                $cobrados = (int) ($cobradosPorAsesor->get($asesor->id) ?? 0);
+
+                return [
+                    'asesor_id' => $asesor->id,
+                    'asesor_nombre' => trim("{$asesor->nombre} {$asesor->apellido}"),
+                    'agencia_id' => $asesor->agencia_id,
+                    'agencia_nombre' => $asesor->agencia?->nombre,
+                    'total_clientes' => $totalClientes,
+                    'a_cobrar' => $aCobrar,
+                    'cobrados' => $cobrados,
+                    'pendientes' => max($aCobrar - $cobrados, 0),
+                    'porcentaje' => $aCobrar > 0 ? round(min($cobrados / $aCobrar * 100, 100), 1) : null,
+                ];
+            })
+            // Avance ascendente (quien menos avanzó primero); sin cobranza
+            // programada queda al final, no mezclado con el 0% real.
+            ->sortBy(fn (array $f): float => $f['porcentaje'] ?? 101)
+            ->values()
+            ->all();
+
+        return ['fecha' => $hoy, 'filas' => $filas];
+    }
+
+    /**
+     * "Ver detalle" de avanceClientesHoy(): para cada cliente de $asesorId
+     * que tuvo al menos un Cobro registrado (no anulado) hoy, qué crédito(s)
+     * pagó y qué abono hizo en cada uno — un cliente con dos cobros hoy (p.
+     * ej. dos cuotas de un diario en visitas separadas) lista ambos. El
+     * actor y su alcance ya los valida el controller con
+     * asesorVisibleEnDashboard() antes de llamar acá.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function clientesCobradosHoyDetalle(int $asesorId): array
+    {
+        $hoy = now()->toDateString();
+
+        $cobros = Cobro::query()
+            ->where('estado', 'registrado')
+            ->whereDate('created_at', $hoy)
+            ->whereHas('credito', fn (Builder $q) => $q->whereHas('cliente', fn (Builder $c) => $c->where('asesor_id', $asesorId)))
+            ->with(['cliente:id,nombre,apellido', 'credito:id,codigo,tipo_credito'])
+            ->latest()
+            ->get();
+
+        return $cobros
+            ->groupBy('cliente_id')
+            ->map(function (Collection $cobrosDelCliente): array {
+                $cliente = $cobrosDelCliente->first()->cliente;
+
+                return [
+                    'cliente_id' => $cliente->id,
+                    'cliente_nombre' => trim("{$cliente->nombre} {$cliente->apellido}"),
+                    'total_cobrado' => round((float) $cobrosDelCliente->sum('monto_pagado'), 2),
+                    'cobros' => $cobrosDelCliente
+                        ->map(fn (Cobro $c): array => [
+                            'cobro_id' => $c->id,
+                            'credito_id' => $c->credito_id,
+                            'credito_codigo' => $c->credito?->codigo,
+                            'tipo_credito' => $c->credito?->tipo_credito,
+                            'operacion' => $c->operacion,
+                            'monto_pagado' => round((float) $c->monto_pagado, 2),
+                            'medio' => $c->medio,
+                            'hora' => $c->created_at->format('H:i'),
+                        ])
+                        ->values()
+                        ->all(),
+                ];
+            })
+            ->values()
+            ->all();
     }
 
     /**
