@@ -34,6 +34,7 @@ use App\Modules\Reportes\Http\Controllers\ReporteCobranzaController;
 use App\Modules\Reportes\Http\Controllers\ReporteCobranzaMensualController;
 use App\Modules\Reportes\Http\Controllers\ReporteCumpleanosController;
 use App\Modules\Reportes\Http\Controllers\ReporteFlujoCajaController;
+use App\Modules\Reportes\Http\Controllers\ReporteHistorialBovedaController;
 use App\Modules\Reportes\Http\Controllers\ReporteIngresosEgresosController;
 use App\Modules\Reportes\Http\Controllers\ReporteMovimientosController;
 use App\Modules\Reportes\Http\Controllers\ReportePlanillaController;
@@ -365,6 +366,9 @@ Route::middleware(['auth:sanctum', EnsurePerfilAcceso::class, EnsureIdempotency:
     Route::get('reportes/cajas-apertura-cierre/{ciclo}/detalle', [ReporteCajasController::class, 'detalle'])->name('reportes.cajas-apertura-cierre.detalle');
     Route::get('reportes/cajas-apertura-cierre/pdf', [ReporteCajasController::class, 'aperturasCierresPdf'])->name('reportes.cajas-apertura-cierre.pdf');
     Route::get('reportes/cajas-apertura-cierre/excel', [ReporteCajasController::class, 'aperturasCierresExcel'])->name('reportes.cajas-apertura-cierre.excel');
+    Route::get('reportes/historial-boveda', [ReporteHistorialBovedaController::class, 'index'])->name('reportes.historial-boveda');
+    Route::get('reportes/historial-boveda/boveda/{ciclo}/reporte', [ReporteHistorialBovedaController::class, 'reporteBoveda'])->name('reportes.historial-boveda.boveda.reporte');
+    Route::get('reportes/historial-boveda/boveda/{ciclo}/reporte/pdf', [ReporteHistorialBovedaController::class, 'reporteBovedaPdf'])->name('reportes.historial-boveda.boveda.reporte.pdf');
     Route::get('reportes/flujo-caja', [ReporteFlujoCajaController::class, 'flujoCaja'])->name('reportes.flujo-caja');
     Route::get('reportes/flujo-caja/anual', [ReporteFlujoCajaController::class, 'flujoCajaAnual'])->name('reportes.flujo-caja.anual');
     Route::get('reportes/flujo-caja/mensual', [ReporteFlujoCajaController::class, 'flujoCajaMensual'])->name('reportes.flujo-caja.mensual');

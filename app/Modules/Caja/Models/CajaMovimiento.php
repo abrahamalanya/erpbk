@@ -88,6 +88,17 @@ class CajaMovimiento extends Model
     }
 
     /**
+     * Ingresos por venta de tienda: los que llevan venta_id (ver
+     * VentaService::registrarPago()). Distintos de ingresosManuales()
+     * (concepto_id) y de un cobro (vinculado por Cobro::caja_movimiento_id,
+     * nunca por una columna propia de este modelo).
+     */
+    public function scopeVentas(Builder $query): Builder
+    {
+        return $query->where('tipo', 'ingreso')->whereNotNull('venta_id');
+    }
+
+    /**
      * Billetaje aprobado (efectivo o digital — ver BilletajeService): dinero
      * que entra a esta caja desde la bóveda, igual de real que un ingreso
      * para CajaCiclo::saldoActual(), pero de origen interno, no de un
