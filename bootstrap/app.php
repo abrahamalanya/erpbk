@@ -1,7 +1,7 @@
 <?php
 
 use App\Nucleo\Exceptions\ConflictoDeEstadoException;
-use App\Nucleo\Exceptions\MotivoConflicto;
+use App\Nucleo\Http\Middleware\ResolveStorageUrlFromRequest;
 use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
@@ -19,7 +19,9 @@ return Application::configure(basePath: dirname(__DIR__))
         ['prefix' => 'api', 'middleware' => ['api', 'auth:sanctum']],
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        //
+        $middleware->api(append: [
+            ResolveStorageUrlFromRequest::class,
+        ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         // Conflicto de estado: el servidor no aplica la operación porque su
