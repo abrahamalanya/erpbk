@@ -2,6 +2,9 @@
 
 namespace App\Modules\Ubicacion\Services;
 
+use App\Modules\Cobranza\Models\Cobro;
+use App\Modules\Cobranza\Models\CobroCuotaAbono;
+use App\Modules\Credito\Models\CuotaCredito;
 use App\Modules\Ruta\Services\TrazadoRutaService;
 use App\Modules\Ubicacion\Events\UbicacionAsesorActualizada;
 use App\Modules\Ubicacion\Models\DispositivoGps;
@@ -233,7 +236,70 @@ final class UbicacionAsesorService
                 'distancia_m' => $puntos->groupBy(fn ($p) => $p->dispositivo_id ?? 'legacy')->sum(fn ($g) => $this->distanciaTotalMetros($g)),
                 'pausas' => $puntos->groupBy(fn ($p) => $p->dispositivo_id ?? 'legacy')->flatMap(fn ($g) => $this->detectarPausas($g))->values()->all(),
             ],
+            'cobros' => $this->cobrosDelDia($asesor, $desde, $hasta),
         ];
+    }
+
+    /**
+     * Clientes que $asesor cobró entre $desde y $hasta, con el detalle del
+     * crédito y de lo cobrado — mismo criterio de "cobrado" que
+     * RutaCobranzaService::rutaDe(): estado registrado y monto_pagado >
+     * vuelto (si no, no hubo cobro neto, p.ej. un vuelto que iguala el pago).
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function cobrosDelDia(User $asesor, CarbonImmutable $desde, CarbonImmutable $hasta): array
+    {
+        return Cobro::query()
+            ->where('registrado_por', $asesor->id)
+            ->where('estado', 'registrado')
+            ->whereColumn('monto_pagado', '>', 'vuelto')
+            ->whereBetween('created_at', [$desde->startOfDay(), $hasta->endOfDay()])
+            ->with(['cliente', 'credito', 'cuotasPagadas', 'abonosCuotas.cuota'])
+            ->orderBy('created_at')
+            ->get()
+            ->map(fn (Cobro $cobro): array => [
+                'id' => $cobro->id,
+                'created_at' => $cobro->created_at,
+                'operacion' => $cobro->operacion,
+                'medio' => $cobro->medio,
+                'monto_pagado' => $cobro->monto_pagado,
+                'interes' => $cobro->interes,
+                'mora' => $cobro->mora,
+                'descuento' => $cobro->descuento,
+                'vuelto' => $cobro->vuelto,
+                'cliente' => $cobro->cliente === null ? null : [
+                    'id' => $cobro->cliente->id,
+                    'nombre' => $cobro->cliente->nombre,
+                    'apellido' => $cobro->cliente->apellido,
+                    'numero_documento' => $cobro->cliente->numero_documento,
+                ],
+                'credito' => $cobro->credito === null ? null : [
+                    'id' => $cobro->credito->id,
+                    'codigo' => $cobro->credito->codigo,
+                    'tipo_credito' => $cobro->credito->tipo_credito,
+                    'numero_cuotas' => $cobro->credito->numero_cuotas,
+                    'estado' => $cobro->credito->estado,
+                    'monto_prestamo' => $cobro->credito->monto_prestamo,
+                ],
+                // pago_cuota (compuestos) marca cuotasPagadas directo por
+                // cobro_id; pago_cuotas_diario reparte el cobro entre varias
+                // cuotas vía abonosCuotas — nunca se llenan ambas a la vez.
+                'cuotas' => $cobro->cuotasPagadas->isNotEmpty()
+                    ? $cobro->cuotasPagadas->map(fn (CuotaCredito $c): array => [
+                        'numero_cuota' => $c->numero_cuota,
+                        'monto_total' => $c->monto_total,
+                        'completa' => true,
+                    ])->all()
+                    : $cobro->abonosCuotas->map(fn (CobroCuotaAbono $a): array => [
+                        'numero_cuota' => $a->cuota?->numero_cuota,
+                        'monto_cuota' => $a->monto_cuota,
+                        'monto_mora' => $a->monto_mora,
+                        'completa' => $a->completa,
+                    ])->all(),
+            ])
+            ->values()
+            ->all();
     }
 
     /**

@@ -1,5 +1,8 @@
 <?php
 
+use App\Modules\Cliente\Models\Cliente;
+use App\Modules\Cobranza\Models\Cobro;
+use App\Modules\Credito\Models\Credito;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Ubicacion\Events\UbicacionAsesorActualizada;
@@ -218,6 +221,43 @@ it('returns the route history with points and a computed summary', function () {
     expect($response->json('data.puntos'))->toHaveCount(3)
         ->and($response->json('data.resumen.distancia_m'))->toBeGreaterThan(0)
         ->and($response->json('data.resumen.pausas'))->toHaveCount(1);
+});
+
+it('includes the cobros collected that day in the route history', function () {
+    $asesor = User::factory()->forAgencia($this->agencia)->create();
+    $asesor->assignRole('asesor');
+
+    $admin = User::factory()->forAgencia($this->agencia)->create();
+    $admin->assignRole('administrador_agencia');
+    Sanctum::actingAs($admin, ['*']);
+
+    $hoy = now()->startOfDay();
+    $cliente = Cliente::factory()->forAgencia($this->agencia)->create();
+    $credito = Credito::factory()->for($this->empresa)->for($this->agencia)->create(['cliente_id' => $cliente->id, 'numero_cuotas' => 10]);
+
+    $cobroDeHoy = Cobro::factory()->create([
+        'empresa_id' => $this->empresa->id,
+        'cliente_id' => $credito->cliente_id,
+        'credito_id' => $credito->id,
+        'registrado_por' => $asesor->id,
+        'operacion' => 'pago_cuotas_diario',
+        'created_at' => $hoy->copy()->addHours(9),
+    ]);
+
+    // No debe aparecer: otro día, otro cobrador y un cobro anulado.
+    Cobro::factory()->create(['empresa_id' => $this->empresa->id, 'registrado_por' => $asesor->id, 'created_at' => $hoy->copy()->subDay()]);
+    Cobro::factory()->create(['empresa_id' => $this->empresa->id, 'registrado_por' => $admin->id, 'created_at' => $hoy->copy()->addHours(10)]);
+    Cobro::factory()->create(['empresa_id' => $this->empresa->id, 'registrado_por' => $asesor->id, 'estado' => 'anulado', 'created_at' => $hoy->copy()->addHours(11)]);
+
+    $response = $this->getJson('/api/ubicaciones-asesores/historial?'.http_build_query([
+        'asesor_id' => $asesor->id,
+        'fecha' => $hoy->toDateString(),
+    ]))->assertSuccessful();
+
+    expect($response->json('data.cobros'))->toHaveCount(1)
+        ->and($response->json('data.cobros.0.id'))->toBe($cobroDeHoy->id)
+        ->and($response->json('data.cobros.0.cliente.id'))->toBe($credito->cliente_id)
+        ->and($response->json('data.cobros.0.credito.id'))->toBe($credito->id);
 });
 
 it('denies access to the history of an asesor outside the actor scope', function () {
