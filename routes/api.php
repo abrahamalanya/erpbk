@@ -351,6 +351,7 @@ Route::middleware(['auth:sanctum', EnsurePerfilAcceso::class, EnsureIdempotency:
     Route::get('cobros/{cobro}/voucher/texto', [CobroController::class, 'voucherTexto'])->name('cobros.voucher.texto');
     Route::post('cobros/{cobro}/anular', [CobroController::class, 'anular'])->name('cobros.anular');
     Route::patch('cobros/{cobro}', [CobroController::class, 'corregir'])->name('cobros.corregir');
+    Route::get('cobros/{cobro}/ciclos-destino', [CobroController::class, 'ciclosDestino'])->name('cobros.ciclos-destino');
 
     Route::get('reportes/movimientos-dinero', [ReporteMovimientosController::class, 'movimientosDinero'])->name('reportes.movimientos-dinero');
     Route::get('reportes/movimientos-dinero/pdf', [ReporteMovimientosController::class, 'movimientosDineroPdf'])->name('reportes.movimientos-dinero.pdf');

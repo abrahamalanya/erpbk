@@ -3,6 +3,7 @@
 namespace App\Modules\Cobranza\Http\Controllers;
 
 use App\Modules\Caja\Models\Caja;
+use App\Modules\Caja\Models\CajaCiclo;
 use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Cobranza\Http\Requests\AnularCobroRequest;
 use App\Modules\Cobranza\Http\Requests\CorregirCobroRequest;
@@ -305,5 +306,18 @@ class CobroController extends Controller
             $this->creditoService->corregirCobro($cobro, $request->user(), $request->validated()),
             'Cobro corregido',
         );
+    }
+
+    public function ciclosDestino(Cobro $cobro): JsonResponse
+    {
+        abort_unless(request()->user()->hasRole(['administrador_general', 'sistemas']), 403);
+        $this->autorizarVerVoucher($cobro);
+        abort_unless($cobro->estado === 'registrado' && $cobro->caja_ciclo_id, 422, 'Este cobro no tiene un ciclo de caja para corregir.');
+
+        return $this->successResponse(CajaCiclo::query()
+            ->where('caja_id', $cobro->cajaCiclo->caja_id)
+            ->whereDate('fecha', '<=', today())
+            ->orderByDesc('fecha')->orderByDesc('id')
+            ->get(['id', 'fecha', 'estado']));
     }
 }

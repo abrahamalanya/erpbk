@@ -11,6 +11,7 @@ use App\Modules\Credito\Models\CuotaCredito;
 use App\Modules\Empresa\Models\Agencia;
 use App\Modules\Empresa\Models\Empresa;
 use App\Modules\Usuario\Models\User;
+use Carbon\Carbon;
 use Database\Seeders\PermissionSeeder;
 use Database\Seeders\RoleSeeder;
 use Illuminate\Support\Facades\DB;
@@ -133,4 +134,57 @@ it('rolls back allocations if the origin would become negative', function () {
 
 it('rejects invalid amounts and a missing reason', function () {
     $this->patchJson('/api/cobros/'.$this->cobro->id, [...$this->datos, 'monto_pagado' => -1, 'motivo' => ''])->assertUnprocessable();
+});
+
+it('moves a collection from November 11 to the closed November 12 cycle when today is November 13', function () {
+    $this->travelTo(Carbon::parse('2026-11-13 10:00:00'));
+    $this->ayer->update(['fecha' => '2026-11-11']);
+    $this->hoy->update(['fecha' => '2026-11-12', 'estado' => 'cerrada', 'saldo_arqueo_cierre' => 12]);
+    $datos = $this->datos;
+    unset($datos['mover_a_hoy']);
+
+    $this->patchJson('/api/cobros/'.$this->cobro->id, [...$datos, 'caja_ciclo_id' => $this->hoy->id])->assertSuccessful();
+
+    expect($this->cobro->fresh()->caja_ciclo_id)->toBe($this->hoy->id)
+        ->and($this->cobro->fresh()->cajaMovimiento->fecha_caja->toDateString())->toBe('2026-11-12')
+        ->and($this->ayer->fresh()->saldo_calculado_cierre)->toBe('0.00')
+        ->and($this->hoy->fresh()->saldo_calculado_cierre)->toBe('12.00')
+        ->and($this->hoy->fresh()->saldo_arqueo_cierre)->toBe('12.00')
+        ->and($this->hoy->fresh()->diferencia)->toBe('0.00')
+        ->and($this->hoy->fresh()->estado)->toBe('cerrada');
+    $auditoria = DB::table('cobro_correcciones')->first();
+    expect(json_decode($auditoria->despues, true)['caja_ciclo_id'])->toBe($this->hoy->id);
+});
+
+it('lists only past and present cycles of the collection owners cashbox', function () {
+    CajaCiclo::query()->create([
+        'empresa_id' => $this->credito->empresa_id, 'caja_id' => $this->ayer->caja_id,
+        'fecha' => today()->addDay(), 'estado' => 'cerrada', 'saldo_apertura' => 0,
+    ]);
+    $otroAsesor = User::factory()->forAgencia($this->asesor->agencia)->create();
+    $otraCaja = Caja::factory()->create(['empresa_id' => $this->credito->empresa_id, 'agencia_id' => $this->credito->agencia_id, 'user_id' => $otroAsesor->id]);
+    $otroCiclo = CajaCiclo::query()->create([
+        'empresa_id' => $this->credito->empresa_id, 'caja_id' => $otraCaja->id,
+        'fecha' => today(), 'estado' => 'abierta', 'saldo_apertura' => 0,
+    ]);
+    $this->getJson('/api/cobros/'.$this->cobro->id.'/ciclos-destino')->assertSuccessful()
+        ->assertJsonCount(2, 'data')->assertJsonPath('data.0.id', $this->hoy->id)
+        ->assertJsonPath('data.1.id', $this->ayer->id);
+    $datos = $this->datos;
+    unset($datos['mover_a_hoy']);
+    $this->patchJson('/api/cobros/'.$this->cobro->id, [...$datos, 'caja_ciclo_id' => $otroCiclo->id])->assertUnprocessable();
+    expect($this->cobro->fresh()->caja_ciclo_id)->toBe($this->ayer->id);
+
+    Sanctum::actingAs($this->asesor);
+    $this->getJson('/api/cobros/'.$this->cobro->id.'/ciclos-destino')->assertForbidden();
+});
+
+it('requires a real destination cycle and rejects future cycles', function () {
+    $datos = $this->datos;
+    unset($datos['mover_a_hoy']);
+    $this->patchJson('/api/cobros/'.$this->cobro->id, $datos)->assertUnprocessable();
+    $this->patchJson('/api/cobros/'.$this->cobro->id, [...$datos, 'caja_ciclo_id' => 999999])->assertUnprocessable();
+    $this->hoy->update(['fecha' => today()->addDay()]);
+    $this->patchJson('/api/cobros/'.$this->cobro->id, [...$datos, 'caja_ciclo_id' => $this->hoy->id])->assertUnprocessable();
+    expect(DB::table('cobro_correcciones')->count())->toBe(0);
 });

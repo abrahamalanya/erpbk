@@ -2654,16 +2654,18 @@ final class CreditoService
             }
 
             $origen = CajaCiclo::query()->findOrFail($cobro->caja_ciclo_id);
-            $destino = $datos['mover_a_hoy']
-                ? CajaCiclo::query()->where('caja_id', $origen->caja_id)->whereDate('fecha', today())->where('estado', 'abierta')->first()
-                : $origen;
+            $destino = isset($datos['caja_ciclo_id'])
+                ? CajaCiclo::query()->where('caja_id', $origen->caja_id)->whereDate('fecha', '<=', today())->find($datos['caja_ciclo_id'])
+                : (($datos['mover_a_hoy'] ?? false)
+                    ? CajaCiclo::query()->where('caja_id', $origen->caja_id)->whereDate('fecha', today())->where('estado', 'abierta')->first()
+                    : $origen);
             if (! $destino) {
-                throw new DomainException('El asesor debe abrir su caja de hoy antes de mover el cobro.');
+                throw new DomainException('Selecciona un ciclo existente de la misma caja, con fecha de hoy o anterior.');
             }
             $ciclos = CajaCiclo::query()->whereIn('id', [$origen->id, $destino->id])->orderBy('id')->lockForUpdate()->get()->keyBy('id');
             $origen = $ciclos[$origen->id];
             $destino = $ciclos[$destino->id];
-            if ($datos['mover_a_hoy'] && $destino->estado !== 'abierta') {
+            if (($datos['mover_a_hoy'] ?? false) && $destino->estado !== 'abierta') {
                 throw new DomainException('La caja de destino ya se cerró.');
             }
             $movimiento = CajaMovimiento::query()->lockForUpdate()->findOrFail($cobro->caja_movimiento_id);
