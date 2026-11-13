@@ -5,6 +5,7 @@ namespace App\Modules\Cobranza\Http\Controllers;
 use App\Modules\Caja\Models\Caja;
 use App\Modules\Cliente\Models\Cliente;
 use App\Modules\Cobranza\Http\Requests\AnularCobroRequest;
+use App\Modules\Cobranza\Http\Requests\CorregirCobroRequest;
 use App\Modules\Cobranza\Models\Cobro;
 use App\Modules\Cobranza\Services\VoucherCobroService;
 use App\Modules\Credito\Models\Credito;
@@ -69,6 +70,10 @@ class CobroController extends Controller
             )
         );
 
+        $paginado->getCollection()->each(fn (Cobro $cobro) => $cobro->setAttribute(
+            'puede_corregir', $puedeAnularSiempre && $cobro->estado === 'registrado' && $cobro->caja_movimiento_id !== null
+        ));
+
         return $this->successResponse($paginado);
     }
 
@@ -130,7 +135,7 @@ class CobroController extends Controller
     private function filtrarQuery(User $actor): Builder
     {
         $query = Cobro::query()
-            ->with(['cliente', 'credito', 'registradoPor', 'anuladoPor'])
+            ->with(['cliente', 'credito', 'registradoPor', 'anuladoPor', 'cajaCiclo'])
             ->whereHas('credito', function (Builder $q) use ($actor): void {
                 $this->creditoHierarchy->visibleQuery($q, $actor);
 
@@ -290,5 +295,15 @@ class CobroController extends Controller
         $credito = $this->creditoService->anularCobro($cobro, $request->user(), $request->validated()['motivo'] ?? null);
 
         return $this->successResponse($credito->load(['bienes', 'vehiculos', 'inmuebles']), 'Cobro anulado');
+    }
+
+    public function corregir(CorregirCobroRequest $request, Cobro $cobro): JsonResponse
+    {
+        $this->autorizarVerVoucher($cobro);
+
+        return $this->successResponse(
+            $this->creditoService->corregirCobro($cobro, $request->user(), $request->validated()),
+            'Cobro corregido',
+        );
     }
 }

@@ -1779,10 +1779,10 @@ final class CreditoService
      * completo (a diferencia de calcularMora(), que solo penaliza una vez
      * que el crédito ENTERO cae en estado 'vencido').
      */
-    private function moraDeCuota(CuotaCredito $cuota, ConfiguracionCredito $configuracion): string
+    private function moraDeCuota(CuotaCredito $cuota, ConfiguracionCredito $configuracion, ?Carbon $fecha = null): string
     {
         $vencimiento = $cuota->fecha_vencimiento->copy()->startOfDay();
-        $hoy = now()->startOfDay();
+        $hoy = ($fecha ?? now())->copy()->startOfDay();
 
         if ($vencimiento->gte($hoy)) {
             return '0.00';
@@ -1983,7 +1983,7 @@ final class CreditoService
      *
      * @return array{cuotas: list<array{numero_cuota: int, fecha_vencimiento: string, monto_total: string, mora: string, abono: string, saldo_restante: string, completa: bool}>, monto_cuotas: string, mora: string, total: string, vuelto: string, es_ultima_cuota: bool}
      */
-    public function calcularAmortizacion(Credito $credito, string $monto): array
+    public function calcularAmortizacion(Credito $credito, string $monto, ?Carbon $fecha = null): array
     {
         if ($credito->tipo_interes === 'compuesto') {
             throw new DomainException('Los créditos de interés compuesto solo se pagan por cuotas completas.');
@@ -1999,7 +1999,7 @@ final class CreditoService
                 break;
             }
 
-            $mora = $this->moraDeCuota($cuota, $configuracion);
+            $mora = $this->moraDeCuota($cuota, $configuracion, $fecha);
             $moraAplicada = bccomp($restante, $mora, 2) >= 0 ? $mora : $restante;
             $restante = bcsub($restante, $moraAplicada, 2);
 
@@ -2637,6 +2637,118 @@ final class CreditoService
             }
 
             return $this->conCobro($credito->fresh(['bienes', 'documentos']), $cobro);
+        });
+    }
+
+    public function corregirCobro(Cobro $cobro, User $actor, array $datos): Cobro
+    {
+        abort_unless($actor->hasRole(['administrador_general', 'sistemas']), 403);
+
+        return DB::transaction(function () use ($cobro, $actor, $datos): Cobro {
+            $credito = Credito::query()->lockForUpdate()->findOrFail($cobro->credito_id);
+            $cobro = Cobro::query()->lockForUpdate()->findOrFail($cobro->id);
+            abort_unless($credito->empresa_id === $actor->empresa_id || $actor->hasRole('sistemas'), 403);
+            abort_unless($cobro->updated_at->equalTo(Carbon::parse($datos['updated_at'])), 409, 'El cobro cambió. Recarga el listado.');
+            if ($cobro->estado !== 'registrado' || ! $cobro->caja_movimiento_id || ! $cobro->caja_ciclo_id) {
+                throw new DomainException('Solo se pueden corregir cobros registrados con ingreso de caja.');
+            }
+
+            $origen = CajaCiclo::query()->findOrFail($cobro->caja_ciclo_id);
+            $destino = $datos['mover_a_hoy']
+                ? CajaCiclo::query()->where('caja_id', $origen->caja_id)->whereDate('fecha', today())->where('estado', 'abierta')->first()
+                : $origen;
+            if (! $destino) {
+                throw new DomainException('El asesor debe abrir su caja de hoy antes de mover el cobro.');
+            }
+            $ciclos = CajaCiclo::query()->whereIn('id', [$origen->id, $destino->id])->orderBy('id')->lockForUpdate()->get()->keyBy('id');
+            $origen = $ciclos[$origen->id];
+            $destino = $ciclos[$destino->id];
+            if ($datos['mover_a_hoy'] && $destino->estado !== 'abierta') {
+                throw new DomainException('La caja de destino ya se cerró.');
+            }
+            $movimiento = CajaMovimiento::query()->lockForUpdate()->findOrFail($cobro->caja_movimiento_id);
+            abort_unless($movimiento->caja_ciclo_id === $origen->id && $movimiento->tipo === 'ingreso', 409, 'El movimiento no coincide con el cobro.');
+            $antes = $cobro->only(['monto_pagado', 'caja_ciclo_id', 'interes', 'mora', 'vuelto']);
+            $monto = bcadd((string) $datos['monto_pagado'], '0', 2);
+            $cambiaMonto = bccomp($monto, (string) $cobro->monto_pagado, 2) !== 0;
+            if (! $cambiaMonto && $origen->id === $destino->id) {
+                throw new DomainException('No hay cambios para guardar.');
+            }
+            if ($cambiaMonto) {
+                if ($credito->tieneComprobanteAceptado()) {
+                    throw new DomainException('El crédito tiene un comprobante SUNAT aceptado. Requiere nota de crédito.');
+                }
+                $voucher = $this->documentos->voucherDeCobro($cobro);
+                if ($voucher?->archivo_firmado_path) {
+                    throw new DomainException('El voucher ya está firmado. Debes anular y registrar nuevamente el pago.');
+                }
+                if ($cobro->operacion !== 'pago_cuotas_diario') {
+                    throw new DomainException('Para cambiar el monto de esta operación, anula el cobro y regístralo nuevamente: modifica capital o genera un crédito sucesor.');
+                }
+                if (! $cobro->abonosCuotas()->exists() || $credito->regularizaciones()->where('created_at', '>=', $cobro->created_at)->exists()) {
+                    throw new DomainException('Este pago tiene un cronograma histórico o regularizaciones posteriores. Requiere anular y registrar nuevamente.');
+                }
+                $credito->cuotas()->lockForUpdate()->get();
+                $this->deshacerPagoCuotas($cobro, $credito);
+                $calculo = $this->calcularAmortizacion($credito, $monto, $cobro->created_at);
+                if ($calculo['es_ultima_cuota']) {
+                    throw new DomainException('Este monto liquida el crédito. Anula y registra nuevamente el pago para generar los documentos de liquidación.');
+                }
+                foreach ($calculo['cuotas'] as $fila) {
+                    $cuota = $credito->cuotas()->where('numero_cuota', $fila['numero_cuota'])->firstOrFail();
+                    $cuota->update([
+                        'monto_abonado' => bcadd((string) $cuota->monto_abonado, $fila['abono'], 2),
+                        'mora_pagada' => bcadd((string) ($cuota->mora_pagada ?? 0), $fila['mora'], 2),
+                        'pagada_at' => $fila['completa'] ? $cobro->created_at : $cuota->pagada_at,
+                        'cobro_id' => $fila['completa'] ? $cobro->id : $cuota->cobro_id,
+                    ]);
+                    $cobro->abonosCuotas()->create([
+                        'cuota_credito_id' => $cuota->id, 'monto_mora' => $fila['mora'],
+                        'monto_cuota' => $fila['abono'], 'completa' => $fila['completa'],
+                    ]);
+                }
+                $cobro->fill(['interes' => $calculo['monto_cuotas'], 'mora' => $calculo['mora'], 'vuelto' => $calculo['vuelto']]);
+                if ($voucher) {
+                    $voucher->update(['datos' => array_merge($voucher->datos, [
+                        'monto_pagado' => $monto, 'cuotas' => $calculo['cuotas'],
+                        'mora' => $calculo['mora'], 'total' => $calculo['total'], 'vuelto' => $calculo['vuelto'],
+                    ])]);
+                }
+            }
+            $saldoOrigen = bcsub($origen->saldoActual(), (string) $movimiento->monto, 2);
+            if ($origen->id === $destino->id) {
+                $saldoOrigen = bcadd($saldoOrigen, $monto, 2);
+            }
+            if (bccomp($saldoOrigen, '0', 2) < 0) {
+                throw new DomainException('La caja de origen no tiene saldo suficiente: ese dinero ya fue utilizado.');
+            }
+            $movimiento->update(['monto' => $monto, 'caja_ciclo_id' => $destino->id, 'fecha_caja' => $destino->fecha]);
+            $cobro->fill(['monto_pagado' => $monto, 'caja_ciclo_id' => $destino->id]);
+            // Force a new version even when two corrections happen within the same second.
+            $cobro->updated_at = now()->max($cobro->updated_at->copy()->addSecond());
+            $cobro->save();
+            DB::table('cobro_correcciones')->insert([
+                'cobro_id' => $cobro->id, 'user_id' => $actor->id, 'motivo' => trim($datos['motivo']),
+                'antes' => json_encode($antes, JSON_THROW_ON_ERROR),
+                'despues' => json_encode($cobro->only(array_keys($antes)), JSON_THROW_ON_ERROR), 'created_at' => now(),
+            ]);
+            foreach ($ciclos as $ciclo) {
+                if ($ciclo->estado === 'cerrada') {
+                    $saldo = $ciclo->saldoActual();
+                    $efectivo = $ciclo->saldoEfectivo();
+                    $ciclo->update([
+                        'saldo_calculado_cierre' => $saldo, 'saldo_efectivo_cierre' => $efectivo,
+                        'diferencia' => bcsub((string) $ciclo->saldo_arqueo_cierre, $efectivo, 2),
+                    ]);
+                }
+            }
+            DB::afterCommit(function () use ($credito, $destino): void {
+                $this->notificar($credito->fresh());
+                $abierto = $destino->caja->cicloAbierto()->first();
+                CajaActualizada::dispatch($destino->caja, $abierto?->saldoActual());
+            });
+
+            return $cobro->fresh();
         });
     }
 
